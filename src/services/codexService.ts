@@ -399,6 +399,7 @@ export async function updateCodexApiKeyCredentials(
   apiWireApi?: CodexProviderWireApi,
   apiSupportsWebsockets?: boolean,
   apiSyncModelCatalogToCodex?: boolean,
+  accountName?: string,
 ): Promise<CodexAccount> {
   return await invoke('update_codex_api_key_credentials', {
     accountId,
@@ -414,6 +415,7 @@ export async function updateCodexApiKeyCredentials(
     apiSupportsVision: apiSupportsVision ?? false,
     apiModelVisionSupport: apiModelVisionSupport ?? {},
     apiVisionRoutingModel: apiVisionRoutingModel ?? null,
+    accountName: accountName ?? null,
   });
 }
 

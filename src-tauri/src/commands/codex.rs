@@ -1557,6 +1557,7 @@ pub fn update_codex_api_key_credentials(
     api_supports_vision: Option<bool>,
     api_model_vision_support: Option<std::collections::HashMap<String, bool>>,
     api_vision_routing_model: Option<String>,
+    account_name: Option<String>,
 ) -> Result<CodexAccount, String> {
     codex_account::update_api_key_credentials(
         &account_id,
@@ -1572,6 +1573,7 @@ pub fn update_codex_api_key_credentials(
         api_supports_vision.unwrap_or(false),
         api_model_vision_support.unwrap_or_default(),
         api_vision_routing_model,
+        account_name,
     )
 }
 

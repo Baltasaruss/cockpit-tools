@@ -64,6 +64,7 @@ import {
   getCurrentCodexAccount,
   listCodexAccounts,
   syncCodexApiKeyProviderAccounts,
+  updateCodexAccountName,
   updateCodexApiKeyBoundOAuthAccount,
 } from "../../services/codexService";
 import {
@@ -139,6 +140,10 @@ import {
   type CodexProviderWireApi,
 } from "../../utils/codexProviderGateway";
 import { emitAccountsChanged } from "../../utils/accountSyncEvents";
+import {
+  resolveCodexModelProviderAccountName,
+  shouldSyncCodexModelProviderAccountName,
+} from "../../utils/codexModelProviderAccountName";
 import { findCodexAccountsReferencingModelProvider } from "../../utils/codexModelProviderAccountSync";
 import { CodexQuickConfigCard } from "./CodexQuickConfigCard";
 import {
@@ -2376,7 +2381,36 @@ export function CodexModelProviderManager({
       );
       if (next === null) return;
       try {
+        const previousName = apiKey.name;
         await renameApiKeyOnCodexModelProvider(provider.id, apiKey.id, next);
+        const normalizedProviderBaseUrl = normalizeCodexModelProviderBaseUrl(
+          provider.baseUrl,
+        );
+        const nextName = resolveCodexModelProviderAccountName(provider.name, next);
+        const accountsToRename = accounts.filter(
+          (account) =>
+            isCodexApiKeyAccount(account) &&
+            account.openai_api_key?.trim() === apiKey.apiKey.trim() &&
+            (account.api_provider_id === provider.id ||
+              normalizeCodexModelProviderBaseUrl(account.api_base_url ?? "") ===
+                normalizedProviderBaseUrl) &&
+            shouldSyncCodexModelProviderAccountName(
+              account.account_name,
+              provider.name,
+              previousName,
+            ),
+        );
+        if (accountsToRename.length > 0) {
+          await Promise.all(
+            accountsToRename.map((account) =>
+              updateCodexAccountName(account.id, nextName),
+            ),
+          );
+          await emitAccountsChanged({
+            platformId: "codex",
+            reason: "provider-api-key-rename",
+          });
+        }
         await reloadProviders();
         setNotice({
           tone: "success",
@@ -2392,7 +2426,7 @@ export function CodexModelProviderManager({
         });
       }
     },
-    [parseServiceError, reloadProviders, t],
+    [accounts, parseServiceError, reloadProviders, t],
   );
 
   const handleBatchDeleteProviders = useCallback(async () => {

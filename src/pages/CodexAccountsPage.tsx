@@ -208,6 +208,7 @@ import {
   splitCodexImportPayloads,
 } from "../utils/codexJsonImportProgress";
 import { emitAccountsChanged } from "../utils/accountSyncEvents";
+import { resolveCodexModelProviderAccountName } from "../utils/codexModelProviderAccountName";
 import {
   CODEX_OVERVIEW_FILTER_FIELDS,
   CODEX_OVERVIEW_FILTER_SCOPE,
@@ -3920,6 +3921,7 @@ export function CodexAccountsPage() {
       providerPresetId: string,
       providerId: string,
       customProviderName: string,
+      managedProviderApiKeyName?: string | null,
     ): {
       apiProviderMode: CodexApiProviderMode;
       apiProviderId?: string;
@@ -3998,7 +4000,10 @@ export function CodexAccountsPage() {
             ),
           ),
           apiVisionRoutingModel: managedProvider.visionRoutingModel,
-          accountName: managedProvider.name,
+          accountName: resolveCodexModelProviderAccountName(
+            managedProvider.name,
+            managedProviderApiKeyName,
+          ),
         };
       }
 
@@ -6818,6 +6823,10 @@ export function CodexAccountsPage() {
         selectedQuickSwitchProvider.wireApi ?? undefined,
         selectedQuickSwitchProvider.supportsWebsockets,
         quickSwitchAccount.api_sync_model_catalog_to_codex === true,
+        resolveCodexModelProviderAccountName(
+          selectedQuickSwitchProvider.name,
+          selectedQuickSwitchApiKey.name,
+        ),
       );
       setMessage({
         text: t("codex.quickSwitch.success", {
@@ -6892,6 +6901,7 @@ export function CodexAccountsPage() {
         apiProviderPresetId,
         managedProviderId,
         newManagedProviderNameInput,
+        selectedManagedProviderApiKey?.name,
       ),
       apiModelCatalog: apiModelCatalogDraft,
     };
@@ -6936,7 +6946,7 @@ export function CodexAccountsPage() {
             apiSupportsVision: savedProvider.supportsVision,
             apiWireApi: savedProvider.wireApi ?? undefined,
             apiSupportsWebsockets: savedProvider.supportsWebsockets,
-            accountName: savedProvider.name,
+            accountName: providerPayload.accountName || savedProvider.name,
           };
           try {
             const usageSummary = await queryCodexModelProviderUsage({
@@ -8172,6 +8182,7 @@ export function CodexAccountsPage() {
         editingApiProviderPresetId,
         editingManagedProviderId,
         editingNewManagedProviderNameInput,
+        selectedEditingManagedProviderApiKey?.name,
       ),
       apiModelCatalog: editingApiModelCatalogDraft,
     };
@@ -8192,6 +8203,7 @@ export function CodexAccountsPage() {
         providerPayload.apiWireApi,
         providerPayload.apiSupportsWebsockets,
         editingApiSyncModelCatalogToCodex,
+        providerPayload.accountName,
       );
       if (
         validation.apiBaseUrl &&

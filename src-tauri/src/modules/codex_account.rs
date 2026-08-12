@@ -12191,6 +12191,7 @@ multi_agent = true
             false,
             std::collections::HashMap::new(),
             None,
+            None,
         )
         .expect("update API key account");
 
@@ -14077,6 +14078,7 @@ pub fn update_api_key_credentials(
     api_supports_vision: bool,
     api_model_vision_support: std::collections::HashMap<String, bool>,
     api_vision_routing_model: Option<String>,
+    account_name: Option<String>,
 ) -> Result<CodexAccount, String> {
     let mut account =
         load_account(account_id).ok_or_else(|| format!("账号不存在: {}", account_id))?;
@@ -14122,6 +14124,9 @@ pub fn update_api_key_credentials(
         api_model_vision_support,
         api_vision_routing_model,
     );
+    if let Some(account_name) = normalize_optional_value(account_name) {
+        account.account_name = Some(account_name);
+    }
     account.update_last_used();
     save_account(&account)?;
 
