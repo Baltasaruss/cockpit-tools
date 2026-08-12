@@ -23,10 +23,9 @@ mod imp {
         fn macos_native_menu_toggle(snapshot_json: *const c_char, status_item_ptr: *mut c_void);
         fn macos_native_menu_update_snapshot(snapshot_json: *const c_char);
         fn macos_native_menu_update_status_item(
-            account_prefix: *const c_char,
-            value_text: *const c_char,
-            remaining_percent: i32,
+            statuses_json: *const c_char,
             enabled: i32,
+            monochrome_enabled: i32,
             status_item_ptr: *mut c_void,
         );
     }
@@ -51,9 +50,6 @@ mod imp {
         strings: MenuStrings,
         platforms: Vec<PlatformSnapshot>,
         selected_platform_id: String,
-        /// 为 true 时右键打开菜单应强制选中 selected_platform_id（菜单栏额度配置的平台）并展示当前账号。
-        #[serde(default)]
-        prefer_selected_platform: bool,
     }
 
     #[derive(Debug, Clone, Serialize)]
@@ -201,19 +197,27 @@ mod imp {
         pay_as_you_go_usd: Option<f64>,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
     struct MenuBarStatus {
-        /// 前缀：邮箱前 4 位 / "API" / 空
-        account_prefix: String,
+        platform_id: String,
+        short_title: String,
         /// 主数值文案：如 "45%" / "$12.50" / "--"
         value_text: String,
         /// 用于着色的剩余百分比；无则灰色
         remaining_percent: Option<i32>,
     }
 
-    fn menu_bar_account_prefix(label: &str) -> String {
-        let local_part = label.trim().split('@').next().unwrap_or_default().trim();
-        local_part.chars().take(4).collect()
+    fn menu_bar_status(
+        platform: PlatformId,
+        value_text: String,
+        remaining_percent: Option<i32>,
+    ) -> MenuBarStatus {
+        MenuBarStatus {
+            platform_id: platform.as_str().to_string(),
+            short_title: switcher_title(platform),
+            value_text,
+            remaining_percent,
+        }
     }
 
     fn menu_bar_value_from_remaining(remaining_percent: Option<i32>) -> String {
@@ -248,14 +252,8 @@ mod imp {
     fn build_codex_api_key_menu_bar_status(
         account: &crate::models::codex::CodexAccount,
     ) -> MenuBarStatus {
-        // 「API」是类型标签，不是邮箱前缀，不受「显示邮箱前 4 位」开关影响。
-        let prefix = "API".to_string();
         let Some(summary) = codex_api_key_provider_usage(account) else {
-            return MenuBarStatus {
-                account_prefix: prefix,
-                value_text: "--".to_string(),
-                remaining_percent: None,
-            };
+            return menu_bar_status(PlatformId::Codex, "--".to_string(), None);
         };
         let mode = json_path(Some(summary), &["mode"])
             .and_then(Value::as_str)
@@ -275,13 +273,13 @@ mod imp {
                 }
                 _ => None,
             };
-            return MenuBarStatus {
-                account_prefix: prefix,
-                value_text: total_available
+            return menu_bar_status(
+                PlatformId::Codex,
+                total_available
                     .map(format_provider_usage_count)
                     .unwrap_or_else(|| "--".to_string()),
                 remaining_percent,
-            };
+            );
         }
 
         let remaining = json_path(Some(summary), &["quotaRemaining"])
@@ -304,11 +302,7 @@ mod imp {
         };
 
         if quota_unlimited {
-            return MenuBarStatus {
-                account_prefix: prefix,
-                value_text: "∞".to_string(),
-                remaining_percent: Some(100),
-            };
+            return menu_bar_status(PlatformId::Codex, "∞".to_string(), Some(100));
         }
 
         let value_text = remaining
@@ -325,47 +319,34 @@ mod imp {
             })
             .unwrap_or_else(|| "--".to_string());
 
-        MenuBarStatus {
-            account_prefix: prefix,
-            value_text,
-            remaining_percent,
-        }
+        menu_bar_status(PlatformId::Codex, value_text, remaining_percent)
     }
 
     fn build_codex_api_service_menu_bar_status() -> MenuBarStatus {
         let quota = modules::codex_local_access::menu_bar_api_service_quota();
-        MenuBarStatus {
-            // 「API」是类型标签，不受邮箱前缀开关影响。
-            account_prefix: "API".to_string(),
-            value_text: menu_bar_value_from_remaining(quota.remaining_percent),
-            remaining_percent: quota.remaining_percent,
-        }
+        menu_bar_status(
+            PlatformId::Codex,
+            menu_bar_value_from_remaining(quota.remaining_percent),
+            quota.remaining_percent,
+        )
     }
 
-    fn build_menu_bar_status() -> Option<MenuBarStatus> {
-        let config = modules::config::get_user_config();
-        if !config.menu_bar_quota_enabled {
-            return None;
-        }
-
-        let platform = PlatformId::from_str(config.menu_bar_quota_platform.trim())
-            .unwrap_or(PlatformId::Codex);
-        let show_prefix = config.menu_bar_show_account_prefix;
-
+    fn build_menu_bar_status(platform: PlatformId) -> MenuBarStatus {
         // Codex：当前为 API 服务时，固定展示「API + 池剩余额度」，不回落到普通账号卡片。
         if matches!(platform, PlatformId::Codex) && is_codex_api_service_current() {
-            return Some(build_codex_api_service_menu_bar_status());
+            return build_codex_api_service_menu_bar_status();
         }
 
         // Codex：当前为 API Key 账号时，展示「API + 供应商剩余额度」。
         if matches!(platform, PlatformId::Codex) {
             if let Some(account) = modules::codex_account::get_current_account() {
                 if account.is_api_key_auth() {
-                    return Some(build_codex_api_key_menu_bar_status(&account));
+                    return build_codex_api_key_menu_bar_status(&account);
                 }
             }
         }
 
+        let config = modules::config::get_user_config();
         let lang = normalize_lang(&config.language);
         let (cards, current_account_id, _) = build_platform_cards(platform, &lang);
         let card = current_account_id
@@ -374,46 +355,56 @@ mod imp {
             .or_else(|| cards.first());
 
         let remaining_percent = card.and_then(|card| card.remaining_percent);
-        Some(MenuBarStatus {
-            account_prefix: if show_prefix {
-                card.map(|card| menu_bar_account_prefix(&card.title))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            },
-            value_text: menu_bar_value_from_remaining(remaining_percent),
+        menu_bar_status(
+            platform,
+            menu_bar_value_from_remaining(remaining_percent),
             remaining_percent,
-        })
+        )
+    }
+
+    fn order_menu_bar_platforms(
+        selected: &[PlatformId],
+        layout_order: &[String],
+    ) -> Vec<PlatformId> {
+        let selected_set: HashSet<PlatformId> = selected.iter().copied().collect();
+        let mut ordered = normalize_platform_order(layout_order)
+            .into_iter()
+            .filter(|platform| selected_set.contains(platform))
+            .collect::<Vec<_>>();
+        for platform in selected {
+            if !ordered.contains(platform) {
+                ordered.push(*platform);
+            }
+        }
+        ordered
+    }
+
+    fn build_menu_bar_statuses() -> Option<Vec<MenuBarStatus>> {
+        let config = modules::config::get_user_config();
+        if !config.menu_bar_quota_enabled {
+            return None;
+        }
+
+        let selected = PlatformId::parse_list(&config.menu_bar_quota_platform)
+            .into_iter()
+            .take(crate::modules::tray::MAX_MENU_BAR_QUOTA_PLATFORMS)
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            return Some(vec![build_menu_bar_status(PlatformId::Codex)]);
+        }
+        let layout = modules::tray_layout::load_tray_layout();
+        let platforms = order_menu_bar_platforms(&selected, &layout.ordered_platform_ids);
+        Some(platforms.into_iter().map(build_menu_bar_status).collect())
     }
 
     pub(crate) fn update_status_item<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-        let status = build_menu_bar_status();
-        let enabled = status.is_some();
-        let account_prefix_raw = status
-            .as_ref()
-            .map(|value| value.account_prefix.clone())
-            .unwrap_or_default();
-        let account_prefix = to_cstring(&account_prefix_raw);
-        let value_text_raw = status
-            .as_ref()
-            .map(|value| value.value_text.clone())
-            .unwrap_or_else(|| "--".to_string());
-        let value_text = to_cstring(&value_text_raw);
-        let remaining_percent = status
-            .as_ref()
-            .and_then(|value| value.remaining_percent)
-            .unwrap_or(-1);
-        // 先通过 tray-icon 官方 set_title 同步 TaoTrayTarget 点击层尺寸；
-        // 再由 Swift 写入带颜色的 attributedTitle，并再次对齐 frame。
-        let plain_title = if enabled {
-            if account_prefix_raw.is_empty() {
-                value_text_raw.clone()
-            } else {
-                format!("{} {}", account_prefix_raw, value_text_raw)
-            }
-        } else {
-            String::new()
-        };
+        let statuses = build_menu_bar_statuses();
+        let enabled = statuses.is_some();
+        let monochrome_enabled =
+            modules::config::get_user_config().menu_bar_quota_monochrome_enabled;
+        let statuses = statuses.unwrap_or_default();
+        let statuses_json =
+            to_cstring(&serde_json::to_string(&statuses).unwrap_or_else(|_| "[]".to_string()));
         let app = app.clone();
 
         app.clone()
@@ -421,10 +412,6 @@ mod imp {
                 let Some(tray) = app.tray_by_id(TRAY_ID) else {
                     return;
                 };
-
-                if let Err(err) = tray.set_title(Some(plain_title)) {
-                    modules::logger::log_warn(&format!("[Tray] 同步菜单栏额度标题失败: {}", err));
-                }
 
                 let status_item_ptr = tray
                     .with_inner_tray_icon(|tray_icon| {
@@ -440,10 +427,9 @@ mod imp {
 
                 unsafe {
                     macos_native_menu_update_status_item(
-                        account_prefix.as_ptr(),
-                        value_text.as_ptr(),
-                        remaining_percent,
+                        statuses_json.as_ptr(),
                         i32::from(enabled),
+                        i32::from(monochrome_enabled),
                         status_item_ptr as *mut c_void,
                     );
                 }
@@ -585,7 +571,9 @@ mod imp {
 
         // 开启菜单栏额度时：右键默认选中配置的平台，并展示该平台当前账号/额度。
         let preferred_platform = if config.menu_bar_quota_enabled {
-            PlatformId::from_str(config.menu_bar_quota_platform.trim())
+            PlatformId::parse_list(&config.menu_bar_quota_platform)
+                .into_iter()
+                .next()
         } else {
             None
         };
@@ -606,7 +594,6 @@ mod imp {
             strings: build_strings(&lang),
             platforms,
             selected_platform_id,
-            prefer_selected_platform,
         })
     }
 
@@ -626,8 +613,8 @@ mod imp {
 
         PlatformSnapshot {
             id: platform.as_str().to_string(),
-            title: platform.title().to_string(),
-            short_title: switcher_title(platform).to_string(),
+            title: platform_title(platform),
+            short_title: switcher_title(platform),
             nav_target: platform.nav_target().to_string(),
             accent_hex: platform_accent_hex(platform).to_string(),
             current_account_id,
@@ -668,12 +655,25 @@ mod imp {
         }
     }
 
-    fn switcher_title(platform: PlatformId) -> &'static str {
+    fn antigravity_is_cli() -> bool {
+        modules::tray_layout::load_tray_layout().antigravity_runtime_target
+            == modules::tray_layout::ANTIGRAVITY_RUNTIME_CLI
+    }
+
+    fn platform_title(platform: PlatformId) -> String {
+        if platform == PlatformId::Antigravity && antigravity_is_cli() {
+            return "Agy CLI".to_string();
+        }
+        platform.title().to_string()
+    }
+
+    fn switcher_title(platform: PlatformId) -> String {
         match platform {
-            PlatformId::Antigravity => "AG IDE",
-            PlatformId::GitHubCopilot => "Copilot",
-            PlatformId::CodebuddyCn => "CodeBuddy CN",
-            _ => platform.title(),
+            PlatformId::Antigravity if antigravity_is_cli() => "Agy CLI".to_string(),
+            PlatformId::Antigravity => "AG IDE".to_string(),
+            PlatformId::GitHubCopilot => "Copilot".to_string(),
+            PlatformId::CodebuddyCn => "CodeBuddy CN".to_string(),
+            _ => platform.title().to_string(),
         }
     }
 
@@ -3968,27 +3968,6 @@ mod imp {
         accounts
             .sort_by_key(|account| std::cmp::Reverse(account.last_used.max(account.created_at)));
 
-        let remaining_metrics = |account: &crate::models::grok::GrokAccountView| {
-            let Some(quota) = account.quota.as_ref() else {
-                return Vec::new();
-            };
-            let mut values = Vec::new();
-            if let Some(used) = quota.weekly_limit_percent {
-                values.push((100 - clamp_percent(used)).clamp(0, 100));
-            }
-            values.extend(quota.products.iter().filter_map(|product| {
-                product
-                    .usage_percent
-                    .map(|used| (100 - clamp_percent(used)).clamp(0, 100))
-            }));
-            if let (Some(used), Some(cap)) = (quota.on_demand_used, quota.on_demand_cap) {
-                if cap > 0.0 {
-                    values.push((100 - clamp_percent(used / cap * 100.0)).clamp(0, 100));
-                }
-            }
-            values
-        };
-
         let recommended = current_id.as_deref().and_then(|id| {
             accounts
                 .iter()
@@ -4002,7 +3981,10 @@ mod imp {
                             .unwrap_or(true)
                 })
                 .filter_map(|account| {
-                    let minimum = remaining_metrics(account).into_iter().min()?;
+                    let minimum = modules::grok_account::quota_remaining_metrics(account)
+                        .into_iter()
+                        .map(|(_, remaining)| remaining)
+                        .min()?;
                     if minimum <= 0 {
                         return None;
                     }
@@ -4053,12 +4035,11 @@ mod imp {
                             ));
                         }
                     }
-                    if let (Some(used), Some(cap)) = (quota.on_demand_used, quota.on_demand_cap) {
-                        let remaining = if cap > 0.0 {
-                            (100 - clamp_percent(used / cap * 100.0)).clamp(0, 100)
-                        } else {
-                            0
-                        };
+                    if let (Some(used), Some(cap)) = (
+                        quota.on_demand_used,
+                        quota.on_demand_cap.filter(|cap| *cap > 0.0),
+                    ) {
+                        let remaining = (100 - clamp_percent(used / cap * 100.0)).clamp(0, 100);
                         rows.push(make_progress_row(
                             translate_or(lang, "grok.quota.onDemand", "On-demand", &[]),
                             format!(
@@ -4080,7 +4061,10 @@ mod imp {
                     }
                 }
 
-                let remaining_percent = min_quota_progress(&rows, true);
+                let remaining_percent = modules::grok_account::quota_remaining_metrics(&account)
+                    .into_iter()
+                    .map(|(_, remaining)| remaining)
+                    .min();
                 AccountCard {
                     id: account.id,
                     title: account.email,
@@ -5102,9 +5086,16 @@ mod imp {
         tauri::async_runtime::spawn(async move {
             let status_app = app.clone();
             let _ = match platform {
-                PlatformId::Antigravity => commands::account::switch_account(app, account_id, None)
-                    .await
-                    .map(|_| ()),
+                PlatformId::Antigravity => commands::account::switch_account(
+                    app,
+                    account_id,
+                    Some(
+                        modules::tray_layout::load_tray_layout()
+                            .antigravity_runtime_target,
+                    ),
+                )
+                .await
+                .map(|_| ()),
                 PlatformId::Codex
                     if modules::codex_instance::is_api_service_bind_account_id(&account_id) =>
                 {
@@ -5185,6 +5176,25 @@ mod imp {
     fn open_main_window() {
         if let Some(app) = crate::get_app_handle() {
             let _ = modules::floating_card_window::show_main_window(app);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{order_menu_bar_platforms, PlatformId};
+
+        #[test]
+        fn menu_bar_quota_follows_platform_layout_order() {
+            let selected = [PlatformId::Codex, PlatformId::Grok, PlatformId::Antigravity];
+            let layout = vec![
+                "grok".to_string(),
+                "antigravity".to_string(),
+                "codex".to_string(),
+            ];
+            assert_eq!(
+                order_menu_bar_platforms(&selected, &layout),
+                vec![PlatformId::Grok, PlatformId::Antigravity, PlatformId::Codex]
+            );
         }
     }
 }

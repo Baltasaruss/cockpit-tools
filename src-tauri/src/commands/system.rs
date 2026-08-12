@@ -133,8 +133,10 @@ pub struct GeneralConfig {
     pub menu_bar_quota_enabled: bool,
     /// 是否显示账号标识前 4 位
     pub menu_bar_show_account_prefix: bool,
-    /// 菜单栏额度监控平台
+    /// 菜单栏额度监控平台（逗号分隔）
     pub menu_bar_quota_platform: String,
+    /// 菜单栏额度是否以单色显示
+    pub menu_bar_quota_monochrome_enabled: bool,
     /// 是否在启动时显示悬浮卡片
     pub floating_card_show_on_startup: bool,
     /// 是否在启动后自动最小化主窗口
@@ -731,8 +733,47 @@ fn normalize_antigravity_metadata_target(target: Option<&str>) -> Option<&'stati
     match target.unwrap_or("").trim().to_ascii_lowercase().as_str() {
         "antigravity" => Some("antigravity"),
         "antigravity_ide" | "antigravity-ide" | "ide" => Some("antigravity_ide"),
+        "antigravity_cli" | "antigravity-cli" | "agy" => Some("antigravity_cli"),
         _ => None,
     }
+}
+
+fn resolve_agy_installed_version_info() -> Option<AntigravityInstalledVersionInfo> {
+    let executable_name = if cfg!(target_os = "windows") {
+        "agy.exe"
+    } else {
+        "agy"
+    };
+    let mut candidates = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local").join("bin").join(executable_name));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|dir| dir.join(executable_name)));
+    }
+
+    for path in candidates {
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(output) = std::process::Command::new(&path).arg("--version").output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if version.is_empty() {
+            continue;
+        }
+        return Some(AntigravityInstalledVersionInfo {
+            product_name: "Antigravity CLI".to_string(),
+            version,
+            app_path: path.to_string_lossy().to_string(),
+            source: "agy --version".to_string(),
+        });
+    }
+    None
 }
 
 fn normalize_antigravity_version_scan_mode(raw: Option<&str>) -> AntigravityVersionScanMode {
@@ -963,7 +1004,11 @@ fn detect_and_cache_antigravity_installed_version_info_for_target(
     target: Option<&str>,
     scan_mode: AntigravityVersionScanMode,
 ) -> Option<AntigravityInstalledVersionInfo> {
-    let info = resolve_antigravity_installed_version_info_for_target_with_mode(target, scan_mode);
+    let info = if normalize_antigravity_metadata_target(target) == Some("antigravity_cli") {
+        resolve_agy_installed_version_info()
+    } else {
+        resolve_antigravity_installed_version_info_for_target_with_mode(target, scan_mode)
+    };
     if let Some(ref value) = info {
         cache_antigravity_installed_version_info(target, value);
     }
@@ -1073,6 +1118,7 @@ fn is_general_config_patch_field(key: &str) -> bool {
             | "menu_bar_quota_enabled"
             | "menu_bar_show_account_prefix"
             | "menu_bar_quota_platform"
+            | "menu_bar_quota_monochrome_enabled"
             | "floating_card_show_on_startup"
             | "startup_minimized"
             | "remember_main_window_state"
@@ -1237,10 +1283,19 @@ fn apply_general_config_updates(
         next.theme_color = config::normalize_theme_color(&next.theme_color);
     }
     if updates.contains_key("menu_bar_quota_platform") {
-        let platform = next.menu_bar_quota_platform.trim();
-        next.menu_bar_quota_platform = modules::tray::PlatformId::from_str(platform)
-            .map(|value| value.as_str().to_string())
-            .unwrap_or_else(|| "codex".to_string());
+        let platforms = modules::tray::PlatformId::parse_list(&next.menu_bar_quota_platform)
+            .into_iter()
+            .take(modules::tray::MAX_MENU_BAR_QUOTA_PLATFORMS)
+            .collect::<Vec<_>>();
+        next.menu_bar_quota_platform = if platforms.is_empty() {
+            "codex".to_string()
+        } else {
+            platforms
+                .into_iter()
+                .map(|platform| platform.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
     }
     if updates.contains_key("webdav_allowed_domains") {
         next.webdav_allowed_domains = next
@@ -2561,6 +2616,7 @@ pub fn get_general_config(app: tauri::AppHandle) -> Result<GeneralConfig, String
         menu_bar_quota_enabled: user_config.menu_bar_quota_enabled,
         menu_bar_show_account_prefix: user_config.menu_bar_show_account_prefix,
         menu_bar_quota_platform: user_config.menu_bar_quota_platform,
+        menu_bar_quota_monochrome_enabled: user_config.menu_bar_quota_monochrome_enabled,
         floating_card_show_on_startup: user_config.floating_card_show_on_startup,
         startup_minimized: user_config.startup_minimized,
         remember_main_window_state: user_config.remember_main_window_state,
@@ -2799,6 +2855,7 @@ pub fn patch_general_config(
             current.menu_bar_quota_enabled,
             current.menu_bar_show_account_prefix,
             current.menu_bar_quota_platform.clone(),
+            current.menu_bar_quota_monochrome_enabled,
         );
 
         apply_general_config_updates(current, &updates)?;
@@ -2819,6 +2876,7 @@ pub fn patch_general_config(
                     current.menu_bar_quota_enabled,
                     current.menu_bar_show_account_prefix,
                     current.menu_bar_quota_platform.clone(),
+                    current.menu_bar_quota_monochrome_enabled,
                 );
         }
         Ok(())
@@ -3650,6 +3708,7 @@ pub fn save_tray_platform_layout(
     tray_platform_ids: Vec<String>,
     ordered_entry_ids: Option<Vec<String>>,
     platform_groups: Option<Vec<modules::tray_layout::TrayLayoutGroup>>,
+    antigravity_runtime_target: Option<String>,
 ) -> Result<(), String> {
     modules::tray_layout::save_tray_layout(
         sort_mode,
@@ -3657,6 +3716,7 @@ pub fn save_tray_platform_layout(
         tray_platform_ids,
         ordered_entry_ids,
         platform_groups,
+        antigravity_runtime_target,
     )?;
     modules::tray::update_tray_menu(&app)?;
     Ok(())
@@ -4152,6 +4212,21 @@ mod tests {
 
         assert_eq!(config.theme, "light");
         assert_eq!(config.auto_refresh_minutes, 10);
+    }
+
+    #[test]
+    fn menu_bar_platform_patch_keeps_three_unique_valid_platforms() {
+        let mut config = UserConfig::default();
+        let updates = serde_json::json!({
+            "menu_bar_quota_platform": "codex,grok,antigravity,codex,claude_manager,unknown"
+        })
+        .as_object()
+        .expect("patch should be an object")
+        .clone();
+
+        apply_general_config_updates(&mut config, &updates).expect("patch should succeed");
+
+        assert_eq!(config.menu_bar_quota_platform, "codex,grok,antigravity");
     }
 
     #[test]
