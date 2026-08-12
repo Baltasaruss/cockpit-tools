@@ -35,7 +35,6 @@ import { useWindsurfAccountStore } from './stores/useWindsurfAccountStore';
 import { useKiroAccountStore } from './stores/useKiroAccountStore';
 import { useCursorAccountStore } from './stores/useCursorAccountStore';
 import { useGrokAccountStore } from './stores/useGrokAccountStore';
-import { useKimiAccountStore } from './stores/useKimiAccountStore';
 import { useCodebuddyAccountStore } from './stores/useCodebuddyAccountStore';
 import { useCodebuddyCnAccountStore } from './stores/useCodebuddyCnAccountStore';
 import { useQoderAccountStore } from './stores/useQoderAccountStore';
@@ -125,9 +124,6 @@ const CursorAccountsPage = lazy(() =>
 const GrokAccountsPage = lazy(() =>
   import('./pages/GrokAccountsPage').then((module) => ({ default: module.GrokAccountsPage })),
 );
-const KimiAccountsPage = lazy(() =>
-  import('./pages/KimiAccountsPage').then((module) => ({ default: module.KimiAccountsPage })),
-);
 const CodebuddyAccountsPage = lazy(() =>
   import('./pages/CodebuddyAccountsPage').then((module) => ({ default: module.CodebuddyAccountsPage })),
 );
@@ -207,7 +203,6 @@ const RENDERABLE_PAGE_VALUES: readonly Page[] = [
   'kiro',
   'cursor',
   'grok',
-  'kimi',
   'codebuddy',
   'codebuddy-cn',
   'qoder',
@@ -244,7 +239,6 @@ const TOP_PROMO_PAGE_PLATFORM_TARGETS: Partial<Record<Page, readonly string[]>> 
   kiro: ['kiro'],
   cursor: ['cursor'],
   grok: ['grok'],
-  kimi: ['kimi'],
   codebuddy: ['codebuddy'],
   'codebuddy-cn': ['codebuddy-cn'],
   qoder: ['qoder'],
@@ -487,7 +481,6 @@ type QuotaAlertPlatform =
   | 'kiro'
   | 'cursor'
   | 'grok'
-  | 'kimi'
   | 'codebuddy'
   | 'codebuddy_cn'
   | 'qoder'
@@ -589,8 +582,6 @@ function normalizeQuotaAlertPlatform(platform: string | undefined): QuotaAlertPl
       return 'cursor';
     case 'grok':
       return 'grok';
-    case 'kimi':
-      return 'kimi';
     case 'codebuddy':
       return 'codebuddy';
     case 'codebuddy_cn':
@@ -631,8 +622,6 @@ function getQuotaAlertPlatformLabel(
       return 'Cursor';
     case 'grok':
       return 'Grok CLI';
-    case 'kimi':
-      return 'Kimi Code';
     case 'codebuddy':
       return 'CodeBuddy';
     case 'codebuddy_cn':
@@ -664,8 +653,6 @@ function getQuotaAlertTargetPage(platform: QuotaAlertPlatform): Page {
       return 'cursor';
     case 'grok':
       return 'grok';
-    case 'kimi':
-      return 'kimi';
     case 'codebuddy':
       return 'codebuddy';
     case 'codebuddy_cn':
@@ -699,8 +686,6 @@ function getQuotaAlertQuickSettingsType(platform: QuotaAlertPlatform): QuickSett
       return 'cursor';
     case 'grok':
       return 'grok';
-    case 'kimi':
-      return 'kimi';
     case 'codebuddy':
       return 'codebuddy';
     case 'codebuddy_cn':
@@ -2888,9 +2873,6 @@ function MainApp() {
                     } else if (platform === 'grok') {
                       await useGrokAccountStore.getState().switchAccount(targetAccountId);
                       setPage('grok');
-                    } else if (platform === 'kimi') {
-                      await useKimiAccountStore.getState().switchAccount(targetAccountId);
-                      setPage('kimi');
                     } else if (platform === 'codebuddy') {
                       await useCodebuddyAccountStore.getState().switchAccount(targetAccountId);
                       setPage('codebuddy');
@@ -4043,7 +4025,6 @@ function MainApp() {
           {page === 'kiro' && <KiroAccountsPage />}
           {page === 'cursor' && <CursorAccountsPage />}
           {page === 'grok' && <GrokAccountsPage />}
-          {page === 'kimi' && <KimiAccountsPage />}
           {page === 'codebuddy' && <CodebuddyAccountsPage />}
           {page === 'codebuddy-cn' && <CodebuddyCnAccountsPage />}
           {page === 'qoder' && <QoderAccountsPage />}

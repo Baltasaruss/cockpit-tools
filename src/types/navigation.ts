@@ -13,7 +13,6 @@ export type Page =
   | 'kiro'
   | 'cursor'
   | 'grok'
-  | 'kimi'
   | 'codebuddy'
   | 'codebuddy-cn'
   | 'qoder'

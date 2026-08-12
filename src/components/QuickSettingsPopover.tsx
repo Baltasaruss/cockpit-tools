@@ -72,7 +72,6 @@ interface GeneralConfig {
   kiro_auto_refresh_minutes: number;
   cursor_auto_refresh_minutes: number;
   grok_auto_refresh_minutes: number;
-  kimi_auto_refresh_minutes: number;
   grok_sync_official_auth_on_switch: boolean;
   codebuddy_auto_refresh_minutes: number;
   codebuddy_cn_auto_refresh_minutes: number;
@@ -193,7 +192,6 @@ export type QuickSettingsType =
   | 'kiro'
   | 'cursor'
   | 'grok'
-  | 'kimi'
   | 'codebuddy'
   | 'codebuddy_cn'
   | 'qoder'
@@ -399,8 +397,6 @@ const getCurrentAccountRefreshPlatformForType = (
       return 'cursor';
     case 'grok':
       return 'grok';
-    case 'kimi':
-      return 'kimi';
     case 'codebuddy':
       return 'codebuddy';
     case 'codebuddy_cn':
@@ -966,7 +962,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
       case 'kiro': return 'kiro_auto_refresh_minutes';
       case 'cursor': return 'cursor_auto_refresh_minutes';
       case 'grok': return 'grok_auto_refresh_minutes';
-      case 'kimi': return 'kimi_auto_refresh_minutes';
       case 'codebuddy': return 'codebuddy_auto_refresh_minutes';
       case 'codebuddy_cn': return 'codebuddy_cn_auto_refresh_minutes';
       case 'qoder': return 'qoder_auto_refresh_minutes';
@@ -1135,8 +1130,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
           return 'Cursor';
         case 'grok':
           return 'Grok CLI';
-        case 'kimi':
-          return 'Kimi Code';
         case 'codebuddy':
           return 'CodeBuddy';
         case 'codebuddy_cn':
@@ -1214,10 +1207,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
         return 'cursor_quota_alert_enabled';
       case 'grok':
         return 'grok_quota_alert_enabled';
-      case 'kimi':
-        // Kimi has no independent quota-alert config yet; hide via caller when type=kimi.
-        // Never bind to Grok's field.
-        return 'quota_alert_enabled';
       case 'codebuddy':
         return 'codebuddy_quota_alert_enabled';
       case 'codebuddy_cn':
@@ -1257,8 +1246,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
         return 'cursor_quota_alert_threshold';
       case 'grok':
         return 'grok_quota_alert_threshold';
-      case 'kimi':
-        return 'quota_alert_threshold';
       case 'codebuddy':
         return 'codebuddy_quota_alert_threshold';
       case 'codebuddy_cn':
@@ -1300,8 +1287,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
         return t('quickSettings.cursorRefreshInterval', '配额自动刷新');
       case 'grok':
         return t('quickSettings.refreshInterval', '配额自动刷新');
-      case 'kimi':
-        return t('quickSettings.refreshInterval', '配额自动刷新');
       case 'codebuddy':
         return t('quickSettings.refreshInterval', '配额自动刷新');
       case 'codebuddy_cn':
@@ -1322,7 +1307,7 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
     }
   };
 
-  const showAppPathSection = type !== 'grok' && type !== 'kimi';
+  const showAppPathSection = type !== 'grok';
   const antigravityLaunchOnSwitch = config?.antigravity_launch_on_switch ?? true;
 
   const getAppPath = (): string => {
@@ -1343,8 +1328,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
       case 'cursor':
         return config.cursor_app_path;
       case 'grok':
-        return '';
-      case 'kimi':
         return '';
       case 'codebuddy':
         return config.codebuddy_app_path;
@@ -1389,8 +1372,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
         return t('quickSettings.cursor.appPath', 'Cursor 路径');
       case 'grok':
         return t('quickSettings.grok.appPath', 'Grok CLI 路径');
-      case 'kimi':
-        return t('quickSettings.kimi.appPath', 'Kimi Code 路径');
       case 'codebuddy':
         return t('quickSettings.codebuddy.appPath', 'CodeBuddy 路径');
       case 'codebuddy_cn':
@@ -1431,8 +1412,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
       case 'cursor':
         return 'cursor';
       case 'grok':
-        return 'antigravity';
-      case 'kimi':
         return 'antigravity';
       case 'codebuddy':
         return 'codebuddy';
@@ -3467,7 +3446,7 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
               </div>
             )}
 
-            {type !== 'antigravity' && type !== 'zcode' && type !== 'kimi' && (
+            {type !== 'antigravity' && type !== 'zcode' && (
               <div className="qs-section qs-section--highlight">
                 <div className="qs-section-header">
                   <Zap size={15} />

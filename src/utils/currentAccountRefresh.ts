@@ -12,7 +12,6 @@ export type CurrentAccountRefreshPlatform =
   | 'kiro'
   | 'cursor'
   | 'grok'
-  | 'kimi'
   | 'codebuddy'
   | 'codebuddy_cn'
   | 'workbuddy'
@@ -33,7 +32,6 @@ export const CURRENT_ACCOUNT_REFRESH_PLATFORMS: CurrentAccountRefreshPlatform[] 
   'kiro',
   'cursor',
   'grok',
-  'kimi',
   'codebuddy',
   'codebuddy_cn',
   'workbuddy',
@@ -73,7 +71,6 @@ export function buildDefaultCurrentAccountRefreshMinutesMap(): CurrentAccountRef
     kiro: DEFAULT_CURRENT_ACCOUNT_REFRESH_MINUTES,
     cursor: DEFAULT_CURRENT_ACCOUNT_REFRESH_MINUTES,
     grok: DEFAULT_CURRENT_ACCOUNT_REFRESH_MINUTES,
-    kimi: DEFAULT_CURRENT_ACCOUNT_REFRESH_MINUTES,
     codebuddy: DEFAULT_CURRENT_ACCOUNT_REFRESH_MINUTES,
     codebuddy_cn: DEFAULT_CURRENT_ACCOUNT_REFRESH_MINUTES,
     workbuddy: DEFAULT_CURRENT_ACCOUNT_REFRESH_MINUTES,
