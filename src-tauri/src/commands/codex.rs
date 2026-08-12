@@ -3439,6 +3439,7 @@ pub async fn codex_local_access_update_api_key(
     model_prefix: Option<String>,
     allowed_models: Option<Vec<String>>,
     excluded_models: Option<Vec<String>>,
+    token_limit: Option<u64>,
     account_ids: Option<Vec<String>>,
     inherit_account_pool: Option<bool>,
 ) -> Result<CodexLocalAccessState, String> {
@@ -3449,6 +3450,7 @@ pub async fn codex_local_access_update_api_key(
         model_prefix,
         allowed_models,
         excluded_models,
+        token_limit,
         account_ids,
         inherit_account_pool,
     )
