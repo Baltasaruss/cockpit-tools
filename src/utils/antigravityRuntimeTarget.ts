@@ -1,16 +1,13 @@
 import { PlatformId } from '../types/platform';
 
-export type AntigravityRuntimeTarget = Extract<
-  PlatformId,
-  'antigravity' | 'antigravity_ide' | 'antigravity_cli'
->;
+export type AntigravityRuntimeTarget = Extract<PlatformId, 'antigravity' | 'antigravity_ide'>;
 
 export const ANTIGRAVITY_RUNTIME_TARGET_STORAGE_KEY = 'agtools.antigravity.runtime_target.v1';
 export const ANTIGRAVITY_RUNTIME_TARGET_CHANGED_EVENT = 'agtools-antigravity-runtime-target-changed';
 export const DEFAULT_ANTIGRAVITY_RUNTIME_TARGET: AntigravityRuntimeTarget = 'antigravity_ide';
 
 export function isAntigravityRuntimeTarget(value: unknown): value is AntigravityRuntimeTarget {
-  return value === 'antigravity' || value === 'antigravity_ide' || value === 'antigravity_cli';
+  return value === 'antigravity' || value === 'antigravity_ide';
 }
 
 export function normalizeAntigravityRuntimeTarget(value: unknown): AntigravityRuntimeTarget {
@@ -50,3 +47,4 @@ export function setAntigravityRuntimeTargetFromPlatform(platformId: PlatformId):
   }
   setAntigravityRuntimeTarget(platformId);
 }
+

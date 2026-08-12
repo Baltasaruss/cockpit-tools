@@ -2726,21 +2726,15 @@ pub async fn refresh_all_accounts() -> Result<Vec<(String, Result<GrokAccountVie
 }
 
 pub fn current_account_id() -> Result<Option<String>, String> {
-    let sync_official = config::get_user_config().grok_sync_official_auth_on_switch;
+    if !config::get_user_config().grok_sync_official_auth_on_switch {
+        return Ok(None);
+    }
     if let Some(tracked) = provider_current_state::get_current_account_id("grok")? {
-        if let Some(account) = load_account(&tracked) {
-            if !sync_official || account.is_api_key_auth() {
-                return Ok(Some(tracked));
-            }
-        } else {
-            provider_current_state::set_current_account_id("grok", None)?;
+        if load_account(&tracked).is_some_and(|account| account.is_api_key_auth()) {
+            return Ok(Some(tracked));
         }
     }
-    if sync_official {
-        reconcile_current_account_id()
-    } else {
-        Ok(None)
-    }
+    reconcile_current_account_id()
 }
 
 pub fn accounts_index_path_string() -> Result<String, String> {
@@ -2760,7 +2754,7 @@ fn remaining_percent_from_used_pct(used_percent: f64) -> i32 {
 }
 
 /// 与账号页/概览可见桶对齐：周额度 + productUsage + 任务/按量。
-pub(crate) fn quota_remaining_metrics(account: &GrokAccountView) -> Vec<(String, i32)> {
+fn quota_remaining_metrics(account: &GrokAccountView) -> Vec<(String, i32)> {
     let Some(quota) = account.quota.as_ref() else {
         return Vec::new();
     };
@@ -2826,7 +2820,7 @@ pub fn run_quota_alert_if_needed() -> Result<(), String> {
     let accounts = list_accounts_checked()?;
     let now = now_ts();
 
-    // 对每个已有配额数据的账号独立预警。
+    // 无全局「当前账号」：对每个已有配额数据的账号独立预警。
     for current in &accounts {
         let metrics = quota_remaining_metrics(current);
         if metrics.is_empty() {
@@ -3711,12 +3705,6 @@ mod tests {
         assert_eq!(quota.weekly_used, Some(25.0));
         assert_eq!(quota.weekly_total, Some(100.0));
         assert_eq!(quota.on_demand_cap, Some(0.0));
-        let mut account = sample_account();
-        account.quota = Some(quota);
-        assert_eq!(
-            quota_remaining_metrics(&GrokAccountView::from(&account)),
-            vec![("weekly".to_string(), 75)]
-        );
     }
 
     #[test]

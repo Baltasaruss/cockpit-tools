@@ -76,12 +76,6 @@ export function InstancesPage({ onNavigate }: InstancesPageProps) {
       });
   }, []);
 
-  useEffect(() => {
-    if (runtimeTarget === 'antigravity_cli') {
-      onNavigate?.('overview');
-    }
-  }, [onNavigate, runtimeTarget]);
-
   const renderAccountQuotaPreview = (account: Account) => {
     const presentation = buildAntigravityAccountPresentation(account, displayGroups, t);
     const lines = buildQuotaPreviewLines(presentation.quotaItems, 3);
@@ -101,10 +95,6 @@ export function InstancesPage({ onNavigate }: InstancesPageProps) {
       </div>
     );
   };
-
-  if (runtimeTarget === 'antigravity_cli') {
-    return null;
-  }
 
   return (
     <div className="instances-page">

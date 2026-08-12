@@ -135,9 +135,7 @@ const DASHBOARD_DEFERRED_PREFETCH_BATCH_DELAY_MS = 1200;
 let dashboardStartupPrefetched = false;
 
 function normalizeDashboardCardPlatformId(platformId: PlatformId): PlatformId {
-  return platformId === 'antigravity_ide' || platformId === 'antigravity_cli'
-    ? 'antigravity'
-    : platformId;
+  return platformId === 'antigravity_ide' ? 'antigravity' : platformId;
 }
 
 function isTraeSuitePlatform(platformId: PlatformId): boolean {
@@ -2615,7 +2613,6 @@ export function DashboardPage({
   const platformCounts: Record<PlatformId, number> = {
     antigravity: stats.antigravity,
     antigravity_ide: stats.antigravity,
-    antigravity_cli: stats.antigravity,
     codex: stats.codex,
     codex_api_service: 0,
     claude_manager: stats.claude,
@@ -2645,7 +2642,7 @@ export function DashboardPage({
       const countedPlatformIds = new Set<PlatformId>();
       const count = platformIds.reduce((sum, platformId) => {
         const countPlatformId =
-          platformId === 'antigravity_ide' || platformId === 'antigravity_cli'
+          platformId === 'antigravity_ide'
             ? 'antigravity'
               : platformId;
         if (countedPlatformIds.has(countPlatformId)) {
