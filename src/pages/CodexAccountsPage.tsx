@@ -272,6 +272,7 @@ import {
 } from "../services/codexApiKeyUsageRefreshService";
 import {
   isModelProviderUsageUnavailableError,
+  formatModelProviderUsageMoney,
   listModelProviderModels,
   resolveNewApiQuotaSnapshot,
 } from "../services/modelProviderUsageService";
@@ -699,9 +700,13 @@ function getCockpitApiStatsRecord(
 
 function resolveApiKeyUsageMode(
   summary?: CodexModelProviderUsageSummary,
-): "new_api" | "sub2api" | null {
+): "new_api" | "sub2api" | "deepseek" | null {
   if (!summary) return null;
-  if (summary.mode === "new_api" || summary.mode === "sub2api") {
+  if (
+    summary.mode === "new_api" ||
+    summary.mode === "sub2api" ||
+    summary.mode === "deepseek"
+  ) {
     return summary.mode;
   }
   if (
@@ -7582,28 +7587,9 @@ export function CodexAccountsPage() {
   }, [refreshApiKeyUsageByAccountId]);
 
   const formatApiKeyUsageMoney = useCallback(
-    (value?: number | null, unit?: string | null): string => {
-      if (typeof value !== "number" || !Number.isFinite(value)) return "-";
-      const normalizedUnit = unit?.trim() || "USD";
-      const formatted = value.toFixed(value >= 100 ? 0 : 2);
-      return normalizedUnit === "USD"
-        ? `$${formatted}`
-        : `${formatted} ${normalizedUnit}`;
-    },
+    (value?: number | null, unit?: string | null): string =>
+      formatModelProviderUsageMoney(value ?? undefined, unit ?? undefined),
     [],
-  );
-
-  const formatApiKeyUsageBalance = useCallback(
-    (summary?: CodexModelProviderUsageSummary): string | null => {
-      if (
-        typeof summary?.balance !== "number" ||
-        !Number.isFinite(summary.balance)
-      ) {
-        return null;
-      }
-      return formatApiKeyUsageMoney(summary.balance, summary.unit);
-    },
-    [formatApiKeyUsageMoney],
   );
 
   const formatApiKeyUsageQuotaValue = useCallback(
@@ -7742,6 +7728,11 @@ export function CodexAccountsPage() {
           "codex.modelProviders.usage.fields.totalUsage",
           "累计消耗",
         ),
+        isAvailable: t("codex.modelProviders.usage.fields.isAvailable", "余额可用"),
+        currency: t("codex.modelProviders.usage.fields.currency", "币种"),
+        totalBalance: t("codex.modelProviders.usage.fields.totalBalance", "总余额"),
+        grantedBalance: t("codex.modelProviders.usage.fields.grantedBalance", "赠金余额"),
+        toppedUpBalance: t("codex.modelProviders.usage.fields.toppedUpBalance", "充值余额"),
       };
       return labels[key] ?? fallback;
     },
@@ -7766,7 +7757,11 @@ export function CodexAccountsPage() {
       if (Number.isFinite(numeric) && item.key === "expiresAt") {
         return numeric > 0 ? formatDate(numeric * 1000) : "-";
       }
-      if (item.key === "quotaUnlimited" || item.key === "modelLimitsEnabled") {
+      if (
+        item.key === "quotaUnlimited" ||
+        item.key === "modelLimitsEnabled" ||
+        item.key === "isAvailable"
+      ) {
         if (raw === "true")
           return t("codex.modelProviders.usage.booleanTrue", "是");
         if (raw === "false")
@@ -7782,6 +7777,9 @@ export function CodexAccountsPage() {
           "hardLimitUsd",
           "softLimitUsd",
           "systemHardLimitUsd",
+          "totalBalance",
+          "grantedBalance",
+          "toppedUpBalance",
         ].includes(item.key)
       ) {
         return formatApiKeyUsageMoney(numeric, unit);
@@ -7843,9 +7841,30 @@ export function CodexAccountsPage() {
         provider?.baseUrl.trim() || (account.api_base_url || "").trim();
       const canRefresh = Boolean(apiKey && baseUrl);
       const usageMode = resolveApiKeyUsageMode(summary);
+      const isDeepSeekUsage = usageMode === "deepseek";
       const isNewApiUsage = usageMode === "new_api";
       const isSub2ApiUsage = usageMode === "sub2api";
       const usedPercent = formatApiKeyUsagePercent(summary);
+      if (variant === "card" && summary && isDeepSeekUsage) {
+        return (
+          <div className="codex-api-key-usage-panel sub2api">
+            <div className="codex-api-key-usage-grid">
+              <div>
+                <span>{t("codex.modelProviders.usage.fields.totalBalance", "总余额")}</span>
+                <strong>{formatApiKeyUsageMoney(summary.balance, summary.unit)}</strong>
+              </div>
+              <div>
+                <span>{t("codex.modelProviders.usage.fields.grantedBalance", "赠金余额")}</span>
+                <strong>{formatApiKeyUsageDetailByKey(summary, "grantedBalance")}</strong>
+              </div>
+              <div>
+                <span>{t("codex.modelProviders.usage.fields.toppedUpBalance", "充值余额")}</span>
+                <strong>{formatApiKeyUsageDetailByKey(summary, "toppedUpBalance")}</strong>
+              </div>
+            </div>
+          </div>
+        );
+      }
       if (variant === "card" && summary && isNewApiUsage) {
         const quota = resolveNewApiQuotaSnapshot(summary);
         const grantedText = formatApiKeyUsageMoney(quota.granted, summary.unit);
@@ -7947,7 +7966,20 @@ export function CodexAccountsPage() {
           {summary ? (
             <>
               <div className="codex-api-key-usage-grid">
-                {isNewApiUsage ? (
+                {isDeepSeekUsage ? (
+                  <>
+                    {[
+                      ["totalBalance", "总余额"],
+                      ["grantedBalance", "赠金余额"],
+                      ["toppedUpBalance", "充值余额"],
+                    ].map(([key, fallback]) => (
+                      <div key={key}>
+                        <span>{formatApiKeyUsageDetailLabel(key, fallback)}</span>
+                        <strong>{formatApiKeyUsageDetailByKey(summary, key)}</strong>
+                      </div>
+                    ))}
+                  </>
+                ) : isNewApiUsage ? (
                   <>
                     <div>
                       <span>
@@ -8080,12 +8112,10 @@ export function CodexAccountsPage() {
       apiKeyUsageMap,
       formatApiKeyUsagePercent,
       formatApiKeyUsageMoney,
-      formatApiKeyUsageBalance,
       formatApiKeyUsageQuotaValue,
+      formatApiKeyUsageDetailLabel,
+      formatApiKeyUsageDetailValue,
       formatApiKeyUsageDetailByKey,
-      canRefreshApiKeyUsage,
-      refreshApiKeyUsage,
-      setApiKeyUsageDetailAccountId,
       t,
     ],
   );
