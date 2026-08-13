@@ -724,6 +724,7 @@
 .codex-api-service-key-main code,
 .codex-api-service-policy-grid input,
 .codex-api-service-policy-grid textarea,
+.codex-api-service-mapping-row input,
 .codex-api-service-timeout-preset-row input,
 .codex-api-service-timeout-preset-row select {
   min-width: 0;
@@ -752,7 +753,8 @@
 .codex-api-service-input-row input,
 .codex-api-service-table-row input,
 .codex-api-service-key-main input,
-.codex-api-service-policy-grid input {
+.codex-api-service-policy-grid input,
+.codex-api-service-mapping-row input {
   width: 100%;
   height: 34px;
   padding: 0 10px;
@@ -1654,6 +1656,74 @@ html[data-reduced-motion="true"] .codex-api-service-key-advanced-toggle[aria-exp
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+}
+
+.codex-api-service-mapping-account {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--codex-api-border-soft);
+}
+
+.codex-api-service-mapping-account:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.codex-api-service-mapping-account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.codex-api-service-mapping-account-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-api-service-mapping-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.codex-api-service-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+
+.codex-api-service-mapping-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.codex-api-service-mapping-row label span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.codex-api-service-mapping-row input {
+  width: 100%;
+  min-width: 0;
+}
+
+.codex-api-service-mapping-arrow {
+  padding-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .codex-api-service-account-meta span {

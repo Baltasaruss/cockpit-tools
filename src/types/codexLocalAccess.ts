@@ -366,6 +366,7 @@ export interface CodexLocalAccessAppendAccountSkipped {
   reason:
     | "not_found"
     | "chat_completions_api_key"
+    | "deepseek_unsupported"
     | "free_restricted"
     | "pending_oauth"
     | "web_session_quota_only";

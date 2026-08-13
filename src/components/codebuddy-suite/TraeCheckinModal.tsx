@@ -18,8 +18,6 @@ import {
   Flame,
   Trophy,
   Ban,
-  Settings,
-  Clock,
 } from 'lucide-react';
 import { TraeAccount } from '../../types/trae';
 import { TraeCheckinStatusResult, getTraeCheckinStatus, claimTraeCheckin } from '../../services/traeService';

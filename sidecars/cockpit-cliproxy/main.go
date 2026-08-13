@@ -3101,8 +3101,12 @@ func (p *usagePlugin) HandleUsage(ctx context.Context, record coreusage.Record) 
 	}
 	requestModel, _ := ctx.Value(requestModelContextKey).(string)
 	model := strings.TrimSpace(record.Model)
-	if requestModel != "" {
-		model = requestModel
+	if model == "" {
+		model = strings.TrimSpace(requestModel)
+	}
+	alias := strings.TrimSpace(record.Alias)
+	if alias == "" {
+		alias = strings.TrimSpace(requestModel)
 	}
 	status := record.Fail.StatusCode
 	success := !record.Failed
@@ -3111,7 +3115,7 @@ func (p *usagePlugin) HandleUsage(ctx context.Context, record coreusage.Record) 
 		RequestID:        internallogging.GetRequestID(ctx),
 		Provider:         record.Provider,
 		Model:            model,
-		Alias:            record.Alias,
+		Alias:            alias,
 		AccountID:        stringFromAccount(account, "id"),
 		AccountEmail:     stringFromAccount(account, "email"),
 		AuthID:           record.AuthID,
@@ -3251,9 +3255,11 @@ func (h *authHook) OnResult(ctx context.Context, result coreauth.Result) {
 	if requestKind == "" {
 		requestKind = requestKindFromPath(internallogging.GetEndpoint(ctx))
 	}
-	model := result.Model
-	if requestModel, _ := ctx.Value(requestModelContextKey).(string); strings.TrimSpace(requestModel) != "" {
-		model = requestModel
+	model := strings.TrimSpace(result.Model)
+	if model == "" {
+		if requestModel, _ := ctx.Value(requestModelContextKey).(string); strings.TrimSpace(requestModel) != "" {
+			model = strings.TrimSpace(requestModel)
+		}
 	}
 	account := h.accountForAuthID(result.AuthID)
 	status := 0

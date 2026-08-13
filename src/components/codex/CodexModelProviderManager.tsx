@@ -67,6 +67,11 @@ import {
   updateCodexAccountName,
   updateCodexApiKeyBoundOAuthAccount,
 } from "../../services/codexService";
+import { useDeepSeekDirectModelPrompt } from "./DeepSeekDirectModelModal";
+import {
+  isDeepSeekAccount,
+  resolveDeepSeekBindAccountId,
+} from "../../utils/codexDeepSeekAccess";
 import {
   getCodexLocalAccessState,
 } from "../../services/codexLocalAccessService";
@@ -106,6 +111,7 @@ import {
   resolveNewApiQuotaSnapshot,
 } from "../../services/modelProviderUsageService";
 import { useSponsorStore } from "../../stores/useSponsorStore";
+import { useCodexAccountStore } from "../../stores/useCodexAccountStore";
 import type { Sponsor } from "../../types/sponsor";
 import {
   CODEX_API_PROVIDER_CUSTOM_ID,
@@ -494,14 +500,18 @@ function resolveDefaultProviderWireApi(
 
 function resolveEnableModePreferenceForWireApi(
   wireApi: CodexProviderWireApi,
+  _presetId?: string | null,
 ): CodexProviderEnableModePreference {
-  return wireApi === "chat_completions" ? "gateway" : "direct";
+  if (wireApi === "chat_completions") return "gateway";
+  return "direct";
 }
 
 function resolveGatewayModeByWireApi(
   wireApi?: CodexProviderWireApi | null,
+  _presetId?: string | null,
 ): "direct" | "gateway" {
-  return wireApi === "chat_completions" ? "gateway" : "direct";
+  if (wireApi === "chat_completions") return "gateway";
+  return "direct";
 }
 
 function resolveProviderWireApi(provider: CodexModelProvider): CodexProviderWireApi {
@@ -583,6 +593,9 @@ export function CodexModelProviderManager({
   onProvidersChanged,
 }: CodexModelProviderManagerProps) {
   const { t } = useTranslation();
+  const updateAccountInstanceAccess = useCodexAccountStore(
+    (state) => state.updateAccountInstanceAccess,
+  );
   const sponsorModule = useSponsorStore((state) => state.state.sponsorModule);
   const fetchSponsorState = useSponsorStore((state) => state.fetchState);
   const [providers, setProviders] = useState<CodexModelProvider[]>([]);
@@ -598,6 +611,7 @@ export function CodexModelProviderManager({
   const [enablingProviderId, setEnablingProviderId] = useState<string | null>(
     null,
   );
+  const deepSeekStart = useDeepSeekDirectModelPrompt();
   const [testingProviderId, setTestingProviderId] = useState<string | null>(
     null,
   );
@@ -1611,7 +1625,10 @@ export function CodexModelProviderManager({
         resolvedWireApi === "responses" && provider.supportsWebsockets === true,
       enableModePreference:
         provider.enableModePreference ??
-        resolveEnableModePreferenceForWireApi(resolvedWireApi),
+        resolveEnableModePreferenceForWireApi(
+          resolvedWireApi,
+          resolveCodexApiProviderPresetId(provider.baseUrl),
+        ),
       integrationType: provider.integrationType ?? "",
       newApiKeyName: "",
       newApiKey: "",
@@ -1660,7 +1677,10 @@ export function CodexModelProviderManager({
         apiKeyUrl: preset.apiKeyUrl ?? "",
         wireApi,
         supportsWebsockets: false,
-        enableModePreference: resolveEnableModePreferenceForWireApi(wireApi),
+        enableModePreference: resolveEnableModePreferenceForWireApi(
+          wireApi,
+          preset.id,
+        ),
         integrationType: "",
       });
     },
@@ -2826,12 +2846,32 @@ export function CodexModelProviderManager({
     ) => {
       if (enablingProviderId) return;
       setNotice(null);
+      const presetId = resolveCodexApiProviderPresetId(provider.baseUrl);
+      const isOpenAIOfficial = presetId === "openai_official";
+      const wireApi = resolveProviderWireApi(provider);
+      const deepSeekDraft =
+        accounts.find(
+          (item) =>
+            item.auth_mode === "apikey" &&
+            item.openai_api_key === apiKey.apiKey &&
+            isDeepSeekAccount(item),
+        ) ?? {
+          api_provider_id: presetId,
+          api_base_url: provider.baseUrl,
+          api_wire_api: wireApi,
+        };
+      let deepSeekChoice: Awaited<ReturnType<typeof deepSeekStart.requestStart>> =
+        null;
+      if (isDeepSeekAccount(deepSeekDraft)) {
+        deepSeekChoice = await deepSeekStart.requestStart(
+          deepSeekDraft,
+          instanceName,
+        );
+        if (!deepSeekChoice) return;
+      }
       setEnablingProviderId(provider.id);
       try {
-        const presetId = resolveCodexApiProviderPresetId(provider.baseUrl);
-        const isOpenAIOfficial = presetId === "openai_official";
-        const wireApi = resolveProviderWireApi(provider);
-        const enableMode = resolveGatewayModeByWireApi(wireApi);
+        const enableMode = resolveGatewayModeByWireApi(wireApi, presetId);
         const account = await addCodexAccountWithApiKey(
           apiKey.apiKey,
           provider.baseUrl,
@@ -2855,13 +2895,21 @@ export function CodexModelProviderManager({
           account.id,
           provider.boundOauthAccountId?.trim() || null,
         );
+        const startedAccount = deepSeekChoice
+          ? await updateAccountInstanceAccess(
+              account.id,
+              deepSeekChoice.accessMode,
+              deepSeekChoice.modelId,
+            )
+          : account;
 
         await updateCodexInstance({
           instanceId,
-          bindAccountId:
-            isOpenAIOfficial || enableMode === "direct"
-              ? account.id
-              : buildCodexProviderGatewayBindId(account.id),
+          bindAccountId: isDeepSeekAccount(startedAccount)
+            ? resolveDeepSeekBindAccountId(startedAccount)
+            : isOpenAIOfficial || enableMode === "direct"
+              ? startedAccount.id
+              : buildCodexProviderGatewayBindId(startedAccount.id),
           followLocalAccount: false,
         });
         await startCodexInstance(instanceId);
@@ -2892,7 +2940,10 @@ export function CodexModelProviderManager({
       }
     },
     [
+      accounts,
+      deepSeekStart.requestStart,
       enablingProviderId,
+      updateAccountInstanceAccess,
       parseServiceError,
       reloadCurrentAccount,
       reloadCodexInstances,
@@ -4727,7 +4778,10 @@ export function CodexModelProviderManager({
                       mutateForm({
                         wireApi: "responses",
                         enableModePreference:
-                          resolveEnableModePreferenceForWireApi("responses"),
+                          resolveEnableModePreferenceForWireApi(
+                            "responses",
+                            selectedPresetId,
+                          ),
                       })
                     }
                     disabled={saving}
@@ -4746,10 +4800,11 @@ export function CodexModelProviderManager({
                         enableModePreference:
                           resolveEnableModePreferenceForWireApi(
                             "chat_completions",
+                            selectedPresetId,
                           ),
                       })
                     }
-                    disabled={saving || selectedPresetId === DEEPSEEK_API_PROVIDER_ID}
+                    disabled={saving}
                   >
                     <span>
                       {t(
@@ -4759,6 +4814,19 @@ export function CodexModelProviderManager({
                     </span>
                   </button>
                 </div>
+                {selectedPresetId === DEEPSEEK_API_PROVIDER_ID && (
+                  <p className="api-provider-hint">
+                    {form.wireApi === "responses"
+                      ? t(
+                          "codex.modelProviders.wireApi.deepseekResponsesHint",
+                          "原生 Responses 直连官方 API，写入官方 models.json（工具/shell/apply_patch），默认模型 deepseek-v4-flash。",
+                        )
+                      : t(
+                          "codex.modelProviders.wireApi.deepseekChatHint",
+                          "DeepSeek Chat Completions 走本地网关协议转换，适合兼容旧链路；需要官方 Codex 工具形态时请选 Responses。",
+                        )}
+                  </p>
+                )}
               </div>
               {form.wireApi === "responses" && (
                 <div className="form-group">
@@ -5664,29 +5732,42 @@ export function CodexModelProviderManager({
               t("codex.api.oauthBinding.unbound", "未绑定"),
             rawKey: "boundOauthAccountId",
           },
-          ...(resolvedWireApi === "chat_completions"
+          ...(resolveCodexApiProviderPresetId(provider.baseUrl) ===
+          DEEPSEEK_API_PROVIDER_ID
             ? [
                 {
                   key: "enableMode",
                   label: t("codex.modelProviders.enableMode.label", "接入方式"),
                   value: t(
-                    "codex.modelProviders.enableMode.gatewayMode",
-                    "网关模式",
+                    "codex.deepSeek.start.chooseAtStart",
+                    "启动时选择",
                   ),
                   rawKey: "enableMode",
                 },
               ]
-            : [
-                {
-                  key: "enableMode",
-                  label: t("codex.modelProviders.enableMode.label", "接入方式"),
-                  value: t(
-                    "codex.modelProviders.enableMode.directMode",
-                    "直连模式",
-                  ),
-                  rawKey: "enableMode",
-                },
-              ]),
+            : resolvedWireApi === "chat_completions"
+              ? [
+                  {
+                    key: "enableMode",
+                    label: t("codex.modelProviders.enableMode.label", "接入方式"),
+                    value: t(
+                      "codex.modelProviders.enableMode.gatewayMode",
+                      "网关模式",
+                    ),
+                    rawKey: "enableMode",
+                  },
+                ]
+              : [
+                  {
+                    key: "enableMode",
+                    label: t("codex.modelProviders.enableMode.label", "接入方式"),
+                    value: t(
+                      "codex.modelProviders.enableMode.directMode",
+                      "直连模式",
+                    ),
+                    rawKey: "enableMode",
+                  },
+                ]),
           {
             key: "vision",
             label: t("codex.modelProviders.vision.allModels", "图片输入"),
@@ -5864,6 +5945,7 @@ export function CodexModelProviderManager({
           />
         );
       })()}
+      {deepSeekStart.modal}
     </div>
   );
 }

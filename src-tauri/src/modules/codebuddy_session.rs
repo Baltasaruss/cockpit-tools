@@ -85,7 +85,9 @@ fn get_default_user_data_dir(platform: &CodebuddySessionPlatform) -> Result<Path
         }
         // WorkBuddy sessions live in a single `workbuddy.db` and are handled by
         // `list_sessions` directly; it never reaches the per-instance directory scan.
-        CodebuddySessionPlatform::Workbuddy => Err("workbuddy sessions are not scanned per-instance".to_string()),
+        CodebuddySessionPlatform::Workbuddy => {
+            Err("workbuddy sessions are not scanned per-instance".to_string())
+        }
     }
 }
 
@@ -147,18 +149,18 @@ fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
         return Vec::new();
     }
 
-    let conn = match Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-    {
-        Ok(c) => c,
-        Err(e) => {
-            logger::log_warn(&format!(
-                "[CodebuddySession] Failed to open WorkBuddy db {}: {}",
-                db_path.display(),
-                e
-            ));
-            return Vec::new();
-        }
-    };
+    let conn =
+        match Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(c) => c,
+            Err(e) => {
+                logger::log_warn(&format!(
+                    "[CodebuddySession] Failed to open WorkBuddy db {}: {}",
+                    db_path.display(),
+                    e
+                ));
+                return Vec::new();
+            }
+        };
 
     let mut stmt = match conn.prepare(
         "SELECT id, cwd, user_id, title, status, created_at, updated_at, deleted_at, is_playground \
@@ -177,15 +179,15 @@ fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
 
     let rows = stmt.query_map([], |row| {
         Ok((
-            row.get::<_, String>(0)?,                 // id
-            row.get::<_, Option<String>>(1)?,         // cwd
-            row.get::<_, Option<String>>(2)?,         // user_id
-            row.get::<_, Option<String>>(3)?,         // title
-            row.get::<_, Option<String>>(4)?,         // status
-            row.get::<_, Option<i64>>(5)?,            // created_at
-            row.get::<_, Option<i64>>(6)?,            // updated_at
-            row.get::<_, Option<i64>>(7)?,            // deleted_at
-            row.get::<_, i64>(8).unwrap_or(0),        // is_playground
+            row.get::<_, String>(0)?,          // id
+            row.get::<_, Option<String>>(1)?,  // cwd
+            row.get::<_, Option<String>>(2)?,  // user_id
+            row.get::<_, Option<String>>(3)?,  // title
+            row.get::<_, Option<String>>(4)?,  // status
+            row.get::<_, Option<i64>>(5)?,     // created_at
+            row.get::<_, Option<i64>>(6)?,     // updated_at
+            row.get::<_, Option<i64>>(7)?,     // deleted_at
+            row.get::<_, i64>(8).unwrap_or(0), // is_playground
         ))
     });
 
@@ -193,7 +195,17 @@ fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
     if let Ok(rows) = rows {
         for row in rows {
             match row {
-                Ok((id, cwd, user_id, title, status, created_at, updated_at, deleted_at, is_play)) => {
+                Ok((
+                    id,
+                    cwd,
+                    user_id,
+                    title,
+                    status,
+                    created_at,
+                    updated_at,
+                    deleted_at,
+                    is_play,
+                )) => {
                     sessions.push(RawSession {
                         conversation_id: id,
                         title: title.unwrap_or_default(),

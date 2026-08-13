@@ -75,9 +75,15 @@ export function resolveCodexProviderCapabilityProfile(input: {
   const presetId =
     input.presetId?.trim() || resolveCodexApiProviderPresetId(input.baseUrl);
   const inferredChatCompletions = CHAT_COMPLETIONS_PRESET_IDS.has(presetId);
-  const wireApi = presetId === DEEPSEEK_API_PROVIDER_ID
-    ? "responses"
-    : input.wireApi ?? (inferredChatCompletions ? "chat_completions" : "responses");
+  // DeepSeek defaults to Responses for official Codex setup, but explicit Chat Completions remains allowed.
+  const wireApi =
+    input.wireApi === "responses" || input.wireApi === "chat_completions"
+      ? input.wireApi
+      : presetId === DEEPSEEK_API_PROVIDER_ID
+        ? "responses"
+        : inferredChatCompletions
+          ? "chat_completions"
+          : "responses";
 
   if (wireApi === "chat_completions") {
     return {

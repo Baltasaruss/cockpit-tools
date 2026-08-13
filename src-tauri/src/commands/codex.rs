@@ -1,6 +1,6 @@
 use crate::models::codex::{
-    CodexAccount, CodexApiProviderMode, CodexAppSpeed, CodexAppSpeedConfig, CodexQuickConfig,
-    CodexQuota, CodexTokens,
+    CodexAccount, CodexApiModelMapping, CodexApiProviderMode, CodexAppSpeed, CodexAppSpeedConfig,
+    CodexQuickConfig, CodexQuota, CodexTokens,
 };
 use crate::models::codex_local_access::{
     CodexLocalAccessAccountModelRule, CodexLocalAccessAppendAccountsResult,
@@ -829,8 +829,15 @@ pub async fn switch_codex_account(
 
     // 同步更新 Codex 默认实例的绑定账号（不同步到 Antigravity，因为账号体系不同）
     let default_settings_started = Instant::now();
+    let default_bind_account_id =
+        if crate::modules::codex_local_access::account_requires_provider_gateway(&account) {
+            crate::modules::codex_instance::provider_gateway_bind_account_id(&account.id)
+                .unwrap_or_else(|| account.id.clone())
+        } else {
+            account.id.clone()
+        };
     if let Err(e) = crate::modules::codex_instance::update_default_settings(
-        Some(Some(account_id.clone())),
+        Some(Some(default_bind_account_id.clone())),
         None,
         Some(false),
         None,
@@ -840,7 +847,7 @@ pub async fn switch_codex_account(
     } else {
         logger::log_info(&format!(
             "已同步更新 Codex 默认实例绑定账号: {}",
-            account_id
+            default_bind_account_id
         ));
     }
     if let Err(e) = crate::modules::codex_instance::update_default_app_speed(account_speed) {
@@ -1627,6 +1634,43 @@ pub async fn update_codex_account_tags(
 }
 
 #[tauri::command]
+pub async fn update_codex_accounts_fingerprint_mode(
+    account_ids: Vec<String>,
+    mode: String,
+) -> Result<Vec<CodexAccount>, String> {
+    codex_account::update_accounts_fingerprint_mode(&account_ids, mode)
+}
+
+#[tauri::command]
+pub async fn update_codex_account_instance_access(
+    account_id: String,
+    access_mode: Option<String>,
+    startup_model: Option<String>,
+) -> Result<CodexAccount, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        codex_account::update_account_instance_access(&account_id, access_mode, startup_model)
+    })
+    .await
+    .map_err(|error| format!("保存 DeepSeek 接入方式失败: {}", error))?
+}
+
+#[tauri::command]
+pub async fn update_codex_account_api_model_mappings(
+    account_id: String,
+    mappings: Vec<CodexApiModelMapping>,
+) -> Result<CodexAccount, String> {
+    let account = tauri::async_runtime::spawn_blocking(move || {
+        codex_account::update_account_api_model_mappings(&account_id, mappings)
+    })
+    .await
+    .map_err(|error| format!("保存模型映射失败: {}", error))??;
+    if codex_local_access::collection_contains_account(&account.id) {
+        codex_local_access::trigger_gateway_reload_in_background("保存账号模型映射");
+    }
+    Ok(account)
+}
+
+#[tauri::command]
 pub async fn update_codex_account_note(
     account_id: String,
     note: Option<String>,
@@ -2120,17 +2164,18 @@ fn emit_model_provider_chat_test_progress(
 }
 
 fn normalize_model_provider_wire_api(value: Option<&str>, base_url: &str) -> String {
+    match value.map(str::trim) {
+        Some("chat_completions") | Some("chat") => return "chat_completions".to_string(),
+        Some("responses") => return "responses".to_string(),
+        _ => {}
+    }
+    // DeepSeek defaults to official Responses when the caller did not choose a protocol.
     if reqwest::Url::parse(base_url.trim())
         .ok()
         .and_then(|url| url.host_str().map(str::to_string))
         .is_some_and(|host| host.eq_ignore_ascii_case("api.deepseek.com"))
     {
         return "responses".to_string();
-    }
-    match value.map(str::trim) {
-        Some("chat_completions") => return "chat_completions".to_string(),
-        Some("responses") => return "responses".to_string(),
-        _ => {}
     }
     let lower = base_url.trim().to_ascii_lowercase();
     if lower.contains("/chat/completions")
@@ -2679,7 +2724,14 @@ fn summarize_deepseek_balance(
     CodexModelProviderUsageSummary {
         mode: Some("deepseek".to_string()),
         is_valid: Some(is_available),
-        status: Some(if is_available { "available" } else { "unavailable" }.to_string()),
+        status: Some(
+            if is_available {
+                "available"
+            } else {
+                "unavailable"
+            }
+            .to_string(),
+        ),
         plan_name: None,
         remaining: total_balance,
         balance: total_balance,
@@ -3862,12 +3914,20 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_always_uses_native_responses() {
+    fn deepseek_defaults_to_native_responses_when_unspecified() {
+        assert_eq!(
+            normalize_model_provider_wire_api(None, "https://api.deepseek.com/v1"),
+            "responses"
+        );
         assert_eq!(
             normalize_model_provider_wire_api(
                 Some("chat_completions"),
                 "https://api.deepseek.com/v1",
             ),
+            "chat_completions"
+        );
+        assert_eq!(
+            normalize_model_provider_wire_api(Some("responses"), "https://api.deepseek.com/v1"),
             "responses"
         );
     }
@@ -3881,8 +3941,7 @@ mod tests {
             Some("https://api.deepseek.com/user/balance")
         );
         assert_eq!(
-            codex_model_provider_deepseek_balance_url("https://example.com/v1")
-                .expect("valid URL"),
+            codex_model_provider_deepseek_balance_url("https://example.com/v1").expect("valid URL"),
             None
         );
     }

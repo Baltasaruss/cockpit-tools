@@ -60,7 +60,9 @@ import {
   getCodexAccountGroups,
   type CodexAccountGroup,
 } from "../services/codexAccountGroupService";
-import type { CodexAccount } from "../types/codex";
+import type { CodexAccount, CodexApiModelMapping } from "../types/codex";
+import { isCodexApiKeyAccount } from "../types/codex";
+import { updateCodexAccountApiModelMappings } from "../services/codexService";
 import {
   CODEX_API_SERVICE_BIND_ID,
   type InstanceProfile,
@@ -532,6 +534,26 @@ function parseModelAliasText(value: string): CodexLocalAccessModelAlias[] {
     .filter((item): item is CodexLocalAccessModelAlias => Boolean(item));
 }
 
+const DEEPSEEK_OFFICIAL_API_MODEL_MAPPINGS: CodexApiModelMapping[] = [
+  { client_model: "gpt-5.6-sol", upstream_model: "deepseek-v4-flash" },
+  { client_model: "gpt-5.6-terra", upstream_model: "deepseek-v4-pro" },
+  { client_model: "deepseek-v4-flash", upstream_model: "deepseek-v4-flash" },
+  { client_model: "deepseek-v4-pro", upstream_model: "deepseek-v4-pro" },
+];
+
+type AccountModelMappingDraft = {
+  clientModel: string;
+  upstreamModel: string;
+};
+
+function mappingDraftsFromAccount(account: CodexAccount): AccountModelMappingDraft[] {
+  const rows = (account.api_model_mappings ?? []).map((item) => ({
+    clientModel: item.client_model,
+    upstreamModel: item.upstream_model,
+  }));
+  return rows.length > 0 ? rows : [{ clientModel: "", upstreamModel: "" }];
+}
+
 function serializeModelAliases(
   values: CodexLocalAccessModelAlias[] | null | undefined,
 ): string {
@@ -805,6 +827,12 @@ export function CodexApiServicePage() {
     Set<string>
   >(() => new Set());
   const [accountModelRuleBulkText, setAccountModelRuleBulkText] = useState("");
+  const [accountModelMappingsOpen, setAccountModelMappingsOpen] =
+    useState(false);
+  const [accountModelMappingDrafts, setAccountModelMappingDrafts] = useState<
+    Record<string, AccountModelMappingDraft[]>
+  >({});
+  const [accountModelMappingError, setAccountModelMappingError] = useState("");
   const [pricingModalOpen, setPricingModalOpen] = useState(false);
   const [pricingDrafts, setPricingDrafts] = useState<ModelPricingDraft[]>([]);
   const [pricingError, setPricingError] = useState("");
@@ -917,6 +945,10 @@ export function CodexApiServicePage() {
   );
   const memberAccountIds = useMemo(
     () => memberAccounts.map((account) => account.id),
+    [memberAccounts],
+  );
+  const mappingMemberAccounts = useMemo(
+    () => memberAccounts.filter((account) => isCodexApiKeyAccount(account)),
     [memberAccounts],
   );
   const accountDisplayNames = useMemo(() => {
@@ -2379,6 +2411,125 @@ export function CodexApiServicePage() {
       });
       return next;
     });
+  };
+
+  const resetAccountModelMappingDrafts = () => {
+    const next: Record<string, AccountModelMappingDraft[]> = {};
+    mappingMemberAccounts.forEach((account) => {
+      next[account.id] = mappingDraftsFromAccount(account);
+    });
+    setAccountModelMappingDrafts(next);
+    setAccountModelMappingError("");
+  };
+
+  const handleOpenAccountModelMappings = () => {
+    resetAccountModelMappingDrafts();
+    setAccountModelMappingsOpen(true);
+  };
+
+  const handleCloseAccountModelMappings = () => {
+    setAccountModelMappingsOpen(false);
+    setAccountModelMappingError("");
+  };
+
+  const updateAccountModelMappingDraft = (
+    accountId: string,
+    index: number,
+    field: keyof AccountModelMappingDraft,
+    value: string,
+  ) => {
+    setAccountModelMappingDrafts((current) => {
+      const rows = [...(current[accountId] ?? [{ clientModel: "", upstreamModel: "" }])];
+      rows[index] = { ...rows[index], [field]: value };
+      return { ...current, [accountId]: rows };
+    });
+    setAccountModelMappingError("");
+  };
+
+  const addAccountModelMappingRow = (accountId: string) => {
+    setAccountModelMappingDrafts((current) => ({
+      ...current,
+      [accountId]: [
+        ...(current[accountId] ?? []),
+        { clientModel: "", upstreamModel: "" },
+      ],
+    }));
+    setAccountModelMappingError("");
+  };
+
+  const removeAccountModelMappingRow = (accountId: string, index: number) => {
+    setAccountModelMappingDrafts((current) => {
+      const rows = (current[accountId] ?? []).filter((_, rowIndex) => rowIndex !== index);
+      return {
+        ...current,
+        [accountId]: rows.length > 0 ? rows : [{ clientModel: "", upstreamModel: "" }],
+      };
+    });
+    setAccountModelMappingError("");
+  };
+
+  const fillDeepSeekAccountModelMappings = (accountId: string) => {
+    setAccountModelMappingDrafts((current) => ({
+      ...current,
+      [accountId]: DEEPSEEK_OFFICIAL_API_MODEL_MAPPINGS.map((item) => ({
+        clientModel: item.client_model,
+        upstreamModel: item.upstream_model,
+      })),
+    }));
+    setAccountModelMappingError("");
+  };
+
+  const handleSaveAccountModelMappings = async () => {
+    setAccountModelMappingError("");
+    const payloads: Array<{ accountId: string; mappings: CodexApiModelMapping[] }> = [];
+    for (const account of mappingMemberAccounts) {
+      const rows = accountModelMappingDrafts[account.id] ?? [];
+      const mappings: CodexApiModelMapping[] = [];
+      const seen = new Set<string>();
+      for (const row of rows) {
+        const clientModel = row.clientModel.trim();
+        const upstreamModel = row.upstreamModel.trim();
+        if (!clientModel && !upstreamModel) continue;
+        if (!clientModel || !upstreamModel) {
+          setAccountModelMappingError(
+            t(
+              "codex.apiService.accountModelMappings.incomplete",
+              "请补全请求模型和发送模型",
+            ),
+          );
+          return;
+        }
+        const key = clientModel.toLowerCase();
+        if (seen.has(key)) {
+          setAccountModelMappingError(
+            t(
+              "codex.apiService.accountModelMappings.duplicate",
+              "请求模型不能重复",
+            ),
+          );
+          return;
+        }
+        seen.add(key);
+        mappings.push({ client_model: clientModel, upstream_model: upstreamModel });
+      }
+      payloads.push({ accountId: account.id, mappings });
+    }
+    await runAction(
+      async () => {
+        for (const payload of payloads) {
+          await updateCodexAccountApiModelMappings(
+            payload.accountId,
+            payload.mappings,
+          );
+        }
+        await fetchAccounts();
+        setAccountModelMappingsOpen(false);
+      },
+      t(
+        "codex.apiService.accountModelMappings.saveSuccess",
+        "账号模型映射已保存",
+      ),
+    );
   };
 
   const handleSaveAccountModelRules = async () => {
@@ -4682,6 +4833,20 @@ export function CodexApiServicePage() {
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
+                    onClick={handleOpenAccountModelMappings}
+                    disabled={
+                      busy || !collection || mappingMemberAccounts.length === 0
+                    }
+                  >
+                    <Route size={14} />
+                    {t(
+                      "codex.apiService.accountModelMappings.action",
+                      "模型映射",
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
                     onClick={handleOpenAccountModelRules}
                     disabled={busy || !collection || memberAccounts.length === 0}
                   >
@@ -4803,6 +4968,17 @@ export function CodexApiServicePage() {
                               defaultValue: "图片 {{status}}",
                             })}
                           </span>
+                          {(account.api_model_mappings?.length ?? 0) > 0 && (
+                            <span>
+                              {t(
+                                "codex.apiService.accountModelMappings.cardCount",
+                                {
+                                  count: account.api_model_mappings?.length ?? 0,
+                                  defaultValue: "映射 {{count}}",
+                                },
+                              )}
+                            </span>
+                          )}
                           {disabledModelCount > 0 && (
                             <span>
                               {t(
@@ -6349,6 +6525,190 @@ export function CodexApiServicePage() {
                 className="btn btn-primary"
                 onClick={() => void handleSaveAccountModelRules()}
                 disabled={busy}
+              >
+                <Check size={15} />
+                {t("common.save", "保存")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {accountModelMappingsOpen && (
+        <div
+          className="modal-overlay codex-api-service-pricing-overlay"
+          role="presentation"
+        >
+          <div
+            className="modal codex-api-service-pricing-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="codex-api-service-account-model-mappings-title"
+          >
+            <div className="modal-header">
+              <div>
+                <h2 id="codex-api-service-account-model-mappings-title">
+                  {t(
+                    "codex.apiService.accountModelMappings.title",
+                    "账号模型映射",
+                  )}
+                </h2>
+                <p className="codex-api-service-pricing-desc">
+                  {t(
+                    "codex.apiService.accountModelMappings.desc",
+                    "只改这个账号被抽中后发给上游的模型名。左侧是调用方请求的模型，右侧是实际上游模型。",
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={handleCloseAccountModelMappings}
+                aria-label={t("common.close", "关闭")}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body codex-api-service-pricing-body">
+              {accountModelMappingError && (
+                <div className="codex-api-service-message error">
+                  <CircleAlert size={15} />
+                  <span>{accountModelMappingError}</span>
+                </div>
+              )}
+              {mappingMemberAccounts.length === 0 ? (
+                <div className="codex-api-service-empty">
+                  {t(
+                    "codex.apiService.accountModelMappings.empty",
+                    "当前成员里没有可映射的 API Key 账号",
+                  )}
+                </div>
+              ) : (
+                mappingMemberAccounts.map((account) => {
+                  const presentation = buildCodexAccountPresentation(account, t);
+                  const rows =
+                    accountModelMappingDrafts[account.id] ??
+                    mappingDraftsFromAccount(account);
+                  return (
+                    <div
+                      key={account.id}
+                      className="codex-api-service-mapping-account"
+                    >
+                      <div className="codex-api-service-mapping-account-head">
+                        <strong title={presentation.displayName}>
+                          {maskAccountText(presentation.displayName)}
+                        </strong>
+                        <div className="codex-api-service-head-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() =>
+                              fillDeepSeekAccountModelMappings(account.id)
+                            }
+                            disabled={busy}
+                          >
+                            {t(
+                              "codex.apiService.accountModelMappings.fillDeepSeek",
+                              "填入 DeepSeek",
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => addAccountModelMappingRow(account.id)}
+                            disabled={busy}
+                          >
+                            <Plus size={14} />
+                            {t(
+                              "codex.apiService.accountModelMappings.addRow",
+                              "添加一行",
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="codex-api-service-mapping-rows">
+                        {rows.map((row, index) => (
+                          <div
+                            key={`${account.id}-${index}`}
+                            className="codex-api-service-mapping-row"
+                          >
+                            <label>
+                              <span>
+                                {t(
+                                  "codex.apiService.accountModelMappings.clientModel",
+                                  "请求模型",
+                                )}
+                              </span>
+                              <input
+                                value={row.clientModel}
+                                onChange={(event) =>
+                                  updateAccountModelMappingDraft(
+                                    account.id,
+                                    index,
+                                    "clientModel",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="gpt-5.6-sol"
+                                disabled={busy}
+                              />
+                            </label>
+                            <span className="codex-api-service-mapping-arrow">
+                              →
+                            </span>
+                            <label>
+                              <span>
+                                {t(
+                                  "codex.apiService.accountModelMappings.upstreamModel",
+                                  "发送模型",
+                                )}
+                              </span>
+                              <input
+                                value={row.upstreamModel}
+                                onChange={(event) =>
+                                  updateAccountModelMappingDraft(
+                                    account.id,
+                                    index,
+                                    "upstreamModel",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="deepseek-v4-flash"
+                                disabled={busy}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              className="folder-icon-btn"
+                              onClick={() =>
+                                removeAccountModelMappingRow(account.id, index)
+                              }
+                              disabled={busy}
+                              aria-label={t("common.delete", "删除")}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleCloseAccountModelMappings}
+              >
+                {t("common.cancel", "取消")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void handleSaveAccountModelMappings()}
+                disabled={busy || mappingMemberAccounts.length === 0}
               >
                 <Check size={15} />
                 {t("common.save", "保存")}

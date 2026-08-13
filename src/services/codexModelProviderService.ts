@@ -186,33 +186,70 @@ function migrateApiKeyFunProviderWireApi(
   return { providers: next, changed };
 }
 
+/**
+ * Normalize official DeepSeek providers without locking Chat Completions out.
+ * - Missing wireApi defaults to Responses.
+ * - Explicit chat_completions is preserved.
+ * - Responses mode writes official catalog slugs and talks to the official API directly.
+ */
 function enforceDeepSeekProvider(provider: CodexModelProvider): boolean {
   if (resolveCodexApiProviderPresetId(provider.baseUrl) !== DEEPSEEK_API_PROVIDER_ID) {
     return false;
   }
   const modelCatalog = [...DEEPSEEK_CODEX_MODEL_CATALOG];
-  const changed =
-    provider.baseUrl !== DEEPSEEK_API_BASE_URL ||
-    provider.wireApi !== 'responses' ||
-    provider.supportsWebsockets ||
-    provider.enableModePreference !== 'direct' ||
-    provider.supportsVision === true ||
-    provider.visionRoutingModel !== undefined ||
-    provider.modelCapabilities !== undefined ||
-    provider.modelCatalog?.length !== modelCatalog.length ||
-    modelCatalog.some((model, index) => provider.modelCatalog?.[index] !== model);
-  if (!changed) return false;
+  let changed = false;
 
-  provider.baseUrl = DEEPSEEK_API_BASE_URL;
-  provider.wireApi = 'responses';
-  provider.supportsWebsockets = false;
-  provider.enableModePreference = 'direct';
-  provider.modelCatalog = modelCatalog;
-  provider.supportsVision = false;
-  provider.modelCapabilities = undefined;
-  provider.visionRoutingModel = undefined;
-  provider.updatedAt = Date.now();
-  return true;
+  if (provider.baseUrl !== DEEPSEEK_API_BASE_URL) {
+    provider.baseUrl = DEEPSEEK_API_BASE_URL;
+    changed = true;
+  }
+
+  const wireApi = provider.wireApi;
+  if (wireApi !== 'responses' && wireApi !== 'chat_completions') {
+    provider.wireApi = 'responses';
+    changed = true;
+  }
+
+  if (provider.wireApi === 'responses') {
+    if (provider.supportsWebsockets) {
+      provider.supportsWebsockets = false;
+      changed = true;
+    }
+    if (provider.supportsVision === true) {
+      provider.supportsVision = false;
+      changed = true;
+    }
+    if (provider.visionRoutingModel !== undefined) {
+      provider.visionRoutingModel = undefined;
+      changed = true;
+    }
+    if (provider.modelCapabilities !== undefined) {
+      provider.modelCapabilities = undefined;
+      changed = true;
+    }
+    if (
+      provider.modelCatalog?.length !== modelCatalog.length ||
+      modelCatalog.some((model, index) => provider.modelCatalog?.[index] !== model)
+    ) {
+      provider.modelCatalog = modelCatalog;
+      changed = true;
+    }
+  } else if (provider.wireApi === 'chat_completions') {
+    // Chat Completions stays on gateway path.
+    if (provider.enableModePreference === 'direct') {
+      provider.enableModePreference = 'gateway';
+      changed = true;
+    }
+    if (provider.supportsWebsockets) {
+      provider.supportsWebsockets = false;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    provider.updatedAt = Date.now();
+  }
+  return changed;
 }
 
 function presetModelCatalogForBaseUrl(baseUrl: string): string[] | undefined {

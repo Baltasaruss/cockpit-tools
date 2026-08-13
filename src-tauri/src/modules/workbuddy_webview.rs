@@ -63,7 +63,10 @@ pub fn is_workbuddy_webview_supported() -> bool {
 /// 注意：Windows 上 WebView2 窗口必须在主线程创建，否则会出现白屏且无法关闭。
 /// 因此窗口的 `build()` 通过 `run_on_main_thread` 调度到主线程执行。
 #[tauri::command]
-pub async fn open_workbuddy_webview(app: AppHandle, account_id: String) -> Result<WorkviewSessionInfo, String> {
+pub async fn open_workbuddy_webview(
+    app: AppHandle,
+    account_id: String,
+) -> Result<WorkviewSessionInfo, String> {
     let account = workbuddy_account::load_account(&account_id)
         .ok_or_else(|| format!("账号不存在：{}", account_id))?;
 

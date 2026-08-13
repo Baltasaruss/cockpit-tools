@@ -756,6 +756,7 @@ mod tests {
 
         let accounts = vec![
             WorkbuddyAccount {
+                web_session_enabled: Some(false),
                 id: "acc_1".to_string(),
                 email: "acc1@example.com".to_string(),
                 uid: None,
@@ -789,6 +790,7 @@ mod tests {
                 last_used: 0,
             },
             WorkbuddyAccount {
+                web_session_enabled: Some(false),
                 id: "acc_2".to_string(),
                 email: "acc2@example.com".to_string(),
                 uid: None,
