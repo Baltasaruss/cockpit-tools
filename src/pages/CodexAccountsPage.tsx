@@ -83,7 +83,6 @@ import { CodexAccountPoolHealthModal } from "../components/CodexAccountPoolHealt
 import {
   type CodexAccountGroup,
   assignAccountsToCodexGroup,
-  cleanupDeletedCodexAccounts,
   deleteCodexGroup,
   getCodexAccountGroups,
   isCodexGroupQuotaRefreshInherit,
@@ -131,6 +130,14 @@ import {
 } from "../utils/codexQuotaError";
 import { buildCodexAccountPresentation } from "../presentation/platformAccountPresentation";
 import { CodexQuotaMiniRows } from "../components/codex/CodexQuotaMiniRows";
+import {
+  hydrateUserMemory,
+  isUserMemoryDismissed,
+  markUserMemoryDismissed,
+  mergeIdListsPreferExisting,
+  subscribeUserMemory,
+  USER_MEMORY_FLAGS,
+} from "../utils/userMemory";
 import {
   buildCodexAccountWindowStatQueries,
   formatCodexWindowStatsText,
@@ -418,8 +425,6 @@ const CODEX_LOCAL_ACCESS_EXPANDED_KEY =
   "agtools.codex.local_access_entry_expanded.v1";
 const CODEX_LOCAL_ACCESS_ADDRESS_KIND_KEY =
   "agtools.codex.local_access_address_kind.v1";
-const CODEX_LOCAL_ACCESS_GATEWAY_GUIDE_DISMISSED_KEY =
-  "agtools.codex.api_service.gateway_guide.dismissed.v1";
 const DEFAULT_CODEX_API_PROVIDER_ID = OPENAI_OFFICIAL_PRESET_ID;
 const DEFAULT_CODEX_API_BASE_URL = OPENAI_OFFICIAL_BASE_URL;
 const CODEX_LOCAL_ACCESS_FALLBACK_PORT = 54140;
@@ -624,22 +629,11 @@ function persistLocalAccessAddressKind(
 }
 
 function readLocalAccessGatewayGuideDismissed(): boolean {
-  try {
-    return (
-      localStorage.getItem(CODEX_LOCAL_ACCESS_GATEWAY_GUIDE_DISMISSED_KEY) ===
-      "1"
-    );
-  } catch {
-    return false;
-  }
+  return isUserMemoryDismissed(USER_MEMORY_FLAGS.gatewayGuide);
 }
 
 function persistLocalAccessGatewayGuideDismissed(): void {
-  try {
-    localStorage.setItem(CODEX_LOCAL_ACCESS_GATEWAY_GUIDE_DISMISSED_KEY, "1");
-  } catch {
-    // ignore storage write failures
-  }
+  void markUserMemoryDismissed(USER_MEMORY_FLAGS.gatewayGuide);
 }
 
 const CODEX_BATCH_IMPORT_SESSION_STORAGE_KEY =
@@ -1354,6 +1348,14 @@ export function CodexAccountsPage() {
     localAccessGatewayGuideDismissed,
     setLocalAccessGatewayGuideDismissed,
   ] = useState(readLocalAccessGatewayGuideDismissed);
+
+  useEffect(() => {
+    void hydrateUserMemory().then(() => {
+      if (isUserMemoryDismissed(USER_MEMORY_FLAGS.gatewayGuide)) {
+        setLocalAccessGatewayGuideDismissed(true);
+      }
+    });
+  }, []);
 
   const store = useCodexAccountStore();
   const codexInstanceStore = useCodexInstanceStore();
@@ -4228,13 +4230,20 @@ export function CodexAccountsPage() {
   }, [accounts]);
 
   useEffect(() => {
+    return subscribeUserMemory(() => {
+      setCustomSortOrder((prev) =>
+        mergeIdListsPreferExisting(readCodexCustomSortOrder(), prev),
+      );
+    });
+  }, []);
+
+  useEffect(() => {
     if (accounts.length === 0) {
       return;
     }
     const accountIds = accounts.map((account) => account.id);
-    const accountIdSet = new Set(accountIds);
     setCustomSortOrder((prev) => {
-      const next = prev.filter((accountId) => accountIdSet.has(accountId));
+      const next = [...prev];
       const seen = new Set(next);
       for (const accountId of accountIds) {
         if (!seen.has(accountId)) {
@@ -9880,28 +9889,6 @@ export function CodexAccountsPage() {
       setBatchImportTargetGroupId(null);
     }
   }, [batchImportTargetGroupId, codexGroups]);
-
-  useEffect(() => {
-    const existingAccountIds = new Set(accounts.map((account) => account.id));
-    const hasStaleAccountIds = codexGroups.some((group) =>
-      group.accountIds.some((accountId) => !existingAccountIds.has(accountId)),
-    );
-    if (!hasStaleAccountIds) {
-      return;
-    }
-
-    void (async () => {
-      try {
-        await cleanupDeletedCodexAccounts(existingAccountIds);
-        await reloadCodexGroups();
-      } catch (error) {
-        console.error(
-          "Failed to clean up deleted Codex accounts from groups:",
-          error,
-        );
-      }
-    })();
-  }, [accounts, codexGroups, reloadCodexGroups]);
 
   const handleEnterGroup = useCallback(
     (groupId: string) => {

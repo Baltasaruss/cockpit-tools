@@ -73,6 +73,10 @@ import {
 } from './utils/externalProviderImport';
 import { runAutoBackupCycle } from './services/scheduledBackupService';
 import {
+  hydrateUserMemory,
+  USER_MEMORY_FLAGS,
+} from './utils/userMemory';
+import {
   clearLegacyWorkbuddyAutoCheckinLogs,
   getWorkbuddyAutoCheckinConfig,
   migrateWorkbuddyAutoCheckinConfigAsync,
@@ -767,6 +771,18 @@ function MainApp() {
     return () => {
       window.removeEventListener('codex-suite-ensure-mounted', ensureMounted);
     };
+  }, []);
+
+  useEffect(() => {
+    void hydrateUserMemory().then((memory) => {
+      const store = useSideNavLayoutStore.getState();
+      if (
+        memory.dismissed[USER_MEMORY_FLAGS.classicSwitchPrompt] ||
+        store.hideClassicSwitchPrompt
+      ) {
+        store.setHideClassicSwitchPrompt(true);
+      }
+    });
   }, []);
 
   useEffect(() => {

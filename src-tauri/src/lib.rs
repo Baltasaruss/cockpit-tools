@@ -707,6 +707,9 @@ pub fn run() {
             commands::system::external_import_fetch_import_url,
             commands::system::open_folder,
             commands::system::delete_corrupted_file,
+            commands::system::load_user_memory,
+            commands::system::mark_user_memory_dismissed,
+            commands::system::save_user_memory_list,
             // Logs Commands
             commands::logs::logs_get_snapshot,
             commands::logs::logs_open_log_directory,

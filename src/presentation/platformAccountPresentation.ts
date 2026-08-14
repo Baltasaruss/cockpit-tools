@@ -32,7 +32,6 @@ import {
   getCodebuddyUsage,
 } from "../types/codebuddy";
 import {
-  formatCodexAdditionalQuotaShortLabel,
   formatCodexResetTime,
   getCodexAdditionalQuotaWindows,
   getCodexCodeReviewQuotaMetric,
@@ -717,7 +716,7 @@ function getCodexQuotaWindowTitle(
   if (label === "7d" || label === "Weekly") {
     return t("codex.quota.weekly", "周配额");
   }
-  const weeks = /^(\d+)w$/.exec(label);
+  const weeks = /^(\d+)\s*w(?:eek)?s?$/i.exec(label);
   if (weeks) {
     return t("codex.quota.windowWeeks", {
       count: Number(weeks[1]),
@@ -815,11 +814,7 @@ export function buildCodexAccountPresentation(
             .join("\n");
           return {
             key: window.id,
-            label: formatCodexAdditionalQuotaShortLabel(
-              window.limitName,
-              window.limitLabel,
-              window.label,
-            ),
+            label: `${limitLabel} ${window.label}`,
             percentage: window.percentage,
             quotaClass: getCodexQuotaClass(window.percentage),
             valueText: `${window.percentage}%`,
@@ -836,7 +831,7 @@ export function buildCodexAccountPresentation(
   if (codeReviewMetric) {
     quotaItems.push({
       key: "code_review",
-      label: t("codex.quota.codeReviewShort", "审阅"),
+      label: "Code Review",
       percentage: codeReviewMetric.percentage,
       quotaClass: getCodexQuotaClass(codeReviewMetric.percentage),
       valueText: `${codeReviewMetric.percentage}%`,

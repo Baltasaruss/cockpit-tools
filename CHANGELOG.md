@@ -7,11 +7,27 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
-## [Unreleased]
+## [1.3.20] - 2026-08-14
+
+### Added
+
+- **Codex MiniMax Token Plan and Zhipu/GLM Coding Plan accounts can now show quota**: refresh to see remaining percentage, plan, and reset time. Thanks @Jonesxq ([#1929](https://github.com/jlcodes99/cockpit-tools/pull/1929)).
+- **Codex model providers add OpenCode Go, and OpenRouter includes the Luna Pro model**: OpenCode Go can be selected as a Chat Completions provider with its current model catalog. Thanks @Jonesxq ([#1922](https://github.com/jlcodes99/cockpit-tools/pull/1922)).
+- **Existing Codex model-provider API keys can be edited in place**: the provider entry stays, and linked Codex accounts pick up the new key. Thanks @Jonesxq ([#1923](https://github.com/jlcodes99/cockpit-tools/pull/1923)).
 
 ### Changed
 
-- **Codex account-card quota rows now stack as label + percent / full-width bar / reset time with usage chips**: long labels stay readable, bars in the same card share one length, and request / token / cost sit beside the reset time.
+- **Considering long titles such as Codex Spark, the account quota layout was adjusted**: the title sits above the bar so progress bars stay aligned.
+- **DeepSeek in Codex now exposes its real reasoning levels**: `low` / `high` / `max`, instead of Codex default `medium` / `xhigh`. Thanks @Jonesxq ([#1931](https://github.com/jlcodes99/cockpit-tools/pull/1931)).
+
+### Fixed
+
+- **Closed guides, account groups, and custom sort now survive updates**: dismissed gateway / risk / sidebar prompts are stored on disk, old localStorage keys still count as dismissed, and incomplete account lists no longer wipe group members or custom order. Group files also fail closed and write atomically. Thanks @Jonesxq ([#1933](https://github.com/jlcodes99/cockpit-tools/pull/1933), [#1919](https://github.com/jlcodes99/cockpit-tools/issues/1919)).
+- **CodeBuddy CN and WorkBuddy enterprise accounts now show real usage**: when the personal resource API returns empty, the official enterprise usage API is used. Thanks @Yuyang-0423 ([#1911](https://github.com/jlcodes99/cockpit-tools/pull/1911)).
+- **Provider usage lookup now works when the base URL is only a host root**: the configured URL is tried first, then `/v1`. Thanks @Jonesxq ([#1926](https://github.com/jlcodes99/cockpit-tools/pull/1926)).
+- **Switching Codex to the built-in OpenAI provider no longer overwrites a user-selected unmanaged `model_provider`**. Thanks @Jonesxq ([#1930](https://github.com/jlcodes99/cockpit-tools/pull/1930)).
+- **WorkBuddy scheduled check-ins now fire more reliably**: the scheduler wakes after config changes, checks once at startup, and retries when the activity is temporarily closed. Thanks @Jonesxq ([#1932](https://github.com/jlcodes99/cockpit-tools/pull/1932)).
+- **Codex API Service request logs now record reasoning effort**. Thanks @Jonesxq ([#1924](https://github.com/jlcodes99/cockpit-tools/pull/1924)).
 
 ## [1.3.19] - 2026-08-14
 

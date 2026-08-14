@@ -767,44 +767,6 @@ function normalizeCodexAdditionalLimitLabel(
     .trim();
 }
 
-const CODEX_ADDITIONAL_LIMIT_GENERIC_TOKENS = new Set([
-  "gpt",
-  "codex",
-  "openai",
-  "chatgpt",
-]);
-
-export function getCodexAdditionalLimitShortLabel(
-  limitName: string,
-  limitLabel = "",
-): string {
-  const tokens = `${limitName} ${limitLabel}`
-    .toLowerCase()
-    .split(/[-_\s]+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
-  const meaningful = tokens.filter(
-    (token) =>
-      !CODEX_ADDITIONAL_LIMIT_GENERIC_TOKENS.has(token) &&
-      !/^\d+(\.\d+)?$/.test(token),
-  );
-  const pick =
-    meaningful[meaningful.length - 1] || tokens[tokens.length - 1] || "";
-  if (!pick) return "";
-  return pick.charAt(0).toUpperCase() + pick.slice(1);
-}
-
-export function formatCodexAdditionalQuotaShortLabel(
-  limitName: string,
-  limitLabel: string,
-  windowLabel: string,
-): string {
-  const shortLabel = getCodexAdditionalLimitShortLabel(limitName, limitLabel);
-  const window = windowLabel.trim();
-  if (shortLabel && window) return `${shortLabel} ${window}`;
-  return shortLabel || window;
-}
-
 function normalizeCodexUnixSeconds(value: unknown): number | undefined {
   const timestamp = toFiniteNumber(value);
   if (timestamp === undefined || timestamp <= 0) return undefined;
@@ -1341,12 +1303,12 @@ export function getCodexQuotaWindowLabel(
       : null;
 
   if (safeMinutes == null) {
-    return fallback === "weekly" ? "7d" : "5h";
+    return fallback === "weekly" ? "Weekly" : "5h";
   }
 
   if (safeMinutes >= WEEK_MINUTES - 1) {
     const weeks = Math.ceil(safeMinutes / WEEK_MINUTES);
-    return weeks <= 1 ? "7d" : `${weeks}w`;
+    return weeks <= 1 ? "Weekly" : `${weeks} Week`;
   }
 
   if (safeMinutes >= DAY_MINUTES - 1) {

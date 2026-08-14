@@ -37,8 +37,8 @@ test('treats a weekly primary window as weekly instead of 5h', () => {
 
   assert.deepEqual(summary.byPlan.PLUS.windows, [
     {
-      key: '7d',
-      label: '7d',
+      key: 'weekly',
+      label: 'Weekly',
       percentage: 73,
       accountCount: 1,
       windowMinutes: 10_080,
@@ -66,7 +66,7 @@ test('keeps legacy 5h and weekly windows when both are present', () => {
     summary.byPlan.PRO.windows.map(({ label, percentage }) => ({ label, percentage })),
     [
       { label: '5h', percentage: 80 },
-      { label: '7d', percentage: 45 },
+      { label: 'Weekly', percentage: 45 },
     ],
   );
 });
@@ -84,7 +84,7 @@ test('uses legacy labels when window metadata is unavailable', () => {
     summary.byPlan.API_KEY.windows.map(({ label, percentage }) => ({ label, percentage })),
     [
       { label: '5h', percentage: 60 },
-      { label: '7d', percentage: 25 },
+      { label: 'Weekly', percentage: 25 },
     ],
   );
 });
@@ -111,7 +111,7 @@ test('preserves a real zero-percent window and omits an account with no quota', 
       percentage,
       accountCount,
     })),
-    [{ label: '7d', percentage: 0, accountCount: 1 }],
+    [{ label: 'Weekly', percentage: 0, accountCount: 1 }],
   );
 });
 
@@ -149,7 +149,7 @@ test('merges equivalent weekly windows across mixed old and new accounts', () =>
     })),
     [
       { label: '5h', percentage: 20, accountCount: 1 },
-      { label: '7d', percentage: 70, accountCount: 2 },
+      { label: 'Weekly', percentage: 70, accountCount: 2 },
     ],
   );
 });
@@ -170,6 +170,6 @@ test('does not invent 5h windows for weekly-only plus, pro, or API key plans', (
   const summary = summarizeCodexQuotaPool(accounts);
 
   summary.visiblePlans.forEach((plan) => {
-    assert.deepEqual(plan.windows.map((window) => window.label), ['7d']);
+    assert.deepEqual(plan.windows.map((window) => window.label), ['Weekly']);
   });
 });

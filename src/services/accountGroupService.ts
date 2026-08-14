@@ -228,9 +228,28 @@ export function removeAccountsFromGroup(groupId: string, accountIds: string[]): 
   });
 }
 
-/** 清理不存在的账号ID（当账号被删除时调用） */
+/** 只移除明确已删除的账号，禁止用空列表把整组清掉。 */
+export function removeAccountIdsFromAllGroups(accountIds: string[]): Promise<void> {
+  return enqueue(async () => {
+    const toRemove = new Set(accountIds.map((id) => id.trim()).filter(Boolean));
+    if (toRemove.size === 0) return;
+    const groups = await loadGroups();
+    let changed = false;
+    for (const group of groups) {
+      const next = group.accountIds.filter((id) => !toRemove.has(id));
+      if (next.length !== group.accountIds.length) {
+        group.accountIds = next;
+        changed = true;
+      }
+    }
+    if (changed) await saveGroups(groups);
+  });
+}
+
+/** 清理不存在的账号ID（仅在确认当前列表完整时使用） */
 export function cleanupDeletedAccounts(existingAccountIds: Set<string>): Promise<void> {
   return enqueue(async () => {
+    if (existingAccountIds.size === 0) return;
     const groups = await loadGroups();
     let changed = false;
     for (const group of groups) {

@@ -7,11 +7,27 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
-## [Unreleased]
+## [1.3.20] - 2026-08-14
+
+### 新增
+
+- **Codex MiniMax Token Plan 和智谱 GLM Coding Plan 账号可显示额度**：可刷新并查看剩余百分比、套餐和重置时间。感谢 @Jonesxq（[#1929](https://github.com/jlcodes99/cockpit-tools/pull/1929)）。
+- **Codex 模型供应商新增 OpenCode Go，OpenRouter 补上 Luna Pro 模型**：可直接选择 OpenCode Go 及其当前模型目录。感谢 @Jonesxq（[#1922](https://github.com/jlcodes99/cockpit-tools/pull/1922)）。
+- **已有 Codex 模型供应商 API Key 可直接编辑**：不用删掉重建，关联账号会同步新 Key。感谢 @Jonesxq（[#1923](https://github.com/jlcodes99/cockpit-tools/pull/1923)）。
 
 ### 变更
 
-- **Codex 账号卡片额度改为「标签 + 百分比 / 通栏进度条 / 时间与用量」三行**：长标签完整显示，同一卡片里进度条等长；请求数 / token / 计费放在重置时间右侧。
+- **考虑到 Codex Spark 等长标题，调整了账号额度布局**：标题放在进度条上方，进度条保持对齐。
+- **Codex 里的 DeepSeek 改为展示真实推理档位**：`low` / `high` / `max`，不再套用 Codex 默认的 `medium` / `xhigh`。感谢 @Jonesxq（[#1931](https://github.com/jlcodes99/cockpit-tools/pull/1931)）。
+
+### 修复
+
+- **已关闭的引导、账号分组和自定义排序在更新后会保留**：网关引导、风险提示和侧栏提示会记到本机数据目录，旧的 localStorage 键也仍视为已关闭；账号列表未就绪时不会再清空分组成员或自定义排序。分组文件读取失败不再当成空数据，写入改为原子替换。感谢 @Jonesxq（[#1933](https://github.com/jlcodes99/cockpit-tools/pull/1933)，[#1919](https://github.com/jlcodes99/cockpit-tools/issues/1919)）。
+- **CodeBuddy 国内版和 WorkBuddy 企业账号可显示真实用量**：个人资源接口为空时改走官方企业用量接口。感谢 @Yuyang-0423（[#1911](https://github.com/jlcodes99/cockpit-tools/pull/1911)）。
+- **供应商用量查询支持只填根地址**：先试你填的地址，再回退到 `/v1`。感谢 @Jonesxq（[#1926](https://github.com/jlcodes99/cockpit-tools/pull/1926)）。
+- **Codex 切到内置 OpenAI 时，不再覆盖用户自己选的非托管 `model_provider`**。感谢 @Jonesxq（[#1930](https://github.com/jlcodes99/cockpit-tools/pull/1930)）。
+- **WorkBuddy 定时签到更稳**：保存配置后会立刻唤醒调度，启动时检查一次，活动暂时关闭会重试而不是记成今天已签。感谢 @Jonesxq（[#1932](https://github.com/jlcodes99/cockpit-tools/pull/1932)）。
+- **Codex API 服务请求日志会记录推理力度**。感谢 @Jonesxq（[#1924](https://github.com/jlcodes99/cockpit-tools/pull/1924)）。
 
 ## [1.3.19] - 2026-08-14
 
