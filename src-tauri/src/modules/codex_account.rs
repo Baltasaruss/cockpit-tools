@@ -2085,6 +2085,14 @@ fn write_api_provider_to_config_toml_with_options(
 
     match provider_config.mode {
         CodexApiProviderMode::OpenaiBuiltin => {
+            let preserved_user_model_provider = doc
+                .get(CODEX_CONFIG_MODEL_PROVIDER_KEY)
+                .and_then(|item| item.as_str())
+                .map(str::trim)
+                .filter(|provider_id| {
+                    !provider_id.is_empty() && !is_managed_model_provider_id(provider_id)
+                })
+                .map(ToOwned::to_owned);
             if cleanup_managed_model_catalog {
                 remove_managed_model_catalog_from_doc(&mut doc);
             }
@@ -2093,14 +2101,22 @@ fn write_api_provider_to_config_toml_with_options(
             #[cfg(target_os = "windows")]
             {
                 write_windows_builtin_openai_provider_to_doc(&mut doc, normalized.as_deref())?;
+                if let Some(provider_id) = preserved_user_model_provider.as_deref() {
+                    doc[CODEX_CONFIG_MODEL_PROVIDER_KEY] = value(provider_id);
+                }
             }
             #[cfg(not(target_os = "windows"))]
-            match normalized.as_deref() {
-                Some(base_url) => {
-                    doc[CODEX_CONFIG_OPENAI_BASE_URL_KEY] = value(base_url);
+            {
+                if let Some(provider_id) = preserved_user_model_provider.as_deref() {
+                    doc[CODEX_CONFIG_MODEL_PROVIDER_KEY] = value(provider_id);
                 }
-                None => {
-                    let _ = doc.remove(CODEX_CONFIG_OPENAI_BASE_URL_KEY);
+                match normalized.as_deref() {
+                    Some(base_url) => {
+                        doc[CODEX_CONFIG_OPENAI_BASE_URL_KEY] = value(base_url);
+                    }
+                    None => {
+                        let _ = doc.remove(CODEX_CONFIG_OPENAI_BASE_URL_KEY);
+                    }
                 }
             }
         }
@@ -2334,6 +2350,16 @@ fn collect_managed_api_key_provider_ids() -> HashSet<String> {
         CODEX_COCKPIT_API_PROVIDER_ID.to_string(),
         CODEX_LEGACY_API_KEY_OPENAI_PROVIDER_ID.to_string(),
     ])
+}
+
+fn is_managed_model_provider_id(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        CODEX_OPENAI_PROVIDER_ID
+            | CODEX_RUNTIME_MODEL_PROVIDER_ID
+            | CODEX_COCKPIT_API_PROVIDER_ID
+            | CODEX_LEGACY_API_KEY_OPENAI_PROVIDER_ID
+    )
 }
 
 fn remove_managed_api_key_model_providers_from_doc(doc: &mut Document) {
@@ -13105,14 +13131,60 @@ multi_agent = true
         write_api_provider_to_config_toml(&base_dir, &provider_config).expect("write config");
 
         let content = fs::read_to_string(&config_path).expect("read config");
-        #[cfg(target_os = "windows")]
-        assert!(content.contains("model_provider = \"openai\""));
-        #[cfg(not(target_os = "windows"))]
-        assert!(!content.contains("model_provider = "));
+        assert!(content.contains("model_provider = \"user_manual_provider\""));
         assert!(content.contains("model_catalog_json = \"user-model-catalog.json\""));
         assert!(content.contains("[model_providers.user_manual_provider]"));
         assert!(content.contains("model_context_window = 1000000"));
         assert!(content.contains("[features]"));
+
+        fs::remove_dir_all(&base_dir).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn config_toml_preserves_openai_http_provider_when_switching_to_builtin_openai() {
+        let base_dir = make_temp_dir("codex-config-preserve-openai-http-provider-test");
+        let config_path = base_dir.join("config.toml");
+        fs::write(
+            &config_path,
+            r#"model_provider = "openai_http"
+openai_base_url = "https://legacy.example.com/v1"
+
+[model_providers.openai_http]
+name = "OpenAI HTTP"
+base_url = "https://manual.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = false
+
+[model_providers.codex_local_access]
+name = "Managed Local Access"
+base_url = "https://managed.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.cockpit_api]
+name = "Managed Cockpit API"
+base_url = "https://managed.example.com/api"
+wire_api = "responses"
+requires_openai_auth = false
+"#,
+        )
+        .expect("write user provider config");
+        let provider_config = resolve_api_provider_config(
+            Some("https://api.example.com/v1"),
+            Some(CodexApiProviderMode::OpenaiBuiltin),
+            None,
+            None,
+        )
+        .expect("resolve provider config");
+
+        write_api_provider_to_config_toml(&base_dir, &provider_config).expect("write config");
+
+        let content = fs::read_to_string(&config_path).expect("read config");
+        assert!(content.contains("model_provider = \"openai_http\""));
+        assert!(content.contains("[model_providers.openai_http]"));
+        assert!(content.contains("openai_base_url = \"https://api.example.com/v1\""));
+        assert!(!content.contains("[model_providers.codex_local_access]"));
+        assert!(!content.contains("[model_providers.cockpit_api]"));
 
         fs::remove_dir_all(&base_dir).expect("cleanup temp dir");
     }
