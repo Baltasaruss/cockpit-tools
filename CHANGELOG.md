@@ -7,6 +7,24 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.18] - 2026-08-14
+
+### Added
+
+- **Codex third-party model catalogs support a per-model context window**: set it on the model list when adding or editing an API Key, in the model-provider editor, or on the API Service mapping table. Official and DeepSeek catalogs keep vendor values unless you enter one; other models fall back to Compact settings or 128000. After saving, both the Codex client catalog and the API Service model list report that window; restart Codex to apply it there.
+- **First launch and post-update startup show a progress bar**: the window no longer stays blank while the app is loading.
+- **Codex account cards show usage from the last full window to now**: official accounts in the API Service pool display request count, tokens, and account-billed cost (`A $`); empty windows still show `0 req`, `0`, and `A $0.00`.
+- **Codex session management adds session usage**: real token usage is aggregated from local session logs, independent of official remaining-quota percentages and without requiring traffic to go through API Service.
+
+### Changed
+
+- **Official Codex quota bars are now compact, with reset time on its own line aligned to the quota label**.
+- **Codex API Service official OAuth outbound identity now matches official clients**: paired `codex-tui` identity is used by default and downstream client user-agents are not forwarded; session headers use `Session-Id` and include window and thread identifiers.
+
+### Fixed
+
+- **Fixed the app appearing frozen on a white screen after install or update**: startup now shows progress, and first paint no longer waits on remote fonts.
+
 ## [1.3.17] - 2026-08-13
 
 ### Added

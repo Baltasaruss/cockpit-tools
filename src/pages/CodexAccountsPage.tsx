@@ -99,6 +99,7 @@ import {
   hasCodexAccountName,
   formatCodexResetTime,
   formatCodexResetTimeAbsolute,
+  getCodexQuotaWindows,
   isCodexApiKeyAccount,
   isCodexAgentIdentityAccount,
   isCodexWebSessionAccount,
@@ -129,6 +130,12 @@ import {
   summarizeCodexQuotaErrorMessage,
 } from "../utils/codexQuotaError";
 import { buildCodexAccountPresentation } from "../presentation/platformAccountPresentation";
+import { CodexQuotaMiniRows } from "../components/codex/CodexQuotaMiniRows";
+import {
+  buildCodexAccountWindowStatQueries,
+  formatCodexWindowStatsText,
+  type CodexWindowStats,
+} from "../utils/codexWindowStats";
 import {
   readCodexImportSyncApiService,
   writeCodexImportSyncApiService,
@@ -169,6 +176,11 @@ import {
   type CodexWakeupTestOpenRequest,
 } from "../components/codex/CodexWakeupContent";
 import { CodexModelProviderManager } from "../components/codex/CodexModelProviderManager";
+import { CodexModelContextWindowTable } from "../components/codex/CodexModelContextWindowTable";
+import {
+  contextWindowDraftsFromRecord,
+  parseContextWindowDrafts,
+} from "../utils/codexModelContextWindows";
 import { CodexSpeedSelect } from "../components/codex/CodexSpeedSelect";
 import { QuickSettingsPopover } from "../components/QuickSettingsPopover";
 import { useProviderAccountsPage } from "../hooks/useProviderAccountsPage";
@@ -996,6 +1008,13 @@ export function CodexAccountsPage() {
   const sponsorModule = useSponsorStore((state) => state.state.sponsorModule);
   const fetchSponsorState = useSponsorStore((state) => state.fetchState);
   const [activeTab, setActiveTab] = useState<CodexTab>("overview");
+  const [sessionWindowStats, setSessionWindowStats] = useState<{
+    ready: boolean;
+    byAccountId: Record<
+      string,
+      { primary?: CodexWindowStats; secondary?: CodexWindowStats }
+    >;
+  }>({ ready: false, byAccountId: {} });
   const [wakeupPresetManagerSignal, setWakeupPresetManagerSignal] = useState(0);
   const [fullQuotaWakeupOpenRequest, setFullQuotaWakeupOpenRequest] =
     useState<CodexWakeupTestOpenRequest | null>(null);
@@ -3648,6 +3667,8 @@ export function CodexAccountsPage() {
     DEFAULT_CODEX_API_BASE_URL,
   );
   const [apiModelCatalogInput, setApiModelCatalogInput] = useState("");
+  const [apiModelContextWindowsInput, setApiModelContextWindowsInput] =
+    useState<Record<string, string>>({});
   const [apiSyncModelCatalogToCodex, setApiSyncModelCatalogToCodex] =
     useState(false);
   const [apiModelCatalogFetching, setApiModelCatalogFetching] = useState(false);
@@ -3694,6 +3715,10 @@ export function CodexAccountsPage() {
   );
   const [editingApiModelCatalogInput, setEditingApiModelCatalogInput] =
     useState("");
+  const [
+    editingApiModelContextWindowsInput,
+    setEditingApiModelContextWindowsInput,
+  ] = useState<Record<string, string>>({});
   const [
     editingApiSyncModelCatalogToCodex,
     setEditingApiSyncModelCatalogToCodex,
@@ -4280,6 +4305,7 @@ export function CodexAccountsPage() {
           ?.modelCatalog ??
         [];
       setApiModelCatalogInput(defaultModels.join("\n"));
+      setApiModelContextWindowsInput({});
       setApiSyncModelCatalogToCodex(false);
       setApiModelCatalogFetching(false);
       setApiModelCatalogError(null);
@@ -6577,6 +6603,7 @@ export function CodexAccountsPage() {
         setApiBaseUrlInput("");
         setNewManagedProviderNameInput("");
         setApiModelCatalogInput("");
+        setApiModelContextWindowsInput({});
         return;
       }
       const sponsorTemplate = sponsorApiProviderTemplates.find(
@@ -6586,6 +6613,7 @@ export function CodexAccountsPage() {
         setApiBaseUrlInput(sponsorTemplate.baseUrl);
         setNewManagedProviderNameInput(sponsorTemplate.name);
         setApiModelCatalogInput(sponsorTemplate.modelCatalog.join("\n"));
+        setApiModelContextWindowsInput({});
         return;
       }
       const preset = findCodexApiProviderPresetById(providerId);
@@ -6593,6 +6621,7 @@ export function CodexAccountsPage() {
       setApiBaseUrlInput(preset.baseUrls[0]);
       setNewManagedProviderNameInput("");
       setApiModelCatalogInput((preset.modelCatalog ?? []).join("\n"));
+      setApiModelContextWindowsInput({});
       if (providerId === OPENAI_OFFICIAL_PRESET_ID) {
         setApiSyncModelCatalogToCodex(false);
       }
@@ -6609,6 +6638,12 @@ export function CodexAccountsPage() {
       if (!provider) return;
       setApiBaseUrlInput(provider.baseUrl);
       setApiModelCatalogInput((provider.modelCatalog ?? []).join("\n"));
+      setApiModelContextWindowsInput(
+        contextWindowDraftsFromRecord(
+          provider.modelContextWindows,
+          provider.modelCatalog ?? [],
+        ),
+      );
       setApiModelCatalogError(null);
       const firstKey = provider.apiKeys[0];
       if (firstKey) {
@@ -6770,6 +6805,7 @@ export function CodexAccountsPage() {
       sponsorTemplate?.name ?? request.providerName?.trim() ?? "APIKEY.FUN",
     );
     setApiModelCatalogInput((request.modelCatalog ?? []).join("\n"));
+    setApiModelContextWindowsInput({});
     setApiModelCatalogError(null);
     setAddStatus("idle");
     setAddMessage(
@@ -6810,11 +6846,13 @@ export function CodexAccountsPage() {
       setEditingApiModelCatalogError(null);
       if (providerId === CODEX_API_PROVIDER_CUSTOM_ID) {
         setEditingApiModelCatalogInput("");
+        setEditingApiModelContextWindowsInput({});
       }
       const preset = findCodexApiProviderPresetById(providerId);
       if (!preset || preset.baseUrls.length === 0) return;
       setEditingApiBaseUrlCredentialsValue(preset.baseUrls[0]);
       setEditingApiModelCatalogInput((preset.modelCatalog ?? []).join("\n"));
+      setEditingApiModelContextWindowsInput({});
       if (providerId === OPENAI_OFFICIAL_PRESET_ID) {
         setEditingApiSyncModelCatalogToCodex(false);
       }
@@ -6830,6 +6868,12 @@ export function CodexAccountsPage() {
       if (!provider) return;
       setEditingApiBaseUrlCredentialsValue(provider.baseUrl);
       setEditingApiModelCatalogInput((provider.modelCatalog ?? []).join("\n"));
+      setEditingApiModelContextWindowsInput(
+        contextWindowDraftsFromRecord(
+          provider.modelContextWindows,
+          provider.modelCatalog ?? [],
+        ),
+      );
       setEditingApiModelCatalogError(null);
       const firstKey = provider.apiKeys[0];
       if (firstKey) {
@@ -7023,6 +7067,7 @@ export function CodexAccountsPage() {
           selectedQuickSwitchProvider.name,
           selectedQuickSwitchApiKey.name,
         ),
+        selectedQuickSwitchProvider.modelContextWindows,
       );
       setMessage({
         text: t("codex.quickSwitch.success", {
@@ -7085,6 +7130,19 @@ export function CodexAccountsPage() {
       );
       return;
     }
+    const parsedWindows = parseContextWindowDrafts(
+      apiModelContextWindowsInput,
+      apiModelCatalogDraft,
+    );
+    if (!parsedWindows.ok) {
+      setApiModelCatalogError(
+        t(
+          "codex.api.modelCatalog.contextWindowInvalid",
+          "上下文窗口必须是大于 0 的整数",
+        ),
+      );
+      return;
+    }
     setApiModelCatalogError(null);
     const existingApiKeyAccount = accounts.find(
       (account) =>
@@ -7100,6 +7158,7 @@ export function CodexAccountsPage() {
         selectedManagedProviderApiKey?.name,
       ),
       apiModelCatalog: apiModelCatalogDraft,
+      apiModelContextWindows: parsedWindows.windows,
     };
 
     page.setAddStatus("loading");
@@ -7127,6 +7186,7 @@ export function CodexAccountsPage() {
             apiKeyName: providerPayload.accountName,
             sourceTag: providerPayload.sponsorTemplate?.id ?? null,
             modelCatalog: providerPayload.apiModelCatalog,
+            modelContextWindows: providerPayload.apiModelContextWindows,
             supportsVision: providerPayload.sponsorTemplate?.supportsVision,
             website: providerPayload.sponsorTemplate?.website,
             apiKeyUrl: providerPayload.sponsorTemplate?.apiKeyUrl,
@@ -7186,6 +7246,7 @@ export function CodexAccountsPage() {
         finalProviderPayload.apiWireApi,
         finalProviderPayload.apiSupportsWebsockets,
         apiSyncModelCatalogToCodex,
+        parsedWindows.windows,
       );
       await fetchAccounts();
       await fetchCurrentAccount();
@@ -7208,10 +7269,18 @@ export function CodexAccountsPage() {
       }
       page.setAddStatus("success");
       page.setAddMessage(
-        t("codex.import.successMsg", "导入成功: {{email}}").replace(
+        `${t("codex.import.successMsg", "导入成功: {{email}}").replace(
           "{{email}}",
           maskAccountText(account.email),
-        ),
+        )}${
+          Object.keys(parsedWindows.windows).length > 0 ||
+          apiSyncModelCatalogToCodex
+            ? ` ${t(
+                "codex.api.modelCatalog.restartHint",
+                "模型目录已更新。若 Codex 正在运行，请重启后生效。",
+              )}`
+            : ""
+        }`,
       );
       setApiKeyInput("");
       setApiBaseUrlInput(DEFAULT_CODEX_API_BASE_URL);
@@ -8379,6 +8448,7 @@ export function CodexAccountsPage() {
     setEditingManagedProviderApiKeyId("");
     setEditingNewManagedProviderNameInput("");
     setEditingApiModelCatalogInput("");
+    setEditingApiModelContextWindowsInput({});
     setEditingApiSyncModelCatalogToCodex(false);
     setEditingApiModelCatalogFetching(false);
     setEditingApiModelCatalogError(null);
@@ -8414,6 +8484,13 @@ export function CodexAccountsPage() {
       setEditingApiModelCatalogInput(
         (account.api_model_catalog ?? matchedProvider?.modelCatalog ?? []).join(
           "\n",
+        ),
+      );
+      setEditingApiModelContextWindowsInput(
+        contextWindowDraftsFromRecord(
+          account.api_model_context_windows ??
+            matchedProvider?.modelContextWindows,
+          account.api_model_catalog ?? matchedProvider?.modelCatalog ?? [],
         ),
       );
       setEditingApiSyncModelCatalogToCodex(
@@ -8452,6 +8529,19 @@ export function CodexAccountsPage() {
       );
       return;
     }
+    const parsedWindows = parseContextWindowDrafts(
+      editingApiModelContextWindowsInput,
+      editingApiModelCatalogDraft,
+    );
+    if (!parsedWindows.ok) {
+      setEditingApiModelCatalogError(
+        t(
+          "codex.api.modelCatalog.contextWindowInvalid",
+          "上下文窗口必须是大于 0 的整数",
+        ),
+      );
+      return;
+    }
     setEditingApiModelCatalogError(null);
     const editingAccount = accounts.find((account) => account.id === accountId);
     const providerPayload = {
@@ -8463,6 +8553,7 @@ export function CodexAccountsPage() {
         selectedEditingManagedProviderApiKey?.name,
       ),
       apiModelCatalog: editingApiModelCatalogDraft,
+      apiModelContextWindows: parsedWindows.windows,
     };
 
     setSavingApiKeyCredentials(true);
@@ -8482,6 +8573,7 @@ export function CodexAccountsPage() {
         providerPayload.apiSupportsWebsockets,
         editingApiSyncModelCatalogToCodex,
         providerPayload.accountName,
+        parsedWindows.windows,
       );
       if (
         validation.apiBaseUrl &&
@@ -8503,6 +8595,7 @@ export function CodexAccountsPage() {
             apiKeyName: providerPayload.accountName,
             sourceTag: providerPayload.sponsorTemplate?.id ?? null,
             modelCatalog: providerPayload.apiModelCatalog,
+            modelContextWindows: providerPayload.apiModelContextWindows,
             supportsVision: providerPayload.sponsorTemplate?.supportsVision,
             website: providerPayload.sponsorTemplate?.website,
             apiKeyUrl: providerPayload.sponsorTemplate?.apiKeyUrl,
@@ -8537,7 +8630,16 @@ export function CodexAccountsPage() {
           );
         }
       }
-      setMessage({ text: t("instances.messages.updated", "实例已更新") });
+      setMessage({
+        text:
+          Object.keys(parsedWindows.windows).length > 0 ||
+          editingApiSyncModelCatalogToCodex
+            ? `${t("instances.messages.updated", "实例已更新")} ${t(
+                "codex.api.modelCatalog.restartHint",
+                "模型目录已更新。若 Codex 正在运行，请重启后生效。",
+              )}`
+            : t("instances.messages.updated", "实例已更新"),
+      });
       setApiKeyUsageMap((previous) => {
         const next = { ...previous };
         delete next[accountId];
@@ -8568,6 +8670,7 @@ export function CodexAccountsPage() {
     editingApiKeyCredentialsId,
     editingApiKeyCredentialsValue,
     editingApiModelCatalogDraft,
+    editingApiModelContextWindowsInput,
     editingApiProviderPresetId,
     editingApiSyncModelCatalogToCodex,
     editingManagedProviderId,
@@ -10220,6 +10323,105 @@ export function CodexAccountsPage() {
     ? null
     : (currentAccount?.id ?? null);
 
+  useEffect(() => {
+    if (activeTab !== "overview") {
+      setSessionWindowStats({ ready: false, byAccountId: {} });
+      return;
+    }
+    const memberAccounts = (localAccessCollection?.accountIds ?? [])
+      .map((accountId) => accounts.find((account) => account.id === accountId))
+      .filter((account): account is CodexAccount => Boolean(account));
+    const now = Math.floor(Date.now() / 1000);
+    const queries = memberAccounts.flatMap((account) =>
+      buildCodexAccountWindowStatQueries(
+        account.id,
+        getCodexQuotaWindows(account.quota),
+        now,
+      ),
+    );
+    if (queries.length === 0) {
+      setSessionWindowStats({ ready: false, byAccountId: {} });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows =
+          await codexLocalAccessService.queryCodexLocalAccessAccountWindowStats(
+            queries,
+          );
+        if (cancelled) return;
+        const byAccountId: Record<
+          string,
+          { primary?: CodexWindowStats; secondary?: CodexWindowStats }
+        > = {};
+        rows.forEach((row) => {
+          const stats: CodexWindowStats = {
+            requestCount: row.requestCount,
+            inputTokens: row.inputTokens,
+            cachedInputTokens: row.cachedTokens,
+            outputTokens: row.outputTokens,
+            totalTokens: row.totalTokens,
+            estimatedCostUsd: row.estimatedCostUsd,
+          };
+          const current = byAccountId[row.accountId] ?? {};
+          if (row.windowKey === "secondary") {
+            current.secondary = stats;
+          } else if (row.windowKey === "primary") {
+            current.primary = stats;
+          }
+          byAccountId[row.accountId] = current;
+        });
+        setSessionWindowStats({ ready: true, byAccountId });
+      } catch {
+        if (!cancelled) {
+          setSessionWindowStats({ ready: false, byAccountId: {} });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts, activeTab, localAccessCollection?.accountIds]);
+
+  const applyWindowStatsToQuotaItems = useCallback(
+    (
+      account: CodexAccount,
+      items: ReturnType<typeof buildCodexAccountPresentation>["quotaItems"],
+    ) => {
+      if (!sessionWindowStats.ready) {
+        return items;
+      }
+      const accountStats = sessionWindowStats.byAccountId[account.id];
+      if (!accountStats) {
+        return items;
+      }
+      return items.map((item) => {
+        const stats =
+          item.key === "primary"
+            ? accountStats.primary
+            : item.key === "secondary"
+              ? accountStats.secondary
+              : null;
+        if (!stats) return item;
+        const windowStatsText = formatCodexWindowStatsText(stats);
+        const hint = t(
+          "codex.quota.windowStatsHint",
+          "从本窗口满额到现在，该账号走 API 服务的请求数、token 和账号计费",
+        );
+        return {
+          ...item,
+          windowStats: stats,
+          windowStatsText,
+          hintText: [item.hintText, windowStatsText, hint]
+            .filter(Boolean)
+            .join("\n"),
+        };
+      });
+    },
+    [sessionWindowStats, t],
+  );
+
   const compareAccountsBySort = useMemo(
     () =>
       createCodexOverviewAccountComparator({
@@ -10856,36 +11058,6 @@ export function CodexAccountsPage() {
     [showAdditionalQuota, showCodeReviewQuota],
   );
 
-  const resolveCompactQuotaItems = useCallback(
-    (presentation: ReturnType<typeof buildCodexAccountPresentation>) => {
-      const standardQuotaItems = presentation.quotaItems.filter(
-        (item) => item.key !== "code_review",
-      );
-      const first = standardQuotaItems[0];
-      const primary =
-        standardQuotaItems.find((item) => item.key === "primary") ?? first;
-      const secondary =
-        standardQuotaItems.find((item) => item.key === "secondary") ??
-        standardQuotaItems.find((item) => item.key !== primary?.key);
-
-      return [
-        {
-          key: "primary",
-          valueText: primary?.valueText ?? "--",
-          quotaClass: primary?.quotaClass ?? "unknown",
-          titleText: primary?.hintText || primary?.label || "",
-        },
-        {
-          key: "secondary",
-          valueText: secondary?.valueText ?? "--",
-          quotaClass: secondary?.quotaClass ?? "unknown",
-          titleText: secondary?.hintText || secondary?.label || "",
-        },
-      ];
-    },
-    [],
-  );
-
   const renderResetCreditControls = (account: CodexAccount) => {
     if (isCodexApiKeyAccount(account) || isCodexAgentIdentityAccount(account)) return null;
 
@@ -10941,7 +11113,10 @@ export function CodexAccountsPage() {
         getCodexSwitchOrLaunchBlockedReason(account);
       const isChatCompletionsApiKey =
         isCodexChatCompletionsApiKeyAccount(account);
-      const compactQuotaItems = resolveCompactQuotaItems(presentation);
+      const compactOfficialQuotaItems = applyWindowStatsToQuotaItems(
+        account,
+        presentation.quotaItems,
+      ).filter((item) => item.key === "primary" || item.key === "secondary");
       const compactDeepSeekSummary = isDeepSeekAccount(account)
         ? apiKeyUsageMap[account.id]?.summary
         : undefined;
@@ -11027,21 +11202,9 @@ export function CodexAccountsPage() {
                 ))}
               </>
             ) : (
-              !isChatCompletionsApiKey &&
-              compactQuotaItems.map((item) => (
-                <span
-                  key={`${account.id}-${item.key}`}
-                  className={`codex-compact-quota codex-compact-quota-${item.key}`}
-                  title={item.titleText}
-                >
-                  <span className="codex-compact-dot" />
-                  <span
-                    className={`codex-compact-quota-value ${item.quotaClass}`}
-                  >
-                    {item.valueText}
-                  </span>
-                </span>
-              ))
+              !isChatCompletionsApiKey && (
+                <CodexQuotaMiniRows items={compactOfficialQuotaItems} t={t} />
+              )
             )}
             {showCompactExpiry && (
               <span className="codex-compact-expiry-wrap">
@@ -11118,10 +11281,13 @@ export function CodexAccountsPage() {
       const isSavingApiKeyName = savingApiKeyNameId === account.id;
       const planClass = presentation.planClass || "unknown";
       const isSelected = selected.has(account.id);
-      const quotaItems = resolveVisibleQuotaItems(
-        presentation,
-        isApiKeyAccount,
-        isNewApiAccount,
+      const quotaItems = applyWindowStatsToQuotaItems(
+        account,
+        resolveVisibleQuotaItems(
+          presentation,
+          isApiKeyAccount,
+          isNewApiAccount,
+        ),
       );
       const reauthErrorMeta = resolveQuotaErrorMeta(
         account.requires_reauth && account.reauth_reason
@@ -11449,40 +11615,7 @@ export function CodexAccountsPage() {
                     <strong>{cockpitApiAccountBalanceText}</strong>
                   </div>
                 )}
-                {quotaItems.map((item) => {
-                  const QuotaIcon =
-                    item.key === "secondary" || item.key.endsWith(":secondary")
-                      ? Calendar
-                      : item.key === "code_review"
-                        ? BookOpen
-                        : item.key === "new_api_quota"
-                          ? Database
-                          : Clock;
-                  return (
-                    <div
-                      key={item.key}
-                      className="quota-item"
-                      title={item.hintText}
-                    >
-                      <div className="quota-header">
-                        <QuotaIcon size={14} />
-                        <span className="quota-label">{item.label}</span>
-                        <span className={`quota-pct ${item.quotaClass}`}>
-                          {item.valueText}
-                        </span>
-                      </div>
-                      <div className="quota-bar-track">
-                        <div
-                          className={`quota-bar ${item.quotaClass}`}
-                          style={{ width: `${item.percentage}%` }}
-                        />
-                      </div>
-                      {item.resetText && (
-                        <span className="quota-reset">{item.resetText}</span>
-                      )}
-                    </div>
-                  );
-                })}
+                <CodexQuotaMiniRows items={quotaItems} t={t} />
                 {quotaItems.length === 0 && !cockpitApiAccountBalanceText && (
                   <div className="quota-empty">
                     {t("common.shared.quota.noData", "暂无配额数据")}
@@ -12557,10 +12690,13 @@ export function CodexAccountsPage() {
         isApiKeyAccount && editingApiKeyNameId === account.id;
       const isSavingApiKeyName = savingApiKeyNameId === account.id;
       const planClass = presentation.planClass || "unknown";
-      const quotaItems = resolveVisibleQuotaItems(
-        presentation,
-        isApiKeyAccount,
-        isNewApiAccount,
+      const quotaItems = applyWindowStatsToQuotaItems(
+        account,
+        resolveVisibleQuotaItems(
+          presentation,
+          isApiKeyAccount,
+          isNewApiAccount,
+        ),
       );
       const reauthErrorMeta = resolveQuotaErrorMeta(
         account.requires_reauth && account.reauth_reason
@@ -12896,31 +13032,7 @@ export function CodexAccountsPage() {
                       <strong>{cockpitApiAccountBalanceText}</strong>
                     </div>
                   )}
-                  {quotaItems.map((item) => (
-                    <div
-                      key={item.key}
-                      className="quota-item"
-                      title={item.hintText}
-                    >
-                      <div className="quota-header">
-                        <span className="quota-name">{item.label}</span>
-                        <span className={`quota-value ${item.quotaClass}`}>
-                          {item.valueText}
-                        </span>
-                      </div>
-                      <div className="quota-progress-track">
-                        <div
-                          className={`quota-progress-bar ${item.quotaClass}`}
-                          style={{ width: `${item.percentage}%` }}
-                        />
-                      </div>
-                      {item.resetText && (
-                        <div className="quota-footer">
-                          <span className="quota-reset">{item.resetText}</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                  <CodexQuotaMiniRows items={quotaItems} t={t} />
                   {quotaItems.length === 0 && !cockpitApiAccountBalanceText && (
                     <span style={{ color: "var(--text-muted)", fontSize: 13 }}>
                       {t("common.shared.quota.noData", "暂无配额数据")}
@@ -16163,6 +16275,18 @@ export function CodexAccountsPage() {
                               disabled={addStatus === "loading"}
                               aria-describedby="codex-api-model-catalog-add-hint"
                             />
+                            <CodexModelContextWindowTable
+                              models={apiModelCatalogDraft}
+                              drafts={apiModelContextWindowsInput}
+                              onChange={(model, value) => {
+                                setApiModelContextWindowsInput((current) => ({
+                                  ...current,
+                                  [model]: value,
+                                }));
+                                setApiModelCatalogError(null);
+                              }}
+                              disabled={addStatus === "loading"}
+                            />
                             <div className="api-model-catalog-toolbar">
                               <p
                                 id="codex-api-model-catalog-add-hint"
@@ -17564,6 +17688,20 @@ export function CodexAccountsPage() {
                             )}
                             disabled={savingApiKeyCredentials}
                             aria-describedby="codex-api-model-catalog-edit-hint"
+                          />
+                          <CodexModelContextWindowTable
+                            models={editingApiModelCatalogDraft}
+                            drafts={editingApiModelContextWindowsInput}
+                            onChange={(model, value) => {
+                              setEditingApiModelContextWindowsInput(
+                                (current) => ({
+                                  ...current,
+                                  [model]: value,
+                                }),
+                              );
+                              setEditingApiModelCatalogError(null);
+                            }}
+                            disabled={savingApiKeyCredentials}
                           />
                           <div className="api-model-catalog-toolbar">
                             <p

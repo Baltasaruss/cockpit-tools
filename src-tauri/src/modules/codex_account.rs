@@ -852,6 +852,7 @@ pub(crate) fn resolve_account_upstream_model(
 pub fn update_account_api_model_mappings(
     account_id: &str,
     mappings: Vec<CodexApiModelMapping>,
+    api_model_context_windows: Option<HashMap<String, i64>>,
 ) -> Result<CodexAccount, String> {
     let account_id = account_id.trim();
     if account_id.is_empty() {
@@ -863,6 +864,12 @@ pub fn update_account_api_model_mappings(
         return Err("只有 API Key 账号支持模型映射".to_string());
     }
     account.api_model_mappings = normalize_api_model_mappings(mappings)?;
+    account.api_model_context_windows = normalize_api_model_context_windows(
+        api_model_context_windows
+            .unwrap_or_else(|| account.api_model_context_windows.clone()),
+        &account.api_model_catalog,
+        &account.api_model_mappings,
+    );
     save_account(&account)?;
     Ok(account)
 }
@@ -992,7 +999,14 @@ fn write_deepseek_official_model_catalog_file(
     base_dir: &Path,
     account: &CodexAccount,
 ) -> Result<PathBuf, String> {
-    let content = build_deepseek_direct_provider_catalog_json(&account.api_model_catalog)?;
+    let content = crate::modules::codex_local_access::decorate_account_catalog_context_windows(
+        &build_deepseek_direct_provider_catalog_json(&account.api_model_catalog)?,
+        &[],
+        account,
+        crate::modules::codex_local_access::read_file_model_context_window(
+            &get_config_toml_path(base_dir),
+        ),
+    )?;
     let catalog_path = deepseek_official_model_catalog_path(base_dir);
     if let Some(parent) = catalog_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -1331,9 +1345,16 @@ fn sync_deepseek_shell_remap_catalog_to_dir(
         selected_deepseek_official_models(&account.api_model_catalog)
     };
     let slots = crate::modules::codex_local_access::allocate_provider_model_slots(&selected);
-    let content = crate::modules::codex_local_access::build_official_template_mapped_catalog_json(
+    let content = crate::modules::codex_local_access::decorate_account_catalog_context_windows(
+        &crate::modules::codex_local_access::build_official_template_mapped_catalog_json(
+            &slots,
+            deepseek_official_models_json(),
+        )?,
         &slots,
-        deepseek_official_models_json(),
+        account,
+        crate::modules::codex_local_access::read_file_model_context_window(
+            &get_config_toml_path(base_dir),
+        ),
     )?;
     let catalog_path = deepseek_official_model_catalog_path(base_dir);
     if let Some(parent) = catalog_path.parent() {
@@ -1433,6 +1454,68 @@ fn normalize_api_key_websocket_capability(account: &mut CodexAccount) -> bool {
     true
 }
 
+fn lookup_api_model_context_window(windows: &HashMap<String, i64>, model: &str) -> Option<i64> {
+    let key = model.trim();
+    if key.is_empty() {
+        return None;
+    }
+    windows
+        .get(key)
+        .copied()
+        .or_else(|| {
+            windows.iter().find_map(|(name, window)| {
+                name.trim()
+                    .eq_ignore_ascii_case(key)
+                    .then_some(*window)
+            })
+        })
+        .filter(|value| *value > 0)
+}
+
+pub(crate) fn normalize_api_model_context_windows(
+    windows: HashMap<String, i64>,
+    catalog: &[String],
+    mappings: &[CodexApiModelMapping],
+) -> HashMap<String, i64> {
+    let mut allowed = Vec::new();
+    let mut seen = HashSet::new();
+    for model in catalog
+        .iter()
+        .map(|item| item.as_str())
+        .chain(mappings.iter().flat_map(|mapping| {
+            [mapping.client_model.as_str(), mapping.upstream_model.as_str()]
+        }))
+    {
+        let key = model.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let fingerprint = key.to_ascii_lowercase();
+        if !seen.insert(fingerprint) {
+            continue;
+        }
+        allowed.push(key.to_string());
+    }
+
+    let mut next = HashMap::new();
+    if allowed.is_empty() {
+        for (name, window) in windows {
+            let key = name.trim();
+            if !key.is_empty() && window > 0 {
+                next.insert(key.to_string(), window);
+            }
+        }
+        return next;
+    }
+
+    for model in allowed {
+        if let Some(window) = lookup_api_model_context_window(&windows, &model) {
+            next.insert(model, window);
+        }
+    }
+    next
+}
+
 fn apply_api_key_fields(
     account: &mut CodexAccount,
     api_key: &str,
@@ -1444,6 +1527,7 @@ fn apply_api_key_fields(
     api_supports_vision: bool,
     api_model_vision_support: std::collections::HashMap<String, bool>,
     api_vision_routing_model: Option<String>,
+    api_model_context_windows: Option<HashMap<String, i64>>,
 ) {
     let is_cockpit_api = provider_config
         .provider_id
@@ -1465,6 +1549,11 @@ fn apply_api_key_fields(
     account.api_provider_id = provider_config.provider_id;
     account.api_provider_name = provider_config.provider_name;
     account.api_model_catalog = normalize_api_model_catalog(api_model_catalog);
+    account.api_model_context_windows = normalize_api_model_context_windows(
+        api_model_context_windows.unwrap_or_else(|| account.api_model_context_windows.clone()),
+        &account.api_model_catalog,
+        &account.api_model_mappings,
+    );
     account.api_sync_model_catalog_to_codex = api_sync_model_catalog_to_codex;
     account.api_wire_api = normalize_api_wire_api(api_wire_api);
     account.api_supports_websockets = api_supports_websockets;
@@ -2141,7 +2230,12 @@ fn sync_api_key_model_catalog_to_dir(
             doc["model"] = value(default_model.as_str());
         }
     }
-    let content = crate::modules::codex_local_access::build_provider_model_catalog_json(&slots)?;
+    let content = crate::modules::codex_local_access::decorate_account_catalog_context_windows(
+        &crate::modules::codex_local_access::build_provider_model_catalog_json(&slots)?,
+        &slots,
+        account,
+        crate::modules::codex_local_access::read_toml_model_context_window(&doc),
+    )?;
     let catalog_path = base_dir.join(CODEX_MANAGED_MODEL_CATALOG_FILE);
     write_string_atomic(&catalog_path, &content).map_err(|e| {
         format!(
@@ -4068,6 +4162,19 @@ fn apply_api_key_import_metadata(account: &mut CodexAccount, value: &serde_json:
         account.api_supports_websockets = supports_websockets;
         let _ = normalize_api_key_websocket_capability(account);
     }
+    if let Some(windows_value) = value
+        .get("api_model_context_windows")
+        .or_else(|| value.get("apiModelContextWindows"))
+    {
+        if let Ok(parsed) = serde_json::from_value::<HashMap<String, i64>>(windows_value.clone())
+        {
+            account.api_model_context_windows = normalize_api_model_context_windows(
+                parsed,
+                &account.api_model_catalog,
+                &account.api_model_mappings,
+            );
+        }
+    }
 }
 
 fn parse_codex_account_compat(
@@ -4659,6 +4766,7 @@ pub fn upsert_api_key_account(
     api_model_vision_support: std::collections::HashMap<String, bool>,
     api_vision_routing_model: Option<String>,
     account_name: Option<String>,
+    api_model_context_windows: Option<HashMap<String, i64>>,
 ) -> Result<CodexAccount, String> {
     let (api_key, api_base_url) = validate_api_key_credentials(&api_key, api_base_url.as_deref())?;
     let provider_config = resolve_api_provider_config(
@@ -4685,6 +4793,7 @@ pub fn upsert_api_key_account(
             api_supports_vision,
             api_model_vision_support.clone(),
             api_vision_routing_model.clone(),
+            api_model_context_windows.clone(),
         );
         if acc.email.trim().is_empty() {
             acc.email = build_api_key_email(&api_key);
@@ -4721,6 +4830,14 @@ pub fn upsert_api_key_account(
 
     account.auth_mode = CodexAuthMode::Apikey;
     let _ = enforce_deepseek_responses_account(&mut account);
+    if api_model_context_windows.is_some() || !account.api_model_context_windows.is_empty() {
+        account.api_model_context_windows = normalize_api_model_context_windows(
+            api_model_context_windows
+                .unwrap_or_else(|| account.api_model_context_windows.clone()),
+            &account.api_model_catalog,
+            &account.api_model_mappings,
+        );
+    }
     save_account(&account)?;
 
     if let Some(summary) = index.accounts.iter_mut().find(|item| item.id == account.id) {
@@ -7080,6 +7197,7 @@ pub fn import_from_local() -> Result<CodexAccount, String> {
             std::collections::HashMap::new(),
             None,
             None,
+            None,
         );
     }
 
@@ -7106,6 +7224,7 @@ pub fn import_from_local() -> Result<CodexAccount, String> {
             false,
             false,
             std::collections::HashMap::new(),
+            None,
             None,
             None,
         );
@@ -7161,6 +7280,7 @@ fn import_account_struct(account: CodexAccount) -> Result<CodexAccount, String> 
             account.api_model_vision_support.clone(),
             account.api_vision_routing_model.clone(),
             account.account_name.clone(),
+            Some(account.api_model_context_windows.clone()),
         )?;
         let mut changed = false;
         if let Some(tags) = account.tags {
@@ -8434,6 +8554,7 @@ async fn import_account_from_json_value(
                 std::collections::HashMap::new(),
                 None,
                 None,
+                None,
             )?;
             apply_api_key_import_metadata(&mut account, &value);
             save_account(&account)?;
@@ -8548,6 +8669,7 @@ pub async fn import_from_json(json_content: &str) -> Result<Vec<CodexAccount>, S
                 std::collections::HashMap::new(),
                 None,
                 None,
+                None,
             )?;
             if let Some(value) = raw_value.as_ref() {
                 apply_api_key_import_metadata(&mut account, value);
@@ -8585,6 +8707,7 @@ pub async fn import_from_json(json_content: &str) -> Result<Vec<CodexAccount>, S
                 false,
                 false,
                 std::collections::HashMap::new(),
+                None,
                 None,
                 None,
             )?;
@@ -13255,6 +13378,7 @@ multi_agent = true
             std::collections::HashMap::new(),
             None,
             None,
+            None,
         )
         .expect("update API key account");
 
@@ -13737,6 +13861,7 @@ supports_websockets = false
             false,
             Default::default(),
             None,
+            None,
         )
         .expect("sync provider snapshot");
 
@@ -14040,6 +14165,7 @@ supports_websockets = false
             std::collections::HashMap::new(),
             None,
             Some("Relay Key".to_string()),
+            None,
         )
         .expect("create API key account");
         assert!(created.api_sync_model_catalog_to_codex);
@@ -14056,6 +14182,7 @@ supports_websockets = false
             false,
             false,
             std::collections::HashMap::new(),
+            None,
             None,
             None,
         )
@@ -14343,6 +14470,26 @@ supports_websockets = false
             super::resolve_account_upstream_model(&account, "gpt-5.4"),
             "gpt-5.4"
         );
+    }
+
+    #[test]
+    fn api_model_context_windows_keep_mapping_keys_and_drop_invalid() {
+        let mappings = vec![CodexApiModelMapping {
+            client_model: "gpt-5.6-sol".to_string(),
+            upstream_model: "custom-flash".to_string(),
+        }];
+        let mut windows = std::collections::HashMap::new();
+        windows.insert("custom-flash".to_string(), 900_000);
+        windows.insert("stale-model".to_string(), 128_000);
+        windows.insert("keep-default".to_string(), 0);
+        let normalized = super::normalize_api_model_context_windows(
+            windows,
+            &["keep-default".to_string()],
+            &mappings,
+        );
+        assert_eq!(normalized.get("custom-flash").copied(), Some(900_000));
+        assert!(!normalized.contains_key("stale-model"));
+        assert!(!normalized.contains_key("keep-default"));
     }
 
     #[test]
@@ -15740,6 +15887,7 @@ pub fn update_api_key_credentials(
     api_model_vision_support: std::collections::HashMap<String, bool>,
     api_vision_routing_model: Option<String>,
     account_name: Option<String>,
+    api_model_context_windows: Option<HashMap<String, i64>>,
 ) -> Result<CodexAccount, String> {
     let mut account =
         load_account(account_id).ok_or_else(|| format!("账号不存在: {}", account_id))?;
@@ -15784,6 +15932,7 @@ pub fn update_api_key_credentials(
         api_supports_vision,
         api_model_vision_support,
         api_vision_routing_model,
+        api_model_context_windows,
     );
     if let Some(account_name) = normalize_optional_value(account_name) {
         account.account_name = Some(account_name);
@@ -15862,6 +16011,7 @@ pub fn sync_api_key_provider_accounts(
     api_supports_vision: bool,
     api_model_vision_support: std::collections::HashMap<String, bool>,
     api_vision_routing_model: Option<String>,
+    api_model_context_windows: Option<std::collections::HashMap<String, i64>>,
 ) -> Result<usize, String> {
     let provider_config = resolve_api_provider_config(
         api_base_url.as_deref(),
@@ -15897,6 +16047,7 @@ pub fn sync_api_key_provider_accounts(
             api_supports_vision,
             api_model_vision_support.clone(),
             api_vision_routing_model.clone(),
+            api_model_context_windows.clone(),
         );
         save_account(&account)?;
         updated_accounts.push(account);

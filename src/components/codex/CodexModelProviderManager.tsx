@@ -73,6 +73,11 @@ import {
   resolveDeepSeekBindAccountId,
 } from "../../utils/codexDeepSeekAccess";
 import {
+  contextWindowDraftsFromRecord,
+  parseContextWindowDrafts,
+} from "../../utils/codexModelContextWindows";
+import { CodexModelContextWindowTable } from "./CodexModelContextWindowTable";
+import {
   getCodexLocalAccessState,
 } from "../../services/codexLocalAccessService";
 import {
@@ -394,6 +399,7 @@ interface ProviderFormState {
   name: string;
   baseUrl: string;
   modelCatalogText: string;
+  modelContextWindowsDraft: Record<string, string>;
   supportsVision: boolean;
   visionModelText: string;
   visionRoutingModel: string;
@@ -412,6 +418,7 @@ const EMPTY_FORM: ProviderFormState = {
   name: "",
   baseUrl: "",
   modelCatalogText: "",
+  modelContextWindowsDraft: {},
   supportsVision: false,
   visionModelText: "",
   visionRoutingModel: "",
@@ -1615,6 +1622,10 @@ export function CodexModelProviderManager({
       name: provider.name,
       baseUrl: provider.baseUrl,
       modelCatalogText: (provider.modelCatalog ?? []).join("\n"),
+      modelContextWindowsDraft: contextWindowDraftsFromRecord(
+        provider.modelContextWindows,
+        provider.modelCatalog ?? [],
+      ),
       supportsVision: provider.supportsVision === true,
       visionModelText: visionModelTextFromCapabilities(provider.modelCapabilities),
       visionRoutingModel: provider.visionRoutingModel ?? "",
@@ -1670,6 +1681,10 @@ export function CodexModelProviderManager({
         name: preset.name,
         baseUrl: preset.baseUrls[0] ?? "",
         modelCatalogText: (preset.modelCatalog ?? []).join("\n"),
+        modelContextWindowsDraft: contextWindowDraftsFromRecord(
+          undefined,
+          preset.modelCatalog ?? [],
+        ),
         supportsVision: false,
         visionModelText: "",
         visionRoutingModel: "",
@@ -1699,6 +1714,10 @@ export function CodexModelProviderManager({
         name: template.name,
         baseUrl: template.baseUrl,
         modelCatalogText: template.modelCatalog.join("\n"),
+        modelContextWindowsDraft: contextWindowDraftsFromRecord(
+          undefined,
+          template.modelCatalog,
+        ),
         supportsVision: template.supportsVision,
         visionModelText: "",
         visionRoutingModel: "",
@@ -2158,6 +2177,19 @@ export function CodexModelProviderManager({
     const normalizedBaseUrl = normalizeCodexModelProviderBaseUrl(baseUrl);
     const newApiKey = form.newApiKey.trim();
     const modelCatalog = parseModelCatalogText(form.modelCatalogText);
+    const parsedWindows = parseContextWindowDrafts(
+      form.modelContextWindowsDraft,
+      modelCatalog,
+    );
+    if (!parsedWindows.ok) {
+      setFormError(
+        t(
+          "codex.api.modelCatalog.contextWindowInvalid",
+          "上下文窗口必须是大于 0 的整数",
+        ),
+      );
+      return;
+    }
     const modelCapabilities = parseVisionModelText(form.visionModelText);
     const visionRoutingModel = form.visionRoutingModel.trim();
     const isCreate = !form.providerId;
@@ -2206,6 +2238,7 @@ export function CodexModelProviderManager({
           baseUrl,
           sourceTag: selectedSponsorTemplate?.id,
           modelCatalog,
+          modelContextWindows: parsedWindows.windows,
           supportsVision: form.supportsVision,
           modelCapabilities,
           visionRoutingModel,
@@ -2224,6 +2257,7 @@ export function CodexModelProviderManager({
           baseUrl,
           sourceTag: selectedSponsorTemplate?.id ?? null,
           modelCatalog,
+          modelContextWindows: parsedWindows.windows,
           supportsVision: form.supportsVision,
           modelCapabilities,
           visionRoutingModel,
@@ -2286,6 +2320,7 @@ export function CodexModelProviderManager({
                 : presetId,
             apiProviderName: savedProvider.name,
             apiModelCatalog: savedProvider.modelCatalog,
+            apiModelContextWindows: savedProvider.modelContextWindows,
             apiWireApi: wireApi,
             apiSupportsWebsockets:
               !isOpenAIOfficial &&
@@ -2316,7 +2351,13 @@ export function CodexModelProviderManager({
       setFormError(null);
       setNotice({
         tone: "success",
-        text: t("codex.modelProviders.saveSuccess", "模型供应商已保存"),
+        text:
+          Object.keys(parsedWindows.windows).length > 0
+            ? `${t("codex.modelProviders.saveSuccess", "模型供应商已保存")} ${t(
+                "codex.api.modelCatalog.restartHint",
+                "模型目录已更新。若 Codex 正在运行，请重启后生效。",
+              )}`
+            : t("codex.modelProviders.saveSuccess", "模型供应商已保存"),
       });
     } catch (err) {
       setFormError(parseServiceError(err));
@@ -2890,6 +2931,8 @@ export function CodexModelProviderManager({
           undefined,
           wireApi,
           provider.supportsWebsockets,
+          undefined,
+          provider.modelContextWindows,
         );
         await updateCodexApiKeyBoundOAuthAccount(
           account.id,
@@ -4883,6 +4926,19 @@ export function CodexModelProviderManager({
                         mutateForm({ modelCatalogText: event.target.value })
                       }
                       placeholder={"deepseek-v4-flash\ndeepseek-v4-pro"}
+                      disabled={saving}
+                    />
+                    <CodexModelContextWindowTable
+                      models={parseModelCatalogText(form.modelCatalogText)}
+                      drafts={form.modelContextWindowsDraft}
+                      onChange={(model, value) =>
+                        mutateForm({
+                          modelContextWindowsDraft: {
+                            ...form.modelContextWindowsDraft,
+                            [model]: value,
+                          },
+                        })
+                      }
                       disabled={saving}
                     />
                   </div>

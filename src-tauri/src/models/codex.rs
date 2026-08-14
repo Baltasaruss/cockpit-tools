@@ -96,6 +96,9 @@ pub struct CodexAccount {
     pub api_provider_name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub api_model_catalog: Vec<String>,
+    /// 供应商目录里按模型覆盖的 `context_window`。未填写时走官方值或全局兜底。
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub api_model_context_windows: HashMap<String, i64>,
     /// API 服务按账号改写：调用方请求的模型 → 发给上游的模型。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub api_model_mappings: Vec<CodexApiModelMapping>,
@@ -430,6 +433,7 @@ impl CodexAccount {
             api_provider_id: None,
             api_provider_name: None,
             api_model_catalog: Vec::new(),
+            api_model_context_windows: HashMap::new(),
             api_model_mappings: Vec::new(),
             api_sync_model_catalog_to_codex: false,
             api_wire_api: None,

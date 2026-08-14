@@ -32,6 +32,7 @@ pub mod codex_protocol;
 pub mod codex_quota;
 pub mod codex_session_file_time;
 pub mod codex_session_manager;
+pub mod codex_session_usage;
 pub mod codex_session_visibility;
 pub mod codex_speed;
 pub mod codex_ssh;

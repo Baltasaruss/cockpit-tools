@@ -32,6 +32,7 @@ export interface CodexAccount {
   api_provider_id?: string;
   api_provider_name?: string;
   api_model_catalog?: string[];
+  api_model_context_windows?: Record<string, number>;
   api_model_mappings?: CodexApiModelMapping[];
   api_sync_model_catalog_to_codex?: boolean;
   api_wire_api?: CodexProviderWireApi | null;
@@ -382,6 +383,62 @@ export interface CodexSessionTokenStats {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+}
+
+export interface CodexSessionUsageTotals {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  estimatedCostUsd?: number;
+}
+
+export interface CodexSessionUsageBreakdownRow {
+  key: string;
+  label: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+}
+
+export interface CodexSessionUsageInstanceOption {
+  id: string;
+  name: string;
+}
+
+export interface CodexSessionUsageQuery {
+  fromTimestamp?: number | null;
+  toTimestamp?: number | null;
+  instanceId?: string | null;
+}
+
+export interface CodexSessionUsageReport {
+  totals: CodexSessionUsageTotals;
+  byModel: CodexSessionUsageBreakdownRow[];
+  byInstance: CodexSessionUsageBreakdownRow[];
+  byDay: CodexSessionUsageBreakdownRow[];
+  instances: CodexSessionUsageInstanceOption[];
+  fromTimestamp?: number | null;
+  toTimestamp?: number | null;
+  lastSyncedAt?: number | null;
+  filesTracked: number;
+  eventCount: number;
+  deferredFiles: number;
+  lastErrorCount: number;
+}
+
+export interface CodexSessionUsageSyncResult {
+  imported: number;
+  skipped: number;
+  filesScanned: number;
+  filesChanged: number;
+  deferredFiles: number;
+  errors: string[];
+  rebuilt: boolean;
+  report?: CodexSessionUsageReport | null;
 }
 
 export interface CodexInstanceTargetThreadSyncSummary {

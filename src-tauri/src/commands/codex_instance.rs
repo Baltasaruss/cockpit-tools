@@ -1209,6 +1209,31 @@ pub async fn codex_get_session_token_stats_across_instances(
 }
 
 #[tauri::command]
+pub async fn codex_query_session_usage(
+    query: modules::codex_session_usage::CodexSessionUsageQuery,
+) -> Result<modules::codex_session_usage::CodexSessionUsageReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        modules::codex_session_usage::query_session_usage(query)
+    })
+    .await
+    .map_err(|error| format!("读取 Codex 会话用量失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn codex_sync_session_usage(
+    rebuild: Option<bool>,
+    query: Option<modules::codex_session_usage::CodexSessionUsageQuery>,
+) -> Result<modules::codex_session_usage::CodexSessionUsageSyncResult, String> {
+    let rebuild = rebuild.unwrap_or(false);
+    let query = query.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        modules::codex_session_usage::sync_session_usage(rebuild, query)
+    })
+    .await
+    .map_err(|error| format!("扫描 Codex 会话用量失败: {error}"))?
+}
+
+#[tauri::command]
 pub async fn codex_move_sessions_to_trash_across_instances(
     session_ids: Vec<String>,
 ) -> Result<modules::codex_session_manager::CodexSessionTrashSummary, String> {

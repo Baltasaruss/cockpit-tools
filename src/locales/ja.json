@@ -2314,6 +2314,10 @@
       "additional": "追加クォータ",
       "reset": "リセット",
       "weeklyBlocksHourly": "週クォータが 0 のため、5時間クォータは利用できません",
+      "windowStats": "使用 {{tokens}} · {{cost}}",
+      "windowStatsHint": "この枠が満額になってから、このアカウントが API サービス経由で使ったリクエスト数・トークン・アカウント課金",
+      "windowUsed": "使用 {{tokens}} · {{cost}}",
+      "windowReq": "{{count}} 回",
       "resetCredits": "リセット {{count}}",
       "resetCreditsTitle": "5時間枠の残りリセット回数: {{count}}",
       "resetCreditConfirm": "確認?",
@@ -2335,7 +2339,9 @@
       "resetCreditNoRecords": "リセット記録はありません",
       "resetCreditRecordsLoadFailed": "リセット記録の読み込みに失敗しました: {{error}}",
       "resetCreditGrantedAt": "付与",
-      "resetCreditExpiresAt": "期限"
+      "resetCreditExpiresAt": "期限",
+      "windowAccountCostHint": "アカウント課金（モデル価格の概算）",
+      "windowUserCostHint": "ユーザー課金"
     },
     "quotaError": {
       "badge": "クォータエラー",
@@ -2833,6 +2839,82 @@
         "all": "すべて"
       },
       "pickInstancePrompt": "このセッションは複数インスタンスにあります。インスタンス ID を入力:"
+    },
+    "sessionUsage": {
+      "tab": "使用量",
+      "listTab": "セッション",
+      "title": "セッション使用量",
+      "desc": "ローカルの Codex セッションログから実際のトークン使用量を集計します。公式クォータや API サービスのリクエストログは使いません。",
+      "hint": "公式クォータはプラン枠、API サービスログはローカルゲートウェイ経由のみです。ここでは JSONL のリクエスト単位増分を合計します。",
+      "range": {
+        "label": "期間",
+        "7d": "7日",
+        "30d": "30日",
+        "month": "今月",
+        "all": "すべて"
+      },
+      "instance": {
+        "label": "インスタンス",
+        "all": "全インスタンス"
+      },
+      "actions": {
+        "refresh": "更新",
+        "rebuild": "再スキャン"
+      },
+      "status": {
+        "idle": "未スキャン",
+        "scanning": "セッションログをスキャン中…",
+        "ready": "{{files}} ファイル、{{requests}} リクエストを集計",
+        "lastSynced": "最終同期 {{time}}",
+        "deferred": "親待ちのフォーク {{count}} 件",
+        "errors": "解析失敗 {{count}} 件"
+      },
+      "cards": {
+        "input": "入力 Tokens",
+        "cached": "キャッシュ入力 Tokens",
+        "output": "出力 Tokens",
+        "total": "合計 Tokens",
+        "requests": "リクエスト",
+        "cost": "概算費用"
+      },
+      "tables": {
+        "model": "モデル別",
+        "instance": "インスタンス別",
+        "day": "日別",
+        "modelName": "モデル",
+        "instanceName": "インスタンス",
+        "dayName": "日付",
+        "input": "入力 Tokens",
+        "cached": "キャッシュ Tokens",
+        "output": "出力 Tokens",
+        "total": "合計 Tokens",
+        "requests": "回数"
+      },
+      "empty": {
+        "title": "使用量はまだありません",
+        "desc": "このページを開くと、ローカルの Codex セッションログと追加インスタンスをバックグラウンドでスキャンします。使った直後なら更新してください。"
+      },
+      "rebuildConfirm": {
+        "title": "再スキャン",
+        "message": "セッション使用量キャッシュを消し、全ログを読み直します。公式クォータと API サービスログは変わりません。続けますか？"
+      },
+      "errors": {
+        "loadFailed": "セッション使用量の読み込みに失敗：{{error}}",
+        "syncFailed": "セッション使用量のスキャンに失敗：{{error}}"
+      },
+      "summary": {
+        "title": "直近30日",
+        "scanning": "スキャン中",
+        "updating": "同期中",
+        "detail": "詳細",
+        "back": "戻る",
+        "input": "入力",
+        "cached": "キャッシュ",
+        "output": "出力",
+        "total": "合計",
+        "requests": "回数",
+        "cost": "費用"
+      }
     },
     "api": {
       "baseUrl": "ベース URL",
