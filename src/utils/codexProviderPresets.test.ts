@@ -26,6 +26,7 @@ test("OpenCode Go preset exposes DeepSeek models and its chat-completions transp
   assert.equal(preset.baseUrls[0], OPENCODE_GO_API_BASE_URL);
   assert.ok(preset.modelCatalog?.includes("deepseek-v4-pro"));
   assert.ok(preset.modelCatalog?.includes("deepseek-v4-flash"));
+  assert.ok(preset.modelCatalog?.includes("qwen3.7-plus"));
 
   const profile = resolveCodexProviderCapabilityProfile({
     presetId: OPENCODE_GO_API_PROVIDER_ID,
