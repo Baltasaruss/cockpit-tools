@@ -7,6 +7,12 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [Unreleased]
+
+### Changed
+
+- **Codex account-card quota rows now stack as label + percent / full-width bar / reset time with usage chips**: long labels stay readable, bars in the same card share one length, and request / token / cost sit beside the reset time.
+
 ## [1.3.19] - 2026-08-14
 
 ### Changed

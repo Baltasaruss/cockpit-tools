@@ -3242,36 +3242,27 @@
 .codex-quota-mini-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 
 .codex-quota-mini {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
-.codex-quota-mini-main,
-.codex-quota-mini-left,
+.codex-quota-mini-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .codex-quota-mini-right {
   display: flex;
   align-items: center;
-  min-width: 0;
-}
-
-.codex-quota-mini-main {
-  justify-content: space-between;
-  gap: 8px 10px;
-}
-
-.codex-quota-mini-left {
-  flex: 1 1 auto;
-  gap: 6px;
-}
-
-.codex-quota-mini-right {
   flex: 0 0 auto;
   gap: 4px;
   color: var(--text-secondary);
@@ -3289,21 +3280,16 @@
 }
 
 .codex-quota-mini-label {
-  flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 700;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
 }
 
 .codex-quota-mini-track {
-  flex: 0 0 52px;
-  width: 52px;
-  height: 4px;
+  width: 100%;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: var(--bg-tertiary);
@@ -3354,12 +3340,22 @@
   color: var(--danger);
 }
 
+.codex-quota-mini-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .codex-quota-mini-reset {
   min-width: 0;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1.3;
-  white-space: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .codex-accounts-page .account-table .codex-quota-mini-list {
@@ -8638,28 +8634,6 @@
 
 .codex-provider-key-list.inline .codex-provider-key-row:hover {
   border-color: var(--border-hover);
-}
-
-.codex-provider-key-row.is-editing {
-  align-items: stretch;
-}
-
-.codex-provider-key-edit-fields {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  gap: 8px;
-}
-
-.codex-provider-key-edit-fields .form-input {
-  min-width: 0;
-  flex: 1;
-}
-
-.codex-provider-key-edit-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .codex-provider-key-text {
