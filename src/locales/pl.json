@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Przyznano",
       "resetCreditExpiresAt": "Wygasa",
       "windowAccountCostHint": "Opłata konta (szacunek z cen modelu)",
-      "windowUserCostHint": "Opłata użytkownika"
+      "windowUserCostHint": "Opłata użytkownika",
+      "windowWeeks": "Limit {{count}} tyg.",
+      "windowDays": "Limit {{count}} dn.",
+      "windowHours": "Limit {{count}} godz.",
+      "windowMinutes": "Limit {{count}} min",
+      "codeReview": "Przegląd kodu",
+      "codeReviewShort": "Przegląd"
     },
     "quotaError": {
       "badge": "Błąd limitu",

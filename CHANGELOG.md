@@ -7,6 +7,12 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.19] - 2026-08-14
+
+### Changed
+
+- **Codex account quota labels are now short and stay on one line**: `5h` / `7d` / `5w`, model-specific windows like `Spark 7d`, and Code Review as a short label. Full names remain in the hover tooltip.
+
 ## [1.3.18] - 2026-08-14
 
 ### Added

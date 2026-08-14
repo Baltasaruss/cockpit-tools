@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Přiděleno",
       "resetCreditExpiresAt": "Vyprší",
       "windowAccountCostHint": "Účtování účtu (odhad z cen modelu)",
-      "windowUserCostHint": "Účtování uživatele"
+      "windowUserCostHint": "Účtování uživatele",
+      "windowWeeks": "Kvóta {{count}} týd.",
+      "windowDays": "Kvóta {{count}} d",
+      "windowHours": "Kvóta {{count}} h",
+      "windowMinutes": "Kvóta {{count}} min",
+      "codeReview": "Kontrola kódu",
+      "codeReviewShort": "Recenze"
     },
     "quotaError": {
       "badge": "Chyba kvóty",

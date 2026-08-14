@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Concedido",
       "resetCreditExpiresAt": "Vence",
       "windowAccountCostHint": "Coste de cuenta (estimado por precios del modelo)",
-      "windowUserCostHint": "Coste de usuario"
+      "windowUserCostHint": "Coste de usuario",
+      "windowWeeks": "Cuota {{count}} sem.",
+      "windowDays": "Cuota {{count}} d",
+      "windowHours": "Cuota {{count}} h",
+      "windowMinutes": "Cuota {{count}} min",
+      "codeReview": "Revisión de código",
+      "codeReviewShort": "Revisión"
     },
     "quotaError": {
       "badge": "Error de cuota",

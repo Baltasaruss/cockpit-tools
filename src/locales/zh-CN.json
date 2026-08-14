@@ -3088,7 +3088,13 @@
       "resetCreditGrantedAt": "发放",
       "resetCreditExpiresAt": "到期",
       "windowAccountCostHint": "账号计费（按模型价格估算）",
-      "windowUserCostHint": "用户计费"
+      "windowUserCostHint": "用户计费",
+      "windowWeeks": "{{count}} 周配额",
+      "windowDays": "{{count}} 天配额",
+      "windowHours": "{{count}} 小时配额",
+      "windowMinutes": "{{count}} 分钟配额",
+      "codeReview": "代码审查",
+      "codeReviewShort": "审阅"
     },
     "usage": {
       "open": "查看 OpenAI 用量",

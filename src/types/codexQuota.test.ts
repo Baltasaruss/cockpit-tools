@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatCodexAdditionalQuotaShortLabel,
+  getCodexAdditionalLimitShortLabel,
   getCodexAdditionalQuotaWindows,
+  getCodexQuotaWindowLabel,
   type CodexQuota,
 } from "./codex.ts";
 
@@ -31,6 +34,29 @@ const quota: CodexQuota = {
   },
 };
 
+test("uses compact 5h/7d/5w window labels", () => {
+  assert.equal(getCodexQuotaWindowLabel(300, "hourly"), "5h");
+  assert.equal(getCodexQuotaWindowLabel(10_080, "weekly"), "7d");
+  assert.equal(getCodexQuotaWindowLabel(50_400, "weekly"), "5w");
+  assert.equal(getCodexQuotaWindowLabel(undefined, "weekly"), "7d");
+  assert.equal(getCodexQuotaWindowLabel(undefined, "hourly"), "5h");
+});
+
+test("shortens additional quota names to the distinctive token plus window", () => {
+  assert.equal(
+    getCodexAdditionalLimitShortLabel("gpt-5.3-codex-spark", "GPT 5.3 Codex Spark"),
+    "Spark",
+  );
+  assert.equal(
+    formatCodexAdditionalQuotaShortLabel(
+      "gpt-5.3-codex-spark",
+      "GPT 5.3 Codex Spark",
+      "7d",
+    ),
+    "Spark 7d",
+  );
+});
+
 test("keeps upstream Spark-specific quota windows for the account card", () => {
   assert.deepEqual(getCodexAdditionalQuotaWindows(quota), [
     {
@@ -56,7 +82,7 @@ test("keeps upstream Spark-specific quota windows for the account card", () => {
       meteredFeature: "codex_spark",
       allowed: undefined,
       limitReached: undefined,
-      label: "Weekly",
+      label: "7d",
       percentage: 40,
       resetTime: 1_790_500_000,
       windowMinutes: 10_080,

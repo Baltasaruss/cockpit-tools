@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Concedida",
       "resetCreditExpiresAt": "Expira",
       "windowAccountCostHint": "Cobrança da conta (estimada pelos preços do modelo)",
-      "windowUserCostHint": "Cobrança do usuário"
+      "windowUserCostHint": "Cobrança do usuário",
+      "windowWeeks": "Cota {{count}} sem.",
+      "windowDays": "Cota {{count}} d",
+      "windowHours": "Cota {{count}} h",
+      "windowMinutes": "Cota {{count}} min",
+      "codeReview": "Revisão de código",
+      "codeReviewShort": "Revisão"
     },
     "quotaError": {
       "badge": "Erro de cota",

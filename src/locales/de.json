@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Gewährt",
       "resetCreditExpiresAt": "Läuft ab",
       "windowAccountCostHint": "Kontokosten (aus Modellpreisen geschätzt)",
-      "windowUserCostHint": "Nutzerkosten"
+      "windowUserCostHint": "Nutzerkosten",
+      "windowWeeks": "{{count}}-Wochen-Kontingent",
+      "windowDays": "{{count}}-Tage-Kontingent",
+      "windowHours": "{{count}}-Stunden-Kontingent",
+      "windowMinutes": "{{count}}-Minuten-Kontingent",
+      "codeReview": "Codeprüfung",
+      "codeReviewShort": "Prüfung"
     },
     "quotaError": {
       "badge": "Kontingentfehler",

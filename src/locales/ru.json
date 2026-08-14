@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Выдано",
       "resetCreditExpiresAt": "Истекает",
       "windowAccountCostHint": "Счёт аккаунта (оценка по ценам модели)",
-      "windowUserCostHint": "Счёт пользователя"
+      "windowUserCostHint": "Счёт пользователя",
+      "windowWeeks": "Квота {{count}} нед.",
+      "windowDays": "Квота {{count}} дн.",
+      "windowHours": "Квота {{count}} ч",
+      "windowMinutes": "Квота {{count}} мин",
+      "codeReview": "Обзор кода",
+      "codeReviewShort": "Обзор"
     },
     "quotaError": {
       "badge": "Ошибка квоты",

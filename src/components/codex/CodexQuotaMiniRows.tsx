@@ -36,7 +36,9 @@ function CodexQuotaMiniRow({
     <div className="codex-quota-mini" title={item.hintText}>
       <div className="codex-quota-mini-main">
         <div className="codex-quota-mini-left">
-          <span className="codex-quota-mini-label">{item.label}</span>
+          <span className="codex-quota-mini-label" title={item.hintText || item.label}>
+            {item.label}
+          </span>
           {item.showProgress !== false ? (
             <div className="codex-quota-mini-track" aria-hidden="true">
               <div

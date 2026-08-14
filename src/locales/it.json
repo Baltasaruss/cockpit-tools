@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Concessa",
       "resetCreditExpiresAt": "Scade",
       "windowAccountCostHint": "Addebito account (stimato dai prezzi modello)",
-      "windowUserCostHint": "Addebito utente"
+      "windowUserCostHint": "Addebito utente",
+      "windowWeeks": "Quota {{count}} sett.",
+      "windowDays": "Quota {{count}} gg",
+      "windowHours": "Quota {{count}} h",
+      "windowMinutes": "Quota {{count}} min",
+      "codeReview": "Revisione codice",
+      "codeReviewShort": "Revisione"
     },
     "quotaError": {
       "badge": "Errore quota",

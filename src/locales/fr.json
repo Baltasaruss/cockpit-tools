@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Attribué",
       "resetCreditExpiresAt": "Expire",
       "windowAccountCostHint": "Facturation compte (estimée selon les prix du modèle)",
-      "windowUserCostHint": "Facturation utilisateur"
+      "windowUserCostHint": "Facturation utilisateur",
+      "windowWeeks": "Quota {{count}} sem.",
+      "windowDays": "Quota {{count}} j",
+      "windowHours": "Quota {{count}} h",
+      "windowMinutes": "Quota {{count}} min",
+      "codeReview": "Revue de code",
+      "codeReviewShort": "Revue"
     },
     "quotaError": {
       "badge": "Erreur de quota",

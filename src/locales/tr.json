@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Verildi",
       "resetCreditExpiresAt": "Biter",
       "windowAccountCostHint": "Hesap ücreti (model fiyatından tahmin)",
-      "windowUserCostHint": "Kullanıcı ücreti"
+      "windowUserCostHint": "Kullanıcı ücreti",
+      "windowWeeks": "{{count}} haftalık kota",
+      "windowDays": "{{count}} günlük kota",
+      "windowHours": "{{count}} saatlik kota",
+      "windowMinutes": "{{count}} dakikalık kota",
+      "codeReview": "Kod inceleme",
+      "codeReviewShort": "İnceleme"
     },
     "quotaError": {
       "badge": "Kota hatası",

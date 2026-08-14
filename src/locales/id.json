@@ -2522,7 +2522,13 @@
       "resetCreditGrantedAt": "Diberikan",
       "resetCreditExpiresAt": "Kedaluwarsa",
       "windowAccountCostHint": "Tagihan akun (perkiraan harga model)",
-      "windowUserCostHint": "Tagihan pengguna"
+      "windowUserCostHint": "Tagihan pengguna",
+      "windowWeeks": "Kuota {{count}} minggu",
+      "windowDays": "Kuota {{count}} hari",
+      "windowHours": "Kuota {{count}} jam",
+      "windowMinutes": "Kuota {{count}} mnt",
+      "codeReview": "Tinjauan kode",
+      "codeReviewShort": "Tinjauan"
     },
     "usage": {
       "open": "Buka penggunaan OpenAI",

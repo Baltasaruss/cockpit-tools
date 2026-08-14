@@ -2472,7 +2472,13 @@
       "resetCreditGrantedAt": "發放",
       "resetCreditExpiresAt": "到期",
       "windowAccountCostHint": "帳號計費（依模型價格估算）",
-      "windowUserCostHint": "使用者計費"
+      "windowUserCostHint": "使用者計費",
+      "windowWeeks": "{{count}} 週配額",
+      "windowDays": "{{count}} 天配額",
+      "windowHours": "{{count}} 小時配額",
+      "windowMinutes": "{{count}} 分鐘配額",
+      "codeReview": "程式碼審查",
+      "codeReviewShort": "審閱"
     },
     "quotaError": {
       "badge": "配額異常",

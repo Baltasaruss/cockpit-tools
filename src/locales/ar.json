@@ -2388,7 +2388,13 @@
       "resetCreditGrantedAt": "مُنحت",
       "resetCreditExpiresAt": "تنتهي",
       "windowAccountCostHint": "فوترة الحساب (تقدير حسب أسعار النموذج)",
-      "windowUserCostHint": "فوترة المستخدم"
+      "windowUserCostHint": "فوترة المستخدم",
+      "windowWeeks": "حصة {{count}} أسابيع",
+      "windowDays": "حصة {{count}} أيام",
+      "windowHours": "حصة {{count}} ساعات",
+      "windowMinutes": "حصة {{count}} دقائق",
+      "codeReview": "مراجعة الرمز",
+      "codeReviewShort": "مراجعة"
     },
     "quotaError": {
       "badge": "خطأ في الحصة",

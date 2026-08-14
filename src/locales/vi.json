@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "Được cấp",
       "resetCreditExpiresAt": "Hết hạn",
       "windowAccountCostHint": "Phí tài khoản (ước theo giá mô hình)",
-      "windowUserCostHint": "Phí người dùng"
+      "windowUserCostHint": "Phí người dùng",
+      "windowWeeks": "Hạn mức {{count}} tuần",
+      "windowDays": "Hạn mức {{count}} ngày",
+      "windowHours": "Hạn mức {{count}} giờ",
+      "windowMinutes": "Hạn mức {{count}} phút",
+      "codeReview": "Rà soát mã",
+      "codeReviewShort": "Rà soát"
     },
     "quotaError": {
       "badge": "Lỗi quota",

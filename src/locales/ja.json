@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "付与",
       "resetCreditExpiresAt": "期限",
       "windowAccountCostHint": "アカウント課金（モデル価格の概算）",
-      "windowUserCostHint": "ユーザー課金"
+      "windowUserCostHint": "ユーザー課金",
+      "windowWeeks": "{{count}}週クォータ",
+      "windowDays": "{{count}}日クォータ",
+      "windowHours": "{{count}}時間クォータ",
+      "windowMinutes": "{{count}}分クォータ",
+      "codeReview": "コードレビュー",
+      "codeReviewShort": "レビュー"
     },
     "quotaError": {
       "badge": "クォータエラー",

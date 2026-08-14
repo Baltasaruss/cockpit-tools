@@ -86,7 +86,7 @@ export function formatCodexQuotaPoolPercent(value: number): string {
 
 export function formatCodexQuotaPoolWindowLabel(
   label: string,
-  weeklyLabel: string,
+  _weeklyLabel?: string,
 ): string {
-  return label === 'Weekly' ? weeklyLabel : label;
+  return label === 'Weekly' ? '7d' : label;
 }

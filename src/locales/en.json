@@ -3088,7 +3088,13 @@
       "resetCreditGrantedAt": "Granted",
       "resetCreditExpiresAt": "Expires",
       "windowAccountCostHint": "Account billed (estimated from model prices)",
-      "windowUserCostHint": "User billed"
+      "windowUserCostHint": "User billed",
+      "windowWeeks": "{{count}}-week quota",
+      "windowDays": "{{count}}-day quota",
+      "windowHours": "{{count}}-hour quota",
+      "windowMinutes": "{{count}}-minute quota",
+      "codeReview": "Code Review",
+      "codeReviewShort": "Review"
     },
     "usage": {
       "open": "Open OpenAI usage",

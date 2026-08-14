@@ -2341,7 +2341,13 @@
       "resetCreditGrantedAt": "지급",
       "resetCreditExpiresAt": "만료",
       "windowAccountCostHint": "계정 과금(모델 가격 추산)",
-      "windowUserCostHint": "사용자 과금"
+      "windowUserCostHint": "사용자 과금",
+      "windowWeeks": "{{count}}주 할당량",
+      "windowDays": "{{count}}일 할당량",
+      "windowHours": "{{count}}시간 할당량",
+      "windowMinutes": "{{count}}분 할당량",
+      "codeReview": "코드 리뷰",
+      "codeReviewShort": "리뷰"
     },
     "quotaError": {
       "badge": "할당량 오류",
