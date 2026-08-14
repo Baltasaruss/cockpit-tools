@@ -2364,6 +2364,45 @@ func TestUsagePluginResolvesAPIKeyAndRequestKindFromCPARecord(t *testing.T) {
 	}
 }
 
+func TestUsagePluginForwardsReasoningEffortInUsagePayload(t *testing.T) {
+	tracker := newRequestUsageTracker()
+	plugin := &usagePlugin{tracker: tracker}
+	ctx := internallogging.WithRequestID(context.Background(), "req-reasoning")
+	ctx = internallogging.WithEndpoint(ctx, "POST /v1/responses")
+
+	plugin.HandleUsage(ctx, coreusage.Record{
+		Provider:        "codex",
+		Model:           "gpt-5.4",
+		ReasoningEffort: "xhigh",
+		RequestedAt:     time.UnixMilli(123),
+		Latency:         50 * time.Millisecond,
+	})
+
+	payload, ok := tracker.finalize("req-reasoning", usageFinalizeInput{
+		status:        http.StatusOK,
+		latencyMS:     50,
+		completedAtMS: 123,
+	})
+	if !ok {
+		t.Fatal("expected usage payload")
+	}
+	if payload.ReasoningEffort != "xhigh" {
+		t.Fatalf("reasoning effort was not forwarded: %#v", payload)
+	}
+
+	wire, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal usage payload: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatalf("decode usage payload: %v", err)
+	}
+	if got, ok := decoded["reasoningEffort"].(string); !ok || got != "xhigh" {
+		t.Fatalf("usage JSON reasoningEffort = %#v, want xhigh", decoded["reasoningEffort"])
+	}
+}
+
 func TestErrorCategoryClassifiesClientCanceled(t *testing.T) {
 	if got := errorCategory(0, "context canceled", false); got != "client_canceled" {
 		t.Fatalf("expected client_canceled, got %q", got)
@@ -4301,7 +4340,6 @@ func TestCoreAuthSelectorFiltersNewModelExclusionsBeforeSessionAffinity(t *testi
 		t.Fatalf("Pick after exclusion = %#v, want %q", second, pro.ID)
 	}
 }
-
 
 func TestSidecarRuntimeDoesNotSelectAccountWithExcludedModel(t *testing.T) {
 	tempDir := t.TempDir()

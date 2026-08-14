@@ -4316,6 +4316,21 @@ fn normalize_proxy_reasoning_effort(value: &str) -> Option<&'static str> {
     }
 }
 
+fn normalize_recorded_reasoning_effort(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some("none"),
+        "minimal" | "min" => Some("minimal"),
+        "low" => Some("low"),
+        "medium" | "med" | "default" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" | "x-high" | "extra_high" | "extrahigh" => Some("xhigh"),
+        "max" => Some("max"),
+        "auto" => Some("auto"),
+        "ultra" => Some("ultra"),
+        _ => None,
+    }
+}
+
 fn reasoning_effort_from_request_body(body: &[u8]) -> Option<String> {
     let value = parse_request_body_json(body)?;
     if let Some(effort) = value
@@ -7420,7 +7435,7 @@ fn insert_local_access_usage_event(
     let reasoning_effort = event
         .reasoning_effort
         .as_deref()
-        .and_then(normalize_proxy_reasoning_effort)
+        .and_then(normalize_recorded_reasoning_effort)
         .unwrap_or_default();
     let token_breakdown_json = serialize_token_breakdown_for_db(event.token_breakdown.as_ref());
     if has_service_tier_column && has_reasoning_effort_column {
@@ -8391,7 +8406,7 @@ fn usage_event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodexLocalA
         gateway_mode: gateway_mode_from_db_value(gateway_mode.as_str()),
         request_kind: request_kind_from_db_value(request_kind.as_str()),
         service_tier: normalize_proxy_service_tier(service_tier.as_str()).map(str::to_string),
-        reasoning_effort: normalize_proxy_reasoning_effort(reasoning_effort.as_str())
+        reasoning_effort: normalize_recorded_reasoning_effort(reasoning_effort.as_str())
             .map(str::to_string),
         success: success != 0,
         http_status: http_status.and_then(|value| u16::try_from(value).ok()),
@@ -9096,7 +9111,7 @@ fn append_usage_event(
             .and_then(normalize_proxy_service_tier)
             .map(str::to_string),
         reasoning_effort: reasoning_effort
-            .and_then(normalize_proxy_reasoning_effort)
+            .and_then(normalize_recorded_reasoning_effort)
             .map(str::to_string),
         success,
         http_status,
@@ -10447,6 +10462,9 @@ struct SidecarUsageEvent {
     #[serde(default)]
     #[serde(alias = "service_tier")]
     service_tier: Option<String>,
+    #[serde(default)]
+    #[serde(alias = "reasoning_effort")]
+    reasoning_effort: Option<String>,
     #[serde(default)]
     success: bool,
     #[serde(default)]
@@ -12959,7 +12977,7 @@ async fn record_sidecar_usage_event(event: SidecarUsageEvent) {
             http_status: event.status,
             error_message: event.error_message.as_deref(),
             service_tier: event.service_tier.as_deref(),
-            reasoning_effort: None,
+            reasoning_effort: event.reasoning_effort.as_deref(),
         },
     )
     .await
@@ -31510,6 +31528,7 @@ data: {"type":"response.completed","response":{"id":"resp_123","usage":{"input_t
             client_instance_id: "instance-1".to_string(),
             request_kind: "text".to_string(),
             service_tier: None,
+            reasoning_effort: None,
             success: false,
             status: Some(200),
             error_category: Some("request_failed".to_string()),
@@ -31522,6 +31541,56 @@ data: {"type":"response.completed","response":{"id":"resp_123","usage":{"input_t
             normalized_sidecar_error_category(&event).as_deref(),
             Some("upstream_response_failed")
         );
+    }
+
+    #[test]
+    fn sidecar_usage_reasoning_effort_deserializes_and_round_trips_to_sqlite() {
+        let sidecar_event: SidecarUsageEvent =
+            serde_json::from_str(r#"{"reasoningEffort":"xhigh"}"#)
+                .expect("sidecar reasoning effort should deserialize");
+        assert_eq!(sidecar_event.reasoning_effort.as_deref(), Some("xhigh"));
+
+        let dir = make_temp_dir("codex-sidecar-reasoning-effort");
+        let db_path = dir.join("request_logs.sqlite");
+        let conn = open_local_access_logs_db_once(&db_path, true).expect("open logs db");
+        let mut events = Vec::new();
+        let persisted = append_usage_event(
+            &mut events,
+            1_700_000_000_000,
+            Some("req-reasoning"),
+            Some("acc-1"),
+            Some("user@example.com"),
+            None,
+            None,
+            None,
+            Some("gpt-5.4"),
+            Some(CodexLocalAccessGatewayMode::Sidecar),
+            CodexLocalAccessRequestKind::Text,
+            None,
+            sidecar_event.reasoning_effort.as_deref(),
+            true,
+            Some(200),
+            None,
+            None,
+            20,
+            None,
+            None,
+            1,
+            0.0,
+        );
+        insert_local_access_usage_event(&conn, &persisted).expect("insert request log");
+
+        let loaded = conn
+            .query_row(
+                "SELECT * FROM request_logs WHERE request_id = ?1",
+                ["req-reasoning"],
+                usage_event_from_row,
+            )
+            .expect("read request log");
+        assert_eq!(loaded.reasoning_effort.as_deref(), Some("xhigh"));
+
+        drop(conn);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
