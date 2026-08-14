@@ -8637,6 +8637,28 @@
   border-color: var(--border-hover);
 }
 
+.codex-provider-key-row.is-editing {
+  align-items: stretch;
+}
+
+.codex-provider-key-edit-fields {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+}
+
+.codex-provider-key-edit-fields .form-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.codex-provider-key-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .codex-provider-key-text {
   min-width: 0;
   display: flex;

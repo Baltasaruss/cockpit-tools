@@ -14,6 +14,7 @@ import {
   ArrowDownWideNarrow,
   ArrowDown,
   ArrowUp,
+  Check,
   CircleAlert,
   ChevronDown,
   Copy,
@@ -65,6 +66,7 @@ import {
   listCodexAccounts,
   syncCodexApiKeyProviderAccounts,
   updateCodexAccountName,
+  updateCodexApiKeyCredentials,
   updateCodexApiKeyBoundOAuthAccount,
 } from "../../services/codexService";
 import { useDeepSeekDirectModelPrompt } from "./DeepSeekDirectModelModal";
@@ -95,6 +97,7 @@ import {
   normalizeCodexModelProviderBaseUrl,
   removeApiKeyFromCodexModelProvider,
   renameApiKeyOnCodexModelProvider,
+  updateApiKeyOnCodexModelProvider,
   queryCodexModelProviderUsage,
   saveCodexModelProviderDetectedIntegrationType,
   testCodexModelProviderConnection,
@@ -413,6 +416,14 @@ interface ProviderFormState {
   newApiKey: string;
 }
 
+interface EditingApiKeyState {
+  providerId: string;
+  apiKeyId: string;
+  originalApiKey: string;
+  apiKey: string;
+  name: string;
+}
+
 const EMPTY_FORM: ProviderFormState = {
   providerId: null,
   name: "",
@@ -721,6 +732,9 @@ export function CodexModelProviderManager({
   const [batchTestModelCustom, setBatchTestModelCustom] = useState("");
   const [existingApiKeySearchQuery, setExistingApiKeySearchQuery] =
     useState("");
+  const [editingApiKey, setEditingApiKey] = useState<EditingApiKeyState | null>(
+    null,
+  );
   const cancelledBatchTestRunIdsRef = useRef<Set<string>>(new Set());
 
   const sponsorProviderTemplates = useMemo<SponsorProviderTemplate[]>(() => {
@@ -1572,6 +1586,7 @@ export function CodexModelProviderManager({
     setNotice(null);
     setFormError(null);
     setExistingApiKeySearchQuery("");
+    setEditingApiKey(null);
     setForm({
       ...EMPTY_FORM,
       wireApi: resolveDefaultProviderWireApi(CODEX_API_PROVIDER_CUSTOM_ID),
@@ -1616,6 +1631,7 @@ export function CodexModelProviderManager({
     setNotice(null);
     setFormError(null);
     setExistingApiKeySearchQuery("");
+    setEditingApiKey(null);
     const resolvedWireApi = resolveProviderWireApi(provider);
     setForm({
       providerId: provider.id,
@@ -1651,6 +1667,7 @@ export function CodexModelProviderManager({
 
   const closeModal = useCallback(() => {
     if (saving) return;
+    setEditingApiKey(null);
     setShowModal(false);
     setFormError(null);
   }, [saving]);
@@ -2435,6 +2452,104 @@ export function CodexModelProviderManager({
     },
     [parseServiceError, reloadProviders, t],
   );
+
+  const handleSaveApiKeyEdit = useCallback(async () => {
+    if (!editingApiKey || saving) return;
+    const provider = providers.find((item) => item.id === editingApiKey.providerId);
+    if (!provider) return;
+
+    const nextApiKey = editingApiKey.apiKey.trim();
+    if (!nextApiKey) {
+      setNotice({
+        tone: "error",
+        text: t("codex.modelProviders.validation.apiKeyRequired", "API Key 不能为空"),
+      });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const savedProvider = await updateApiKeyOnCodexModelProvider(
+        provider.id,
+        editingApiKey.apiKeyId,
+        nextApiKey,
+        editingApiKey.name,
+      );
+      const previousApiKey = editingApiKey.originalApiKey.trim();
+      const normalizedProviderBaseUrl = normalizeCodexModelProviderBaseUrl(
+        savedProvider.baseUrl,
+      );
+      const linkedAccounts = accounts.filter(
+        (account) =>
+          isCodexApiKeyAccount(account) &&
+          account.openai_api_key?.trim() === previousApiKey &&
+          normalizeCodexModelProviderBaseUrl(account.api_base_url ?? "") ===
+            normalizedProviderBaseUrl,
+      );
+      const presetId = resolveCodexApiProviderPresetId(savedProvider.baseUrl);
+      const isOpenAIOfficial = presetId === "openai_official";
+      const wireApi = resolveProviderWireApi(savedProvider);
+      const apiProviderMode = isOpenAIOfficial ? "openai_builtin" : "custom";
+      const apiProviderId =
+        presetId === CODEX_API_PROVIDER_CUSTOM_ID ? savedProvider.id : presetId;
+      for (const account of linkedAccounts) {
+        await updateCodexApiKeyCredentials(
+          account.id,
+          nextApiKey,
+          savedProvider.baseUrl,
+          apiProviderMode,
+          apiProviderId,
+          savedProvider.name,
+          savedProvider.modelCatalog,
+          savedProvider.supportsVision === true,
+          Object.fromEntries(
+            Object.entries(savedProvider.modelCapabilities ?? {}).map(
+              ([model, capability]) => [model, capability.supportsVision === true],
+            ),
+          ),
+          savedProvider.visionRoutingModel,
+          wireApi,
+          !isOpenAIOfficial &&
+            wireApi === "responses" &&
+            savedProvider.supportsWebsockets === true,
+          account.api_sync_model_catalog_to_codex,
+          account.account_name,
+          account.api_model_context_windows,
+        );
+      }
+      await reloadProviders();
+      if (linkedAccounts.length > 0) {
+        await emitAccountsChanged({
+          platformId: "codex",
+          reason: "provider-api-key-updated",
+        });
+      }
+      setEditingApiKey(null);
+      setNotice({
+        tone: "success",
+        text: t("codex.modelProviders.updateApiKeySuccess", "API Key 已更新"),
+      });
+    } catch (err) {
+      const raw = String(err ?? "");
+      const message = raw.includes("API_KEY_EXISTS")
+        ? t(
+            "codex.modelProviders.validation.apiKeyExists",
+            "该 API Key 已存在于当前供应商",
+          )
+        : raw.includes("API_KEY_REQUIRED")
+          ? t(
+              "codex.modelProviders.validation.apiKeyRequired",
+              "API Key 不能为空",
+            )
+          : t("codex.modelProviders.updateApiKeyFailed", {
+              defaultValue: "更新 API Key 失败：{{error}}",
+              error: raw.replace(/^Error:\s*/, ""),
+            });
+      setNotice({ tone: "error", text: message });
+    } finally {
+      setSaving(false);
+    }
+  }, [accounts, editingApiKey, providers, reloadProviders, saving, t]);
 
   const handleRenameApiKey = useCallback(
     async (provider: CodexModelProvider, apiKey: CodexModelProviderApiKey) => {
@@ -5191,8 +5306,76 @@ export function CodexModelProviderManager({
                             item.apiKey.toLowerCase().includes(query)
                           );
                         })
-                        .map((item) => (
-                        <div className="codex-provider-key-row" key={item.id}>
+                        .map((item) => {
+                          const isEditing = editingApiKey?.apiKeyId === item.id;
+                          if (isEditing && editingApiKey) {
+                            return (
+                              <div
+                                className="codex-provider-key-row is-editing"
+                                key={item.id}
+                              >
+                                <div className="codex-provider-key-edit-fields">
+                                  <input
+                                    className="form-input"
+                                    type="text"
+                                    value={editingApiKey.name}
+                                    onChange={(event) =>
+                                      setEditingApiKey((current) =>
+                                        current
+                                          ? { ...current, name: event.target.value }
+                                          : current,
+                                      )
+                                    }
+                                    placeholder={t(
+                                      "codex.modelProviders.fields.newApiKeyName",
+                                      "API Key name (optional)",
+                                    )}
+                                    disabled={saving}
+                                  />
+                                  <input
+                                    className="form-input"
+                                    type="password"
+                                    value={editingApiKey.apiKey}
+                                    onChange={(event) =>
+                                      setEditingApiKey((current) =>
+                                        current
+                                          ? { ...current, apiKey: event.target.value }
+                                          : current,
+                                      )
+                                    }
+                                    placeholder={t(
+                                      "codex.modelProviders.fields.apiKey",
+                                      "API Key",
+                                    )}
+                                    autoComplete="off"
+                                    disabled={saving}
+                                  />
+                                </div>
+                                <div className="codex-provider-key-edit-actions">
+                                  <button
+                                    type="button"
+                                    className="action-btn success"
+                                    onClick={() => void handleSaveApiKeyEdit()}
+                                    disabled={saving}
+                                    title={t("common.save", "Save")}
+                                  >
+                                    <Check size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="action-btn"
+                                    onClick={() => setEditingApiKey(null)}
+                                    disabled={saving}
+                                    title={t("common.cancel", "Cancel")}
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="codex-provider-key-row" key={item.id}>
                           <div className="codex-provider-key-text">
                             <span className="codex-provider-key-name">
                               {item.name ||
@@ -5204,6 +5387,27 @@ export function CodexModelProviderManager({
                             <code>{maskApiKey(item.apiKey)}</code>
                           </div>
                           <button
+                            type="button"
+                            className="action-btn"
+                            onClick={() =>
+                              setEditingApiKey({
+                                providerId: currentEditingProvider.id,
+                                apiKeyId: item.id,
+                                originalApiKey: item.apiKey,
+                                apiKey: item.apiKey,
+                                name: item.name,
+                              })
+                            }
+                            disabled={saving}
+                            title={t(
+                              "codex.modelProviders.editApiKey",
+                              "Edit API Key",
+                            )}
+                          >
+                            <KeyRound size={12} />
+                          </button>
+                          <button
+                            type="button"
                             className="action-btn"
                             onClick={() =>
                               void handleRenameApiKey(
@@ -5217,6 +5421,7 @@ export function CodexModelProviderManager({
                             <Pencil size={12} />
                           </button>
                           <button
+                            type="button"
                             className="action-btn danger"
                             onClick={() =>
                               void handleDeleteApiKey(
@@ -5229,8 +5434,9 @@ export function CodexModelProviderManager({
                           >
                             <Trash2 size={12} />
                           </button>
-                        </div>
-                      ))}
+                            </div>
+                          );
+                        })}
                     </div>
                   </div>
                 )}
