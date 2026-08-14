@@ -792,6 +792,38 @@ export async function renameApiKeyOnCodexModelProvider(
   return { ...provider, apiKeys: provider.apiKeys.map((item) => ({ ...item })) };
 }
 
+/** Replace the secret for an existing provider API key without changing its id. */
+export async function updateApiKeyOnCodexModelProvider(
+  providerId: string,
+  apiKeyId: string,
+  apiKey: string,
+  name?: string,
+): Promise<CodexModelProvider> {
+  const normalizedApiKey = sanitizeApiKey(apiKey);
+  if (!normalizedApiKey) throw new Error("API_KEY_REQUIRED");
+
+  const providers = await ensureProvidersLoaded();
+  const provider = providers.find((item) => item.id === providerId);
+  if (!provider) throw new Error("PROVIDER_NOT_FOUND");
+  const existing = provider.apiKeys.find((item) => item.id === apiKeyId);
+  if (!existing) throw new Error("API_KEY_NOT_FOUND");
+
+  const duplicate = provider.apiKeys.some(
+    (item) => item.id !== apiKeyId && sanitizeApiKey(item.apiKey) === normalizedApiKey,
+  );
+  if (duplicate) throw new Error("API_KEY_EXISTS");
+
+  const now = Date.now();
+  existing.apiKey = normalizedApiKey;
+  if (name !== undefined) {
+    existing.name = sanitizeName(name);
+  }
+  existing.updatedAt = now;
+  provider.updatedAt = now;
+  await writeProviders(providers);
+  return { ...provider, apiKeys: provider.apiKeys.map((item) => ({ ...item })) };
+}
+
 export async function testCodexModelProviderConnection(input: {
   baseUrl: string;
   apiKey: string;
