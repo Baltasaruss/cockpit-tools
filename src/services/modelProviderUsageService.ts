@@ -90,18 +90,16 @@ export function resolveNewApiQuotaSnapshot(
   return { granted, available, expiresAt };
 }
 
-function buildUsageBaseUrlCandidates(baseUrl: string): string[] {
+export function buildUsageBaseUrlCandidates(baseUrl: string): string[] {
   const trimmed = baseUrl.trim();
   if (!trimmed) return [];
   const candidates = [trimmed];
   try {
     const parsed = new URL(trimmed);
-    const host = parsed.hostname.toLowerCase();
     const path = parsed.pathname.replace(/\/+$/, '');
-    if (
-      (host === 'api.apikey.fun' || host === 'slb.apikey.fun') &&
-      (path === '' || path === '/')
-    ) {
+    if (path === '' || path === '/') {
+      // Sub2API-compatible services may expose /usage at either the host root
+      // or under /v1. Try the user's URL first, then the conventional prefix.
       const usageUrl = `${parsed.origin}/v1`;
       if (!candidates.includes(usageUrl)) candidates.push(usageUrl);
     }
