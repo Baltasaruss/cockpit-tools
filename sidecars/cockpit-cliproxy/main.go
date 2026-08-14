@@ -397,6 +397,7 @@ type usagePayload struct {
 	ClientInstanceID string       `json:"clientInstanceId,omitempty"`
 	RequestKind      string       `json:"requestKind,omitempty"`
 	ServiceTier      string       `json:"serviceTier,omitempty"`
+	ReasoningEffort  string       `json:"reasoningEffort,omitempty"`
 	Success          bool         `json:"success"`
 	Status           int          `json:"status,omitempty"`
 	ErrorCategory    string       `json:"errorCategory,omitempty"`
@@ -3199,6 +3200,7 @@ func (p *usagePlugin) HandleUsage(ctx context.Context, record coreusage.Record) 
 		ClientInstanceID: clientInstanceIDFromContext(ctx),
 		RequestKind:      requestKind,
 		ServiceTier:      normalizedUsageServiceTier(record.ServiceTier),
+		ReasoningEffort:  strings.TrimSpace(record.ReasoningEffort),
 		Success:          success,
 		Status:           status,
 		ErrorCategory:    errorCategory(status, record.Fail.Body, success),
