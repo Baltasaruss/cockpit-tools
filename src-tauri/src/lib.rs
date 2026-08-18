@@ -866,6 +866,7 @@ pub fn run() {
             commands::codex::close_codex_oauth_port,
             commands::codex::update_codex_account_tags,
             commands::codex::update_codex_accounts_fingerprint_mode,
+            commands::codex::update_codex_account_client_policy,
             commands::codex::update_codex_account_note,
             commands::codex::update_codex_account_api_model_mappings,
             commands::codex::update_codex_account_instance_access,

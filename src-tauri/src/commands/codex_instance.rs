@@ -1172,15 +1172,17 @@ pub async fn codex_save_instance_quick_config(
     experimental_model_catalog_models: Option<
         Vec<crate::models::codex::CodexExperimentalModelDefinition>,
     >,
+    experimental_model_catalog_default_model_id: Option<String>,
 ) -> Result<crate::models::codex::CodexQuickConfig, String> {
     let base_dir = resolve_instance_base_dir(instance_id.as_str())?;
     let saved = tauri::async_runtime::spawn_blocking(move || {
-        let saved = modules::codex_account::save_quick_config_for_base_dir(
+        let saved = modules::codex_account::save_quick_config_for_base_dir_with_default(
             &base_dir,
             model_context_window,
             auto_compact_token_limit,
             experimental_model_catalog_enabled,
             experimental_model_catalog_models,
+            experimental_model_catalog_default_model_id,
         )?;
         modules::codex_local_access::refresh_api_service_experimental_model_ids();
         Ok::<crate::models::codex::CodexQuickConfig, String>(saved)

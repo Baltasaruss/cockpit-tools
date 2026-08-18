@@ -9,7 +9,11 @@ export interface CodexApiModelMapping {
 export interface CodexExperimentalModelDefinition {
   model_id: string;
   display_name: string;
+  /** undefined follows the official model reasoning levels; otherwise custom multi-select. */
+  reasoning_efforts?: CodexReasoningEffort[];
 }
+
+export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
 export interface CodexQuickConfig {
   context_window_1m: boolean;
@@ -21,6 +25,7 @@ export interface CodexQuickConfig {
   experimental_model_catalog_unavailable_reason?: "catalog_conflict";
   experimental_model_catalog_conflict?: string;
   experimental_model_catalog_models: CodexExperimentalModelDefinition[];
+  experimental_model_catalog_default_model_id?: string | null;
 }
 
 export type CodexAppSpeed = "standard" | "fast";
@@ -68,6 +73,8 @@ export interface CodexAccount {
   account_structure?: string;
   account_note?: string;
   codex_fingerprint_mode?: CodexFingerprintMode;
+  codex_cli_only?: boolean;
+  codex_cli_only_allow_app_server?: boolean;
   two_factor_secret?: string;
   account_password?: string;
   phone_number?: string;
