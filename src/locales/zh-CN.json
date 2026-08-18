@@ -29,7 +29,7 @@
     "advancedSettings": "高级设置",
     "codexFingerprint": {
       "modeLabel": "设备指纹模式",
-      "modeHint": "仅 OAuth 账号生效；未设置时默认关闭。",
+      "modeHint": "仅 OAuth；默认会话。按账号隔离安装/会话并改写工作区，避免同机多号被串。",
       "session": "会话（推荐）",
       "device": "设备",
       "full": "完整",
@@ -1515,7 +1515,7 @@
       "short": "账号备注",
       "addShort": "加备注",
       "fingerprintModeLabel": "设备指纹模式",
-      "fingerprintModeHint": "仅 OAuth 账号生效；未设置时默认关闭。",
+      "fingerprintModeHint": "仅 OAuth；默认会话。按账号隔离安装/会话并改写工作区，避免同机多号被串。",
       "fingerprintModeSession": "会话（推荐）",
       "fingerprintModeDevice": "设备",
       "fingerprintModeFull": "完整",
@@ -3132,10 +3132,10 @@
     "quota": {
       "hourly": "5小时配额",
       "weekly": "周配额",
-      "monthlyCredits": "月度 credits",
-      "monthlyCreditsValue": "剩余 {{remaining}} / {{total}} credits",
-      "creditBalance": "余额 {{balance}} credits",
-      "unlimitedCredits": "无限 credits",
+      "monthlyCredits": "余额",
+      "monthlyCreditsValue": "{{remaining}} / {{total}}",
+      "creditBalance": "{{balance}}",
+      "unlimitedCredits": "∞",
       "additional": "额外额度",
       "weeklyBlocksHourly": "周额度为 0，5小时额度已不可用",
       "windowStats": "已用 {{tokens}} · {{cost}}",
@@ -3172,7 +3172,9 @@
       "windowHours": "{{count}} 小时配额",
       "windowMinutes": "{{count}} 分钟配额",
       "codeReview": "代码审查",
-      "codeReviewShort": "审阅"
+      "codeReviewShort": "审阅",
+      "monthlyCreditsHint": "本月 credits 剩余",
+      "monthlyCreditsInline": "Credits：{{value}}"
     },
     "usage": {
       "open": "查看 OpenAI 用量",
@@ -5957,7 +5959,7 @@
       "short": "账号备注",
       "addShort": "加备注",
       "fingerprintModeLabel": "设备指纹模式",
-      "fingerprintModeHint": "仅 OAuth 账号生效；未设置时默认关闭。",
+      "fingerprintModeHint": "仅 OAuth；默认会话。按账号隔离安装/会话并改写工作区，避免同机多号被串。",
       "fingerprintModeSession": "会话（推荐）",
       "fingerprintModeDevice": "设备",
       "fingerprintModeFull": "完整",

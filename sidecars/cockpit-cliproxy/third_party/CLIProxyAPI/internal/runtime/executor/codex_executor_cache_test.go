@@ -260,10 +260,11 @@ func TestCodexFingerprintModeUsesAccountMetadata(t *testing.T) {
 		auth *cliproxyauth.Auth
 		want string
 	}{
-		{name: "unset defaults off", auth: &cliproxyauth.Auth{}, want: "off"},
-		{name: "missing account value defaults off", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": nil}}, want: "off"},
-		{name: "invalid account value defaults off", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": "invalid"}}, want: "off"},
+		{name: "unset defaults session", auth: &cliproxyauth.Auth{}, want: "session"},
+		{name: "missing account value defaults session", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": nil}}, want: "session"},
+		{name: "invalid account value defaults session", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": "invalid"}}, want: "session"},
 		{name: "explicit off", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": "off"}}, want: "off"},
+		{name: "session", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": "session"}}, want: "session"},
 		{name: "device", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": "device"}}, want: "device"},
 		{name: "full", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": "full"}}, want: "full"},
 		{name: "api key always off", auth: &cliproxyauth.Auth{Metadata: map[string]any{"codex_fingerprint_mode": "full"}, Attributes: map[string]string{"api_key": "sk-test"}}, want: "off"},

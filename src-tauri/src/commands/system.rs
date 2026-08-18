@@ -763,9 +763,9 @@ fn normalize_antigravity_metadata_root(path: &Path) -> Option<PathBuf> {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(unix))]
     let normalized = path.to_path_buf();
     crate::modules::process::antigravity_install_root_from_path(&normalized)
 }
@@ -4249,6 +4249,12 @@ mod tests {
         }
     }
 
+    fn assert_same_fs_path(left: &Path, right: &Path) {
+        let left = std::fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+        let right = std::fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+        assert_eq!(left, right);
+    }
+
     fn write_antigravity_product_json(root: &Path) {
         let product_dir = root.join("resources").join("app");
         std::fs::create_dir_all(&product_dir).expect("create product metadata directory");
@@ -4271,7 +4277,7 @@ mod tests {
         let metadata = read_antigravity_product_json_metadata(&root)
             .expect("read product.json from install root");
 
-        assert_eq!(root, install.path());
+        assert_same_fs_path(&root, install.path());
         assert_eq!(metadata.version, "1.2.3");
     }
 
@@ -4289,7 +4295,7 @@ mod tests {
         let metadata = read_antigravity_product_json_metadata(&root)
             .expect("read product.json from install root");
 
-        assert_eq!(root, install.path());
+        assert_same_fs_path(&root, install.path());
         assert_eq!(metadata.version, "1.2.3");
     }
 
@@ -4359,10 +4365,7 @@ mod tests {
         let metadata = read_antigravity_product_json_metadata(&root)
             .expect("read product metadata through symlink root");
 
-        assert_eq!(
-            root,
-            std::fs::canonicalize(install.path()).expect("canonicalize install")
-        );
+        assert_same_fs_path(&root, install.path());
         assert_eq!(metadata.version, "1.2.3");
     }
 

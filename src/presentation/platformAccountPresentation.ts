@@ -798,7 +798,16 @@ export function buildCodexAccountPresentation(
   const monthlyCreditUsage = isCodexChatCompletionsApiKeyAccount(account)
     ? null
     : getCodexMonthlyCreditUsage(account.quota);
-  if (monthlyCreditUsage) {
+  const monthlyCreditAmount =
+    monthlyCreditUsage?.remaining ??
+    Number.parseFloat(monthlyCreditUsage?.balance ?? "");
+  const hasMonthlyCredits =
+    monthlyCreditUsage != null &&
+    (monthlyCreditUsage.unlimited === true ||
+      (typeof monthlyCreditAmount === "number" &&
+        Number.isFinite(monthlyCreditAmount) &&
+        monthlyCreditAmount > 0));
+  if (hasMonthlyCredits) {
     const total = monthlyCreditUsage.total;
     const remaining = monthlyCreditUsage.remaining;
     const percentage = monthlyCreditUsage.unlimited
@@ -807,29 +816,26 @@ export function buildCodexAccountPresentation(
         ? monthlyCreditUsage.remainingPercent
         : total != null && total > 0 && remaining != null
           ? clampPercent((remaining / total) * 100)
-          : remaining != null && remaining > 0
-            ? 100
-            : 0;
-    const valueText = monthlyCreditUsage.unlimited
-      ? t("codex.quota.unlimitedCredits", "无限 credits")
-      : remaining != null && total != null
-        ? t("codex.quota.monthlyCreditsValue", {
-            remaining: formatQuotaNumber(remaining),
-            total: formatQuotaNumber(total),
-            defaultValue: "{{remaining}} / {{total}} credits",
-          })
+          : 0;
+    const amountText = monthlyCreditUsage.unlimited
+      ? t("codex.quota.unlimitedCredits", "∞")
+      : remaining != null
+        ? formatQuotaNumber(remaining)
         : monthlyCreditUsage.balance
           ? t("codex.quota.creditBalance", {
               balance: monthlyCreditUsage.balance,
-              defaultValue: "{{balance}} credits",
+              defaultValue: "{{balance}}",
             })
           : t("common.shared.quota.noData", "暂无配额数据");
     quotaItems.push({
       key: "monthly_credits",
-      label: t("codex.quota.monthlyCredits", "月度 credits"),
+      label: t("codex.quota.monthlyCredits", "Credits"),
       percentage,
-      quotaClass: getCodexQuotaClass(percentage),
-      valueText,
+      quotaClass: "neutral",
+      valueText: t("codex.quota.monthlyCreditsInline", {
+        value: amountText,
+        defaultValue: "Credits：{{value}}",
+      }),
       resetText: monthlyCreditUsage.resetTime
         ? formatCodexResetTime(monthlyCreditUsage.resetTime, t)
         : "",
@@ -837,8 +843,8 @@ export function buildCodexAccountPresentation(
       used: monthlyCreditUsage.used,
       total,
       left: remaining,
-      showProgress:
-        monthlyCreditUsage.unlimited || (total != null && total > 0),
+      hintText: t("codex.quota.monthlyCreditsHint", "本月 credits 剩余"),
+      showProgress: false,
     });
   }
   const additionalQuotaItems =

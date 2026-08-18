@@ -26,8 +26,8 @@ static CODEX_BATCH_IMPORT_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CODEX_BATCH_IMPORT_SESSIONS: std::sync::LazyLock<
     Mutex<HashMap<String, CodexBatchImportSession>>,
 > = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-static CODEX_FINGERPRINT_DEFAULT_OFF_MIGRATION_STARTED: AtomicBool = AtomicBool::new(false);
-const CODEX_FINGERPRINT_DEFAULT_OFF_MARKER: &str = "codex_fingerprint_default_off_v1";
+static CODEX_FINGERPRINT_DEFAULT_SESSION_RESYNC_STARTED: AtomicBool = AtomicBool::new(false);
+const CODEX_FINGERPRINT_DEFAULT_SESSION_MARKER: &str = "codex_fingerprint_default_session_v1";
 const CODEX_QUOTA_ALERT_COOLDOWN_SECONDS: i64 = 300;
 const ACCOUNT_CHECK_URL: &str = "https://chatgpt.com/backend-api/wham/accounts/check";
 const API_KEY_LOGIN_PLAN_TYPE: &str = "API_KEY";
@@ -4891,9 +4891,9 @@ pub(crate) fn resolved_codex_fingerprint_mode(account: &CodexAccount) -> &'stati
 fn resolved_codex_fingerprint_mode_value(raw: Option<&str>) -> &'static str {
     match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
         Some("device") => "device",
-        Some("session") => "session",
+        Some("off") => "off",
         Some("full") => "full",
-        _ => "off",
+        _ => "session",
     }
 }
 
@@ -5482,7 +5482,7 @@ pub fn list_accounts() -> Vec<CodexAccount> {
             ));
         }
     }
-    spawn_fingerprint_default_off_migration();
+    spawn_fingerprint_default_session_resync();
     accounts
 }
 
@@ -5537,7 +5537,7 @@ pub fn list_accounts_checked() -> Result<Vec<CodexAccount>, String> {
         save_account_index(&index)?;
     }
 
-    spawn_fingerprint_default_off_migration();
+    spawn_fingerprint_default_session_resync();
     Ok(accounts)
 }
 
@@ -12032,10 +12032,14 @@ mod tests {
             .as_deref(),
             Some("session")
         );
-        assert_eq!(super::resolved_codex_fingerprint_mode_value(None), "off");
+        assert_eq!(super::resolved_codex_fingerprint_mode_value(None), "session");
         assert_eq!(
             super::resolved_codex_fingerprint_mode_value(Some("SESSION")),
             "session"
+        );
+        assert_eq!(
+            super::resolved_codex_fingerprint_mode_value(Some("off")),
+            "off"
         );
     }
 
@@ -17214,25 +17218,25 @@ pub fn update_account_tags(account_id: &str, tags: Vec<String>) -> Result<CodexA
     Ok(account)
 }
 
-fn spawn_fingerprint_default_off_migration() {
+fn spawn_fingerprint_default_session_resync() {
     if std::env::var("COCKPIT_TOOLS_TEST_DATA_DIR").is_ok() {
         return;
     }
-    if CODEX_FINGERPRINT_DEFAULT_OFF_MIGRATION_STARTED.swap(true, Ordering::SeqCst) {
+    if CODEX_FINGERPRINT_DEFAULT_SESSION_RESYNC_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(|| {
-        if let Err(error) = migrate_codex_fingerprint_modes_to_off() {
+        if let Err(error) = resync_sidecar_fingerprint_after_default_session() {
             logger::log_warn(&format!(
-                "[Codex Fingerprint] 默认关闭迁移失败: {}",
+                "[Codex Fingerprint] 默认会话回写 sidecar 失败: {}",
                 error
             ));
         }
     });
 }
 
-fn migrate_codex_fingerprint_modes_to_off() -> Result<(), String> {
-    let marker = account::get_data_dir()?.join(CODEX_FINGERPRINT_DEFAULT_OFF_MARKER);
+fn resync_sidecar_fingerprint_after_default_session() -> Result<(), String> {
+    let marker = account::get_data_dir()?.join(CODEX_FINGERPRINT_DEFAULT_SESSION_MARKER);
     if marker.exists() {
         return Ok(());
     }
@@ -17240,30 +17244,19 @@ fn migrate_codex_fingerprint_modes_to_off() -> Result<(), String> {
         if !is_standard_oauth_account(&account) {
             continue;
         }
-        let current = account
-            .codex_fingerprint_mode
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default();
-        if current.is_empty() || current.eq_ignore_ascii_case("off") {
-            continue;
-        }
-        let mut next = account;
-        next.codex_fingerprint_mode = None;
-        save_account(&next)?;
         if let Err(error) =
-            crate::modules::codex_local_access::sync_sidecar_auth_file_for_account(&next)
+            crate::modules::codex_local_access::sync_sidecar_auth_file_for_account(&account)
         {
             logger::log_warn(&format!(
-                "[Codex Fingerprint] 同步关闭模式到 API Service 失败: account_id={}, error={}",
-                next.id, error
+                "[Codex Fingerprint] 同步会话默认到 API Service 失败: account_id={}, error={}",
+                account.id, error
             ));
         }
     }
     if let Some(parent) = marker.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("创建数据目录失败: {error}"))?;
     }
-    fs::write(&marker, "1").map_err(|error| format!("写入指纹迁移标记失败: {error}"))?;
+    fs::write(&marker, "1").map_err(|error| format!("写入指纹回写标记失败: {error}"))?;
     Ok(())
 }
 
@@ -17287,7 +17280,7 @@ pub fn update_accounts_fingerprint_mode(
 
     let mut updated = Vec::with_capacity(accounts.len());
     for mut account in accounts {
-        account.codex_fingerprint_mode = if normalized == "off" {
+        account.codex_fingerprint_mode = if normalized == "session" {
             None
         } else {
             Some(normalized.clone())

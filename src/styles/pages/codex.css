@@ -3335,12 +3335,18 @@
   background: var(--danger);
 }
 
+.codex-quota-mini-bar.neutral {
+  background: color-mix(in srgb, var(--text-secondary) 42%, transparent);
+}
+
 .codex-quota-mini-pct {
   flex: 0 0 auto;
   min-width: 28px;
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .codex-quota-mini-pct.high {
@@ -3357,6 +3363,10 @@
 
 .codex-quota-mini-pct.critical {
   color: var(--danger);
+}
+
+.codex-quota-mini-pct.neutral {
+  color: var(--text-secondary);
 }
 
 .codex-quota-mini-reset {

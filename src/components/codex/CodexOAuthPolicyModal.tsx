@@ -292,7 +292,7 @@ export function CodexOAuthPolicyModal({
               <div className="codex-oauth-policy-modal__list">
                 {oauthAccounts.map((account) => {
                   const saving = savingId === account.id;
-                  const fingerprintMode = account.codex_fingerprint_mode ?? 'off';
+                  const fingerprintMode = account.codex_fingerprint_mode ?? 'session';
                   return (
                     <div className="codex-oauth-policy-modal__row" key={account.id}>
                       <label className="codex-oauth-policy-modal__account">

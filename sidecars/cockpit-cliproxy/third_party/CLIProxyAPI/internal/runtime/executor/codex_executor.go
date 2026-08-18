@@ -1644,6 +1644,9 @@ type codexIdentityConfuseState struct {
 	threadID               string
 	originalWindowID       string
 	windowID               string
+	originalParentThreadID string
+	parentThreadID         string
+	fingerprintReplacements []codexIdentityReplacement
 }
 
 type codexIdentityReplacement struct {
@@ -1714,113 +1717,6 @@ func applyCodexIdentityConfuseBody(cfg *config.Config, auth *cliproxyauth.Auth, 
 	return rawJSON, state
 }
 
-func codexFingerprintMode(cfg *config.Config, auth *cliproxyauth.Auth) string {
-	if cfg == nil || auth == nil || codexAuthUsesAPIKey(auth) {
-		return "off"
-	}
-	mode := ""
-	if auth.Metadata != nil {
-		if raw, ok := auth.Metadata["codex_fingerprint_mode"].(string); ok {
-			mode = strings.ToLower(strings.TrimSpace(raw))
-		}
-	}
-	// Account-level default is off; users can still opt into session/device/full.
-	if mode == "" {
-		mode = "off"
-	}
-	switch mode {
-	case "device", "session", "full", "off":
-		return mode
-	default:
-		return "off"
-	}
-}
-
-func codexFingerprintUUID(authID, kind, value string) string {
-	name := strings.Join([]string{"cli-proxy-api", "codex", "fingerprint", kind, strings.TrimSpace(authID), strings.TrimSpace(value)}, ":")
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
-}
-
-func codexFingerprintOriginalSessionID(userPayload []byte, state *codexIdentityConfuseState) string {
-	for _, path := range []string{
-		"session_id",
-		"session-id",
-		"client_metadata.session_id",
-		"client_metadata.x-codex-window-id",
-		"prompt_cache_key",
-	} {
-		if value := strings.TrimSpace(gjson.GetBytes(userPayload, path).String()); value != "" {
-			return value
-		}
-	}
-	if state != nil {
-		return strings.TrimSpace(state.originalPromptCacheKey)
-	}
-	return ""
-}
-
-func applyCodexFingerprintBody(cfg *config.Config, auth *cliproxyauth.Auth, userPayload []byte, rawJSON []byte, state codexIdentityConfuseState) ([]byte, codexIdentityConfuseState) {
-	mode := codexFingerprintMode(cfg, auth)
-	if mode == "off" || auth == nil || strings.TrimSpace(auth.ID) == "" || len(rawJSON) == 0 {
-		return rawJSON, state
-	}
-	state.fingerprintMode = mode
-	state.originalInstallationID = strings.TrimSpace(gjson.GetBytes(userPayload, "client_metadata.x-codex-installation-id").String())
-	state.installationID = codexFingerprintUUID(auth.ID, "installation", "account")
-	state.originalSessionID = codexFingerprintOriginalSessionID(userPayload, &state)
-	state.sessionID = codexFingerprintUUID(auth.ID, "session", "account")
-	state.originalThreadID = strings.TrimSpace(gjson.GetBytes(userPayload, "client_metadata.thread_id").String())
-	if state.originalThreadID == "" {
-		state.originalThreadID = strings.TrimSpace(gjson.GetBytes(userPayload, "thread_id").String())
-	}
-	if state.originalThreadID == "" {
-		state.originalThreadID = state.originalSessionID
-	}
-	if mode == "full" {
-		state.threadID = state.sessionID
-	} else {
-		state.threadID = codexFingerprintUUID(auth.ID, "thread", state.originalThreadID)
-		if state.originalThreadID == "" {
-			state.threadID = state.sessionID
-		}
-	}
-	state.originalWindowID = strings.TrimSpace(gjson.GetBytes(userPayload, "client_metadata.x-codex-window-id").String())
-	state.windowID = state.threadID + ":0"
-	if mode == "device" {
-		state.sessionID = ""
-		state.threadID = ""
-		state.windowID = ""
-	}
-
-	if state.installationID != "" {
-		rawJSON, _ = sjson.SetBytes(rawJSON, "client_metadata.x-codex-installation-id", state.installationID)
-	}
-	if mode != "device" {
-		for path, value := range map[string]string{
-			"client_metadata.session_id":        state.sessionID,
-			"client_metadata.thread_id":         state.threadID,
-			"client_metadata.x-codex-window-id": state.windowID,
-		} {
-			if value != "" {
-				rawJSON, _ = sjson.SetBytes(rawJSON, path, value)
-			}
-		}
-		if raw := strings.TrimSpace(gjson.GetBytes(rawJSON, "client_metadata.x-codex-turn-metadata").String()); raw != "" {
-			updated := raw
-			updated, _ = sjson.Set(updated, "installation_id", state.installationID)
-			updated, _ = sjson.Set(updated, "session_id", state.sessionID)
-			updated, _ = sjson.Set(updated, "thread_id", state.threadID)
-			updated, _ = sjson.Set(updated, "window_id", state.windowID)
-			rawJSON, _ = sjson.SetBytes(rawJSON, "client_metadata.x-codex-turn-metadata", updated)
-		}
-	} else if raw := strings.TrimSpace(gjson.GetBytes(rawJSON, "client_metadata.x-codex-turn-metadata").String()); raw != "" {
-		updated := raw
-		updated, _ = sjson.Set(updated, "installation_id", state.installationID)
-		rawJSON, _ = sjson.SetBytes(rawJSON, "client_metadata.x-codex-turn-metadata", updated)
-	}
-	return rawJSON, state
-}
-
 func applyCodexIdentityConfuseHeaders(headers http.Header, state *codexIdentityConfuseState) {
 	if headers == nil {
 		return
@@ -1843,39 +1739,6 @@ func applyCodexIdentityConfuseHeaders(headers http.Header, state *codexIdentityC
 	headers.Set("X-Client-Request-Id", state.promptCacheKey)
 	headers.Set("Thread-Id", state.promptCacheKey)
 	headers.Set("X-Codex-Window-Id", state.promptCacheKey+":0")
-}
-
-func applyCodexFingerprintHeaders(headers http.Header, state *codexIdentityConfuseState) {
-	if headers == nil || state == nil || state.fingerprintMode == "off" {
-		return
-	}
-	if state.originalSessionID == "" {
-		state.originalSessionID = codexSessionHeaderValue(headers)
-	}
-	if state.installationID != "" {
-		setHeaderCasePreserved(headers, "X-Codex-Installation-Id", state.installationID)
-	}
-	if state.fingerprintMode == "device" {
-		return
-	}
-	setCodexSessionHeaderCasePreserved(headers, "Session-Id", state.sessionID)
-	setHeaderCasePreserved(headers, "Thread-Id", state.threadID)
-	setHeaderCasePreserved(headers, "X-Client-Request-Id", state.threadID)
-	setHeaderCasePreserved(headers, "X-Codex-Window-Id", state.windowID)
-	if raw := strings.TrimSpace(headerValueCaseInsensitive(headers, "X-Codex-Turn-Metadata")); raw != "" {
-		updated := raw
-		if state.sessionID != "" {
-			updated, _ = sjson.Set(updated, "session_id", state.sessionID)
-		}
-		if state.threadID != "" {
-			updated, _ = sjson.Set(updated, "thread_id", state.threadID)
-		}
-		if state.windowID != "" {
-			updated, _ = sjson.Set(updated, "window_id", state.windowID)
-		}
-		updated, _ = sjson.Set(updated, "installation_id", state.installationID)
-		headers.Set("X-Codex-Turn-Metadata", updated)
-	}
 }
 
 func applyCodexTurnMetadataIdentityConfuse(rawTurnMetadata string, state *codexIdentityConfuseState) string {
@@ -1911,32 +1774,6 @@ func applyCodexIdentityExposeResponsePayload(payload []byte, state codexIdentity
 		payload = replaceCodexIdentityResponsePayload(payload, turnID.confused, turnID.original)
 	}
 	return applyCodexFingerprintResponsePayload(payload, state, true)
-}
-
-func applyCodexFingerprintResponsePayload(payload []byte, state codexIdentityConfuseState, exposeClient bool) []byte {
-	if state.fingerprintMode == "off" {
-		return payload
-	}
-	if exposeClient {
-		for _, pair := range [][2]string{
-			{state.installationID, state.originalInstallationID},
-			{state.sessionID, state.originalSessionID},
-			{state.threadID, state.originalThreadID},
-			{state.windowID, state.originalWindowID},
-		} {
-			payload = replaceCodexIdentityResponsePayload(payload, pair[0], pair[1])
-		}
-		return payload
-	}
-	for _, pair := range [][2]string{
-		{state.originalInstallationID, state.installationID},
-		{state.originalSessionID, state.sessionID},
-		{state.originalThreadID, state.threadID},
-		{state.originalWindowID, state.windowID},
-	} {
-		payload = replaceCodexIdentityResponsePayload(payload, pair[0], pair[1])
-	}
-	return payload
 }
 
 func (state *codexIdentityConfuseState) confuseTurnID(turnID string) string {

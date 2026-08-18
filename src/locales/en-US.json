@@ -29,7 +29,7 @@
     "advancedSettings": "Advanced settings",
     "codexFingerprint": {
       "modeLabel": "Device fingerprint mode",
-      "modeHint": "OAuth accounts only; unset accounts stay off by default.",
+      "modeHint": "OAuth only; Session by default. Isolates install/session per account and rewrites workspaces so local accounts are not clustered.",
       "session": "Session (recommended)",
       "device": "Device",
       "full": "Full",
@@ -1475,7 +1475,7 @@
       "workspaceIdPlaceholder": "Enter the Team / Workspace UUID",
       "workspaceIdHint": "Only for at-* personal access tokens. API Service sends it as ChatGPT-Account-Id.",
       "fingerprintModeLabel": "Device fingerprint mode",
-      "fingerprintModeHint": "OAuth accounts only; unset accounts stay off by default.",
+      "fingerprintModeHint": "OAuth only; Session by default. Isolates install/session per account and rewrites workspaces so local accounts are not clustered.",
       "fingerprintModeSession": "Session (recommended)",
       "fingerprintModeDevice": "Device",
       "fingerprintModeFull": "Full",
@@ -3132,10 +3132,10 @@
     "quota": {
       "hourly": "5-hour quota",
       "weekly": "Weekly quota",
-      "monthlyCredits": "Monthly credits",
-      "monthlyCreditsValue": "{{remaining}} / {{total}} credits",
-      "creditBalance": "{{balance}} credits",
-      "unlimitedCredits": "Unlimited credits",
+      "monthlyCredits": "Balance",
+      "monthlyCreditsValue": "{{remaining}} / {{total}}",
+      "creditBalance": "{{balance}}",
+      "unlimitedCredits": "∞",
       "additional": "Additional quota",
       "weeklyBlocksHourly": "Weekly quota is 0, so the 5-hour quota is unavailable",
       "windowStats": "Used {{tokens}} · {{cost}}",
@@ -3172,7 +3172,9 @@
       "windowHours": "{{count}}-hour quota",
       "windowMinutes": "{{count}}-minute quota",
       "codeReview": "Code Review",
-      "codeReviewShort": "Review"
+      "codeReviewShort": "Review",
+      "monthlyCreditsHint": "Monthly credits remaining",
+      "monthlyCreditsInline": "Credits: {{value}}"
     },
     "usage": {
       "open": "Open OpenAI usage",
@@ -5957,7 +5959,7 @@
       "short": "Note",
       "addShort": "Add note",
       "fingerprintModeLabel": "Device fingerprint mode",
-      "fingerprintModeHint": "OAuth accounts only; unset accounts stay off by default.",
+      "fingerprintModeHint": "OAuth only; Session by default. Isolates install/session per account and rewrites workspaces so local accounts are not clustered.",
       "fingerprintModeSession": "Session (recommended)",
       "fingerprintModeDevice": "Device",
       "fingerprintModeFull": "Full",

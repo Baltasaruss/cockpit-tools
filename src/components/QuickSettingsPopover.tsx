@@ -2309,7 +2309,7 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
                           </div>
                         ) : (
                           codexOAuthPolicyAccounts.map((account) => {
-                            const fingerprintMode = account.codex_fingerprint_mode ?? 'off';
+                            const fingerprintMode = account.codex_fingerprint_mode ?? 'session';
                             return (
                               <div
                                 className="qs-codex-oauth-policy-summary__row"
