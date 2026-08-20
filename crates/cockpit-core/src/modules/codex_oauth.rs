@@ -17,6 +17,9 @@ const AUTH_ENDPOINT: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_ENDPOINT: &str = "https://auth.openai.com/oauth/token";
 const SCOPES: &str = "openid profile email offline_access";
 const ORIGINATOR: &str = "codex_vscode";
+/// Credential-face User-Agent must share the first segment with ORIGINATOR.
+/// auth.openai.com only sees originator + User-Agent; do not send a version header.
+const AUTH_USER_AGENT: &str = "codex_vscode/0.146.0";
 const OAUTH_CALLBACK_PORT: u16 = 1455;
 const OAUTH_PORT_IN_USE_CODE: &str = "CODEX_OAUTH_PORT_IN_USE";
 const OAUTH_STATE_FILE: &str = "codex_oauth_pending.json";
@@ -25,6 +28,12 @@ const TOKEN_REFRESH_SKEW_SECONDS: i64 = 300;
 
 pub fn get_callback_port() -> u16 {
     OAUTH_CALLBACK_PORT
+}
+
+fn apply_codex_auth_identity_headers(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    request
+        .header("User-Agent", AUTH_USER_AGENT)
+        .header("originator", ORIGINATOR)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -590,8 +599,7 @@ async fn exchange_code_for_token_internal(
 
     logger::log_info("Codex OAuth 开始交换 Token");
 
-    let response = client
-        .post(TOKEN_ENDPOINT)
+    let response = apply_codex_auth_identity_headers(client.post(TOKEN_ENDPOINT))
         .form(&params)
         .send()
         .await
@@ -854,8 +862,7 @@ pub async fn refresh_access_token_with_fallback(
 
     logger::log_info("Codex Token 刷新中...");
 
-    let response = client
-        .post(TOKEN_ENDPOINT)
+    let response = apply_codex_auth_identity_headers(client.post(TOKEN_ENDPOINT))
         .form(&params)
         .send()
         .await
@@ -917,4 +924,20 @@ pub async fn refresh_access_token_with_fallback(
         access_token,
         refresh_token: new_refresh_token,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AUTH_USER_AGENT, ORIGINATOR};
+
+    #[test]
+    fn credential_face_user_agent_pairs_with_originator() {
+        assert_eq!(ORIGINATOR, "codex_vscode");
+        assert_eq!(
+            AUTH_USER_AGENT.split('/').next(),
+            Some(ORIGINATOR),
+            "auth.openai.com 要求 User-Agent 首段与 originator 配套"
+        );
+        assert_eq!(AUTH_USER_AGENT, "codex_vscode/0.146.0");
+    }
 }

@@ -2577,6 +2577,40 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
 	                  <FolderOpen size={15} />
 	                  <span>{getAppPathLabel()}</span>
 	                </div>
+                {type === 'codex' && config && (
+                  <>
+                    <div className="qs-row">
+                      <div className="qs-row-label">
+                        <span>
+                          {t(
+                            'settings.general.codexLaunchOnSwitch',
+                            '切换 Codex 时自动启动 Codex App',
+                          )}
+                        </span>
+                      </div>
+                      <div className="qs-row-control">
+                        <label className="qs-switch">
+                          <input
+                            type="checkbox"
+                            checked={config.codex_launch_on_switch}
+                            onChange={(event) =>
+                              saveConfig({
+                                codex_launch_on_switch: event.target.checked,
+                              })
+                            }
+                          />
+                          <span className="qs-switch-slider"></span>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="qs-hint">
+                      {t(
+                        'settings.general.codexLaunchOnSwitchDesc',
+                        '切换账号后自动启动或重启 Codex App',
+                      )}
+                    </div>
+                  </>
+                )}
                 {type === 'antigravity' && config && (
                   <>
                     <div className="qs-row">
@@ -3028,28 +3062,6 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
                           : codexQuickConfigNotice)}
                     </div>
                   )}
-                </div>
-
-                <div className="qs-row">
-                  <div className="qs-row-label">
-                    <Zap size={15} />
-                    <span>
-                      {t(
-                        'settings.general.codexLaunchOnSwitch',
-                        '切换 Codex 时自动启动 Codex App'
-                      )}
-                    </span>
-                  </div>
-                  <div className="qs-row-control">
-                    <label className="qs-switch">
-                      <input
-                        type="checkbox"
-                        checked={config.codex_launch_on_switch}
-                        onChange={(e) => saveConfig({ codex_launch_on_switch: e.target.checked })}
-                      />
-                      <span className="qs-switch-slider"></span>
-                    </label>
-                  </div>
                 </div>
 
                 <div className="qs-row">

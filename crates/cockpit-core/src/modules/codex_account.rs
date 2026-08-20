@@ -25,6 +25,7 @@ const ACCOUNT_CHECK_URL: &str = "https://chatgpt.com/backend-api/wham/accounts/c
 const API_KEY_LOGIN_PLAN_TYPE: &str = "API_KEY";
 const API_KEY_EMAIL_PREFIX: &str = "api-key";
 const API_KEY_AUTH_MODE: &str = "apikey";
+const CODEX_AUTH_TYPE: &str = "codex";
 const CODEX_CONFIG_FILE_NAME: &str = "config.toml";
 const CODEX_CONFIG_OPENAI_BASE_URL_KEY: &str = "openai_base_url";
 const CODEX_CONFIG_MODEL_PROVIDER_KEY: &str = "model_provider";
@@ -2264,6 +2265,109 @@ pub fn get_current_account() -> Option<CodexAccount> {
     Some(account)
 }
 
+fn mark_codex_auth_type(value: &mut serde_json::Value) {
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "type".to_string(),
+            serde_json::Value::String(CODEX_AUTH_TYPE.to_string()),
+        );
+    }
+}
+
+fn is_codex_auth_token_payload_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "access_token"
+            | "refresh_token"
+            | "id_token"
+            | "session_id"
+            | "expired"
+            | "last_refresh"
+            | "expires_in"
+            | "timestamp"
+            | "token_type"
+            | "user_code"
+            | "verification_uri"
+            | "verification_uri_complete"
+            | "openai_api_key"
+            | "personal_access_token"
+            | "tokens"
+            | "agent_identity"
+            | "agentidentity"
+            | "auth_mode"
+            | "authmode"
+            | "base_url"
+            | "api_base_url"
+            | "apibaseurl"
+    )
+}
+
+fn is_codex_auth_account_identity_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "email"
+            | "account_email"
+            | "accountemail"
+            | "account_name"
+            | "accountname"
+            | "account_id"
+            | "accountid"
+            | "chatgpt_account_id"
+            | "chatgptaccountid"
+            | "chatgpt_user_id"
+            | "chatgptuserid"
+            | "user_id"
+            | "userid"
+            | "type"
+    )
+}
+
+fn should_drop_existing_auth_metadata_key(key: &str) -> bool {
+    is_codex_auth_token_payload_key(key) || is_codex_auth_account_identity_key(key)
+}
+
+fn read_existing_auth_file_object(
+    base_dir: &Path,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let content = fs::read_to_string(base_dir.join("auth.json")).ok()?;
+    match serde_json::from_str(&content).ok()? {
+        serde_json::Value::Object(map) => Some(map),
+        _ => None,
+    }
+}
+
+fn merge_existing_auth_file_value(
+    existing: Option<serde_json::Map<String, serde_json::Value>>,
+    next: serde_json::Value,
+) -> serde_json::Value {
+    let mut merged = existing.unwrap_or_default();
+    let stale_keys: Vec<String> = merged
+        .keys()
+        .filter(|key| should_drop_existing_auth_metadata_key(key))
+        .cloned()
+        .collect();
+    for key in stale_keys {
+        merged.remove(&key);
+    }
+    if let serde_json::Value::Object(next_map) = next {
+        for (key, value) in next_map {
+            merged.insert(key, value);
+        }
+    }
+    serde_json::Value::Object(merged)
+}
+
+fn build_merged_auth_file_value(
+    base_dir: &Path,
+    account: &CodexAccount,
+) -> Result<serde_json::Value, String> {
+    let next = build_auth_file_value(account)?;
+    Ok(merge_existing_auth_file_value(
+        read_existing_auth_file_object(base_dir),
+        next,
+    ))
+}
+
 fn build_auth_file_value(account: &CodexAccount) -> Result<serde_json::Value, String> {
     if account.is_api_key_auth() {
         let api_key = normalize_optional_ref(account.openai_api_key.as_deref())
@@ -2278,7 +2382,7 @@ fn build_auth_file_value(account: &CodexAccount) -> Result<serde_json::Value, St
         return Err("OAuth 账号缺少 access_token，无法写入 auth.json".to_string());
     }
 
-    serde_json::to_value(CodexAuthFile {
+    let mut value = serde_json::to_value(CodexAuthFile {
         auth_mode: None,
         openai_api_key: Some(serde_json::Value::Null),
         base_url: None,
@@ -2295,7 +2399,9 @@ fn build_auth_file_value(account: &CodexAccount) -> Result<serde_json::Value, St
                 .to_string(),
         )),
     })
-    .map_err(|e| format!("auth.json 序列化失败: {}", e))
+    .map_err(|e| format!("auth.json 序列化失败: {}", e))?;
+    mark_codex_auth_type(&mut value);
+    Ok(value)
 }
 
 #[cfg(target_os = "macos")]
@@ -2314,7 +2420,9 @@ fn write_codex_keychain_to_dir(base_dir: &Path, account: &CodexAccount) -> Resul
         return Ok(());
     }
 
-    let payload = build_auth_file_value(account)?;
+    let payload = read_existing_auth_file_object(base_dir)
+        .map(serde_json::Value::Object)
+        .unwrap_or(build_merged_auth_file_value(base_dir, account)?);
     let secret = serde_json::to_string(&payload)
         .map_err(|e| format!("序列化 Codex keychain 数据失败: {}", e))?;
     let keychain_account = build_codex_keychain_account(base_dir);
@@ -2491,7 +2599,7 @@ pub fn write_auth_file_to_dir(base_dir: &Path, account: &CodexAccount) -> Result
         auth_path.display()
     ));
 
-    let auth_file = build_auth_file_value(account)?;
+    let auth_file = build_merged_auth_file_value(base_dir, account)?;
     let content =
         serde_json::to_string_pretty(&auth_file).map_err(|e| format!("序列化失败: {}", e))?;
     write_string_atomic(&auth_path, &content).map_err(|e| {
@@ -3505,12 +3613,12 @@ mod tests {
         ensure_managed_account_fresh, extract_codex_import_candidate_from_value,
         extract_codex_tokens_from_value, force_refresh_managed_account, get_accounts_dir,
         get_accounts_storage_path, get_current_account, list_accounts_checked, load_account,
-        load_account_index, looks_like_sub2api_export, read_api_provider_from_config_toml,
-        read_quick_config_from_config_toml, resolve_api_provider_config, save_account,
-        save_account_index, sync_account_from_auth_dir, sync_api_key_account_from_local_state,
-        sync_managed_projection_from_auth_dir, upsert_account, upsert_account_for_reauth,
-        upsert_account_from_access_token, upsert_account_from_auth_tokens,
-        validate_api_key_credentials, write_account_bundle_to_dir,
+        load_account_index, looks_like_sub2api_export, merge_existing_auth_file_value,
+        read_api_provider_from_config_toml, read_quick_config_from_config_toml,
+        resolve_api_provider_config, save_account, save_account_index, sync_account_from_auth_dir,
+        sync_api_key_account_from_local_state, sync_managed_projection_from_auth_dir,
+        upsert_account, upsert_account_for_reauth, upsert_account_from_access_token,
+        upsert_account_from_auth_tokens, validate_api_key_credentials, write_account_bundle_to_dir,
         write_api_key_provider_to_config_toml, write_api_provider_to_config_toml,
         write_auth_file_to_dir, write_quick_config_to_config_toml, ApiProviderConfig,
         CodexAccountIndex, CodexAccountSummary, CodexAuthFile, CodexAuthTokens,
@@ -3740,6 +3848,147 @@ mod tests {
             tokens.get("refresh_token").and_then(|value| value.as_str()),
             Some("")
         );
+        assert_eq!(
+            auth_file.get("type").and_then(serde_json::Value::as_str),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn build_auth_file_value_marks_oauth_as_codex_type_not_api_key() {
+        let mut oauth = CodexAccount::new(
+            "codex-oauth-type".to_string(),
+            "oauth@type.example".to_string(),
+            CodexTokens {
+                id_token: "id.jwt.token".to_string(),
+                access_token: "access.jwt.token".to_string(),
+                refresh_token: Some("rt_123".to_string()),
+            },
+        );
+        oauth.account_id = Some("acc-oauth".to_string());
+        let oauth_file = build_auth_file_value(&oauth).expect("build oauth auth file");
+        assert_eq!(
+            oauth_file.get("type").and_then(serde_json::Value::as_str),
+            Some("codex")
+        );
+
+        let api_key = CodexAccount::new_api_key(
+            "codex-api-type".to_string(),
+            "api@type.example".to_string(),
+            "sk-test".to_string(),
+            CodexApiProviderMode::OpenaiBuiltin,
+            None,
+            None,
+            None,
+        );
+        let api_file = build_auth_file_value(&api_key).expect("build api key auth file");
+        assert!(api_file.get("type").is_none());
+        assert_eq!(
+            api_file
+                .get("auth_mode")
+                .and_then(serde_json::Value::as_str),
+            Some("apikey")
+        );
+    }
+
+    #[test]
+    fn merge_existing_auth_file_keeps_extra_fields_and_strips_previous_faces() {
+        let existing = serde_json::json!({
+            "type": "codex",
+            "email": "old@example.com",
+            "OPENAI_API_KEY": "sk-old",
+            "auth_mode": "apikey",
+            "tokens": { "access_token": "old-token" },
+            "headers": { "User-Agent": "Custom" },
+            "priority": 10
+        })
+        .as_object()
+        .cloned();
+
+        let mut account = CodexAccount::new(
+            "codex-merge".to_string(),
+            "next@example.com".to_string(),
+            CodexTokens {
+                id_token: "id.next.token".to_string(),
+                access_token: "access.next.token".to_string(),
+                refresh_token: Some("rt-next".to_string()),
+            },
+        );
+        account.account_id = Some("acc-next".to_string());
+        let next = build_auth_file_value(&account).expect("build next auth file");
+        let merged = merge_existing_auth_file_value(existing, next);
+
+        assert_eq!(
+            merged.get("type").and_then(serde_json::Value::as_str),
+            Some("codex")
+        );
+        assert!(merged.get("email").is_none());
+        assert!(merged.get("auth_mode").is_none());
+        assert_eq!(merged.get("OPENAI_API_KEY"), Some(&serde_json::Value::Null));
+        assert_eq!(
+            merged
+                .pointer("/tokens/access_token")
+                .and_then(serde_json::Value::as_str),
+            Some("access.next.token")
+        );
+        assert_eq!(
+            merged
+                .pointer("/headers/User-Agent")
+                .and_then(serde_json::Value::as_str),
+            Some("Custom")
+        );
+        assert_eq!(merged.get("priority"), Some(&serde_json::json!(10)));
+    }
+
+    #[test]
+    fn write_auth_file_to_dir_merges_existing_official_fields() {
+        let base_dir = make_temp_dir("codex-core-auth-merge-write-test");
+        fs::write(
+            base_dir.join("auth.json"),
+            serde_json::json!({
+                "type": "codex",
+                "email": "old@example.com",
+                "OPENAI_API_KEY": "sk-old",
+                "custom_device_id": "keep-me"
+            })
+            .to_string(),
+        )
+        .expect("seed existing auth.json");
+
+        let mut account = CodexAccount::new(
+            "codex-merge-write".to_string(),
+            "next@example.com".to_string(),
+            CodexTokens {
+                id_token: "id.next.token".to_string(),
+                access_token: "access.next.token".to_string(),
+                refresh_token: Some("rt-next".to_string()),
+            },
+        );
+        account.account_id = Some("acc-next".to_string());
+        write_auth_file_to_dir(&base_dir, &account).expect("write merged auth.json");
+
+        let auth: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(base_dir.join("auth.json")).expect("read merged auth.json"),
+        )
+        .expect("parse merged auth.json");
+        assert_eq!(
+            auth.get("custom_device_id")
+                .and_then(serde_json::Value::as_str),
+            Some("keep-me")
+        );
+        assert!(auth.get("email").is_none());
+        assert_eq!(
+            auth.get("type").and_then(serde_json::Value::as_str),
+            Some("codex")
+        );
+        assert_eq!(auth.get("OPENAI_API_KEY"), Some(&serde_json::Value::Null));
+        assert_eq!(
+            auth.pointer("/tokens/access_token")
+                .and_then(serde_json::Value::as_str),
+            Some("access.next.token")
+        );
+
+        fs::remove_dir_all(&base_dir).expect("cleanup temp dir");
     }
 
     #[test]

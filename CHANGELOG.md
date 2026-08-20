@@ -7,6 +7,17 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.24] - 2026-08-20
+
+### Fixed
+
+- **Fixed account switching with the latest Codex release and aligned it with the current official authentication flow**: before replacing the active credentials, Cockpit saves the current account's latest official auth state; the default file store reads `$CODEX_HOME/auth.json`, while explicitly configured `keyring` / `auto` stores use the matching `Codex Auth` entry. Account switches are serialized, and rewritten OAuth auth files preserve unrelated official or custom fields while removing stale account credentials, reducing cases where switching back requires another login.
+
+### Changed
+
+- **Codex OAuth login and token refresh now use the official credential-facing client identity**: token exchange and refresh requests send the matching `originator` and `User-Agent` pair used by the official client.
+- **The Codex launch-after-switch setting now sits with the Codex App launch path**: its description also makes clear that enabling it starts or restarts Codex App after an account switch.
+
 ## [1.3.23] - 2026-08-19
 
 ### Changed
