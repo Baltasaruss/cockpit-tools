@@ -4620,8 +4620,7 @@ pub(crate) fn running_codex_oauth_account_ids() -> Result<HashSet<String>, Strin
     // 只要默认实例仍有受管 PID 且系统能确认存在 Codex 进程，就保守保护当前 OAuth，
     // 避免后台刷新先轮换 refresh_token、随后让官方客户端进入 Auth/relogin。
     let default_running = default_pid_matches
-        || (store.default_settings.last_pid.is_some()
-            && crate::modules::process::is_codex_running());
+        || (store.default_settings.last_pid.is_some() && !process_entries.is_empty());
     if !default_pid_matches && default_running {
         logger::log_warn(
             "[Codex运行态] 默认实例 PID 暂时未匹配，但仍检测到 Codex 进程；本轮后台 OAuth 刷新将保护当前账号",
