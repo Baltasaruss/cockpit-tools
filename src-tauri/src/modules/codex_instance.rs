@@ -1162,9 +1162,31 @@ pub fn replace_bind_account_references(
 }
 
 pub async fn inject_account_to_profile(profile_dir: &Path, account_id: &str) -> Result<(), String> {
-    modules::codex_account::prepare_account_for_injection_from_auth_dir(
+    inject_account_to_profile_with_login_guard_fallback(profile_dir, account_id, false).await
+}
+
+/// 用户主动启动实例时使用：每次都重新验证当前凭据，不复用上一次刷新失败结论。
+pub async fn inject_account_to_profile_for_launch(
+    profile_dir: &Path,
+    account_id: &str,
+) -> Result<(), String> {
+    modules::codex_account::prepare_account_for_instance_launch_from_auth_dir(
         account_id,
         Some(profile_dir),
+    )
+    .await
+    .map(|_| ())
+}
+
+pub async fn inject_account_to_profile_with_login_guard_fallback(
+    profile_dir: &Path,
+    account_id: &str,
+    allow_login_guard_fallback: bool,
+) -> Result<(), String> {
+    modules::codex_account::prepare_account_for_injection_from_auth_dir_with_login_guard_fallback(
+        account_id,
+        Some(profile_dir),
+        allow_login_guard_fallback,
     )
     .await
     .map(|_| ())

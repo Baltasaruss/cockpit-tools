@@ -523,6 +523,41 @@
       "codexManagedStoreLaunchUnsafe": "Windows Store örnek dizinini güvenilir biçimde aktaramadığı için varsayılan hesabın açılması engellendi. Bu örneği CLI başlatma moduna geçirip yeniden deneyin. Ayrıntılar: {{detail}}",
       "speedUpdated": "Hız güncellendi"
     },
+    "accountLease": {
+      "title": "Codex örneği başlatılıyor",
+      "progress": "Başlatma ilerlemesi",
+      "conflictTitle": "Hesap kullanımda",
+      "completedTitle": "Örnek başlatıldı",
+      "failedTitle": "Örnek başlatılamadı",
+      "conflictAccount": "Hesap: {{account}}",
+      "conflictDescription": "Bu hesap {{owners}} içinde çalışıyor. Resmî örneklerin refresh_token için yarışmasını önlemek amacıyla bir OAuth hesabı yalnızca bir örnekte çalışabilir.",
+      "locate": "Örneği bul",
+      "selectOther": "Başka hesap seç",
+      "transfer": "Durdur ve aktar",
+      "steps": {
+        "checkInstance": "Hedef örneği denetle",
+        "checkAccount": "Bağlı hesabı denetle",
+        "checkOccupancy": "Hesap kullanımını denetle",
+        "stopPrevious": "Önceki örneği durdur",
+        "prepareCredentials": "Kimlik bilgilerini hazırla",
+        "writeProfile": "Örnek profilini yaz",
+        "startClient": "Codex istemcisini başlat"
+      },
+      "detail": {
+        "checkingInstance": "Örnek yapılandırması okunuyor...",
+        "checkingAccount": "OAuth hesabı ve tokenlar denetleniyor...",
+        "noOAuthAccount": "Bağlı OAuth hesabı yok; kullanım denetimi gerekmiyor",
+        "accountInUse": "Bu OAuth hesabı çalışan bir örnek tarafından kullanılıyor",
+        "accountAvailable": "Başka çalışan bir örnek bu hesabı kullanmıyor",
+        "transferSkipped": "Hesap kullanımını aktarmak gerekmiyor",
+        "stoppingOwners": "Güvenle durduruluyor: {{owners}}",
+        "stoppingPrevious": "Önceki örnek güvenle durduruluyor ve en güncel kimlik bilgileri alınıyor...",
+        "preparingCredentials": "Tokenlar denetleniyor ve gerekirse tüm kimlik bilgileri güncelleniyor...",
+        "profileReady": "Örneğin auth.json / anahtarlığı güvenle güncellendi",
+        "cliPrepared": "CLI başlatma komutu hazır",
+        "startingClient": "Codex istemci işlemi başlatılıyor ve doğrulanıyor..."
+      }
+    },
     "runningDialog": {
       "title": "Oturum zaten çalışıyor",
       "desc": "Bu oturum zaten başlatıldı. Pencereye geçiş yapabilir veya mevcut stratejiye göre yeniden başlatabilirsiniz.",
@@ -682,6 +717,8 @@
       "codexAppUiInjectionPoolLabel": "Hesaplar",
       "codexAppUiInjectionWeeklyLabel": "Hafta",
       "codexAppUiInjectionFiveHourLabel": "5 sa",
+      "codexLoginPageGuard": "Oturum açma sayfası koruması",
+      "codexLoginPageGuardDesc": "Yönetilen Codex örneği yeniden başlatıldıktan sonra CDP çalışan konuşma sayfasını korur ve kabuk OAuth durumunun sayfayı oturum açma ekranıyla değiştirmesini engeller. Yalnızca sayfa geçişini engeller, süresi dolmuş OAuth kimlik bilgilerini onarmaz.",
       "codexWslConfigDir": "WSL Codex dizini",
       "codexWslConfigDirDesc": "WSL içindeki .codex dizinini girin. \\\\wsl.localhost\\ yolları desteklenir.",
       "codexWslConfigDirPlaceholder": "Örnek: \\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\.codex",
@@ -1002,6 +1039,13 @@
         "retentionUnit": "gün",
         "directoryTitle": "Yedek klasörü",
         "directoryDesc": "Yedekler her zaman projenin backups klasörüne kaydedilir.",
+        "changeDirectory": "Klasörü değiştir", "migrating": "Taşınıyor...", "migrationConfirm": "Mevcut yedekler {{oldPath}} konumundan {{newPath}} konumuna taşınsın mı?\n\nİptal, eski dosyaları taşımadan klasörü değiştirir.", "usageTitle": "Yedek disk kullanımı", "usageDesc": "Zamanlanmış yedeklerin ve platform davranış anlık görüntülerinin yerel kullanımını gösterir.", "usageEmpty": "Yerel yedek dosyası bulunamadı.", "cleanupBehavior": "Eski davranış yedeklerini temizle", "behaviorCleanupConfirm": "Eski davranış yedekleri temizlensin mi? Platform ve örnek başına yalnızca en yeni yedek tutulur; zamanlanmış JSON/ZIP silinmez.", "sources": {"scheduled": "Zamanlanmış JSON/ZIP", "behavior": "Davranış anlık görüntüleri", "claude": "Claude", "codex": "Codex", "workbuddy": "WorkBuddy", "codebuddy": "CodeBuddy", "trae": "Trae", "other": "Diğer"},
+        "migrationConfirmTitle": "Yedek klasörünü değiştir",
+        "migrationConfirmDesc": "Mevcut yedekler tarandı. Eski klasörü boşaltmak için taşıyın veya yalnızca gelecekteki yedeklerin konumunu değiştirin.",
+        "migrationOldPath": "Eski klasör", "migrationNewPath": "Yeni klasör", "migrationTotalSize": "Taşınacak veri", "migrationTotalFiles": "Taşınacak dosya",
+        "migrationSafetyNote": "Dosyalar önce geçici alana kopyalanıp doğrulanır; ardından klasör değiştirilir ve eski yedekler kaldırılır.",
+        "switchOnly": "Yalnızca değiştir", "migrateAndSwitch": "Taşı ve değiştir",
+        "migrationProgress": {"title": "Yedek klasörünü taşı", "filesUnit": "dosya", "currentSource": "Geçerli kaynak", "completedSummary": "{{count}} dosya ({{size}}) taşındı ve yeni klasör etkinleştirildi.", "switchOnlyCompleted": "Yeni yedekler {{path}} konumuna kaydedilecek. Mevcut yedekler taşınmadı.", "cleanupPartial": "Yeni klasör etkin, ancak şu eski klasörler kaldırılamadı. Daha sonra elle silin:", "cancelledDesc": "Taşıma iptal edildi. Eski klasör değişmedi ve geçici dosyalar kaldırıldı.", "cancelling": "İptal ediliyor...", "cancelAction": "Taşımayı iptal et", "finishing": "Tamamlanıyor...", "phases": {"scanning": "Yedekler taranıyor...", "copying": "Yedekler kopyalanıyor...", "verifying": "Dosyalar doğrulanıyor...", "switching": "Klasör değiştiriliyor...", "cleaning": "Eski yedekler kaldırılıyor...", "completed": "Taşıma tamamlandı", "cancelled": "Taşıma iptal edildi"}},
         "openFolder": "Klasörü aç",
         "listTitle": "Yedek listesi",
         "listDesc": "Bir yedeği doğrudan içe aktarın veya eski dosyaları kaldırın.",
@@ -1029,6 +1073,8 @@
           "openFolderFailed": "Yedek klasörü açılamadı: {{error}}",
           "downloadSuccess": "Yedek {{path}} konumuna indirildi",
           "downloadFailed": "Yedek indirilemedi: {{error}}"
+          ,"migrating": "Yedek klasörü taşınıyor...", "migrationDone": "{{count}} dosya {{path}} konumuna taşındı", "directoryChanged": "Yedek klasörü {{path}} olarak değiştirildi", "directoryChangeFailed": "Yedek klasörü değiştirilemedi: {{error}}", "behaviorCleaning": "Eski davranış yedekleri temizleniyor...", "behaviorCleanupDone": "{{count}} yedek temizlendi, {{size}} boşaltıldı", "behaviorCleanupFailed": "Davranış yedekleri temizlenemedi: {{error}}"
+          ,"scanningMigration": "Taşınacak yedekler taranıyor..."
         },
         "errors": {
           "invalidRetention": "Saklama süresi 1 ile 365 gün arasında olmalıdır"
@@ -1156,7 +1202,7 @@
       "title": "Uygulama yolu bulunamadı",
       "desc": "{{app}} uygulama yolu bulunamadı. Devam etmek için şimdi ayarlayın.",
       "action": "Şimdi ayarla",
-      "codexLaunchHint": "Kapattığınızda hesap değiştirme ve giriş üzerine yazma çalışmaya devam eder, ancak Codex uygulaması artık başlatılmaz ve bu yol istemi tekrar gösterilmez.",
+      "codexLaunchHint": "Hesap değişimi tamamlandı. Başlatmak için yolu ayarlayın. Değişimden sonra başlatılmasını istemiyorsanız Ayarlar'da «Codex değiştirirken Codex App'i otomatik başlat» seçeneğini kapatın.",
       "claudeMultiInstanceRequiresExe": "Claude çoklu örnekleri gerçek Claude.exe yolunu gerektirir. Microsoft Store hedefleri yalnızca varsayılan masaüstü profili içindir.",
       "scanApps": "Uygulamaları tara",
       "scanRoots": "Tarama araligi",
@@ -1873,7 +1919,7 @@
     "title": "Codex Hesap Yönetimi",
     "experimentalModelCatalog": {
       "title": "Görünür modeller",
-      "description": "Mevcut resmi modeller ve özel girdilerden Cockpit tarafından yönetilen bir katalog oluşturur; kullanıcı kataloğunun üzerine yazmaz.",
+      "description": "Görünür modelleri, akıl yürütme düzeyini, bağlamı ve sıkıştırma eşiğini tek yerden yönetin.",
       "enabledHint": "Güncel görünür model listesini kullanır. Uygulamak için Codex’i yeniden başlatın.",
       "models": {
         "title": "Model listesi",
@@ -1895,8 +1941,18 @@
           "displayName": "En fazla 100 karakterlik bir görünen ad girin.",
           "duplicate": "Model kimlikleri benzersiz olmalıdır.",
           "reasoningEffort": "Geçersiz akıl yürütme seçeneği.",
-          "reserved": "Bu model kimliği resmi bir modelle çakışıyor. Farklı bir kimlik kullanın."
-        }
+          "reserved": "Bu model kimliği resmi bir modelle çakışıyor. Farklı bir kimlik kullanın.",
+          "contextPair": "Bağlam penceresi ve sıkıştırma eşiği birlikte girilmelidir.",
+          "contextWindow": "Bağlam penceresi 0’dan büyük bir tam sayı olmalıdır.",
+          "autoCompact": "Sıkıştırma eşiği 0’dan büyük bir tam sayı olmalıdır.",
+          "autoCompactRange": "Sıkıştırma eşiği bağlam penceresinden küçük olmalıdır."
+        },
+        "contextConfig": "Bağlam ve sıkıştırma",
+        "contextDefault": "Modeli izle",
+        "contextDefaultShort": "Varsayılan",
+        "contextCustomShort": "Özel",
+        "contextWindow": "Bağlam penceresi",
+        "autoCompactLimit": "Sıkıştırma eşiği"
       },
       "unavailable": {
         "cacheMissing": "models_cache.json bulunamadı.",
@@ -1970,6 +2026,24 @@
       "staleAccount": "Bu hesap artık yerel hesap deposunda yok. Hesap listesi yenilendi. Bu Codex hesabını yeniden içe aktarın veya tekrar oturum açın.",
       "unsupportedCountryRegion": "Geçerli ağ bölgesi Codex yetkilendirmesini yenilemeyi desteklemiyor. OpenAI yetkilendirme servisi bu ağ çıkışını reddetti. Desteklenen bir bölgeye geçip yeniden deneyin."
     },
+    "switchAuth": {
+      "apiOnlyTitle": "İstemci girişi gerekli",
+      "reauthorizeTitle": "Codex yetkilendirmesi sona erdi",
+      "apiOnlyDescription": "Mevcut access_token API hizmetinde geçici olarak kullanılabilir, ancak istemci giriş bilgileri yenilenemediği için resmi Codex/ChatGPT istemcisine geçilmedi.",
+      "reauthorizeDescription": "Giriş bilgileri yenilenemedi ve access_token artık API hizmetinde kullanılamıyor. Devam etmek için hesabı yeniden yetkilendirin.",
+      "idTokenUnavailable": "İstemci kimliği sona erdi ve otomatik yenileme geçerli bir id_token döndürmedi.",
+      "reasonLabel": "Neden",
+      "accessTokenExpiry": "Geçici API erişimi: {{time}} tarihine kadar",
+      "apiServiceAddFailed": "Hesap API hizmetine eklenemedi: {{error}}",
+      "switchingAfterReauth": "Yetkilendirme güncellendi. Hesap geçişi sürdürülüyor...",
+      "switchAfterReauthFailed": "Yetkilendirme güncellendi ancak hesap geçişi başarısız oldu: {{error}}",
+      "reauthGenerationMissing": "Yeni yetkilendirilen kimlik bilgilerinin sürümü doğrulanamadı. Hesabı yeniden değiştirin.",
+      "reauthorizedAndSwitched": "Yeniden yetkilendirildi ve geçildi",
+      "startingInstanceAfterReauth": "Yetkilendirme güncellendi. Örnek yeniden başlatılıyor...",
+      "startInstanceAfterReauthFailed": "Yetkilendirme güncellendi ancak örnek başlatılamadı: {{error}}",
+      "reauthorizedAndStartedInstance": "Yeniden yetkilendirildi ve örnek başlatıldı",
+      "apiOnlyBadge": "Giriş gerekli"
+    },
     "current": "Geçerli",
     "empty": {
       "description": "\"Hesap ekle\"ye tıklayın"
@@ -2026,6 +2100,7 @@
     "exportFormat": {
       "label": "Dışa aktarma biçimi",
       "cockpitTools": "Cockpit Tools​",
+      "authJson": "Resmi auth.json",
       "sub2api": "sub2api biçimi",
       "cpa": "cpa biçimi",
       "agentIdentityCpaUnsupported": "Agent Identity hesapları cpa biçiminde dışa aktarılamaz. Cockpit Tools veya sub2api kullanın.",
@@ -2177,6 +2252,10 @@
       "killPortSuccess": "Port temizlendi ({{count}} işlem kapatıldı)",
       "killPortSuccessNone": "Port kontrol edildi. Harici bir işlem kullanmıyor.",
       "killPortSuccessUnknown": "API hizmeti portu temizlendi",
+      "restartAction": "Sidecar'ı Yeniden Başlat",
+      "restartTitle": "API Hizmetini Yeniden Başlat",
+      "restartConfirmMessage": "Yalnızca API hizmeti Sidecar'ı yeniden başlatılacak. Hesaplar, token'lar, API anahtarları ve hesap havuzu ayarları değiştirilmeyecek. Devam eden istekler kesilebilir. Devam edilsin mi?",
+      "restartSuccess": "API hizmeti Sidecar'ı yeniden başlatıldı",
       "refreshStats": "İstatistikleri Yenile",
       "refreshStatsSuccess": "API hizmeti istatistikleri yenilendi",
       "routingStrategy": {
@@ -2437,6 +2516,7 @@
     "quotaError": {
       "badge": "Kota hatası",
       "refreshFailedBadge": "Yenileme başarısız",
+      "authRefreshDeferred": "refresh_token geçersiz. Mevcut access_token API hizmetinde çalışmaya devam eder ancak resmî istemciye geçilemez. Geçişten önce yeniden yetkilendirin.",
       "generic": "Kota yenileme başarısız, lütfen daha sonra tekrar deneyin",
       "deactivatedWorkspace": "Çalışma alanı devre dışı, hesap değiştirin veya yeniden yetkilendirin",
       "requestFailedManualRetry": "Ağı kontrol edin. En güncel kota alınamadı. Yenileyip tekrar deneyin.",
@@ -3283,7 +3363,8 @@
         "contextWindow": "Bağlam Penceresi",
         "contextWindowHint": "model_context_window yazar. Yalnızca Özel modda düzenlenebilir.",
         "partialDetected": "Şu anda yalnızca bir yönetilen alan ayarlanmıştır: model_context_window={{context}}, model_auto_compact_token_limit={{compact}}. Kaydetme, mevcut şemayı kullanarak her iki alanı da yeniden yazacaktır.",
-        "notSet": "Ayarlanmadı"
+        "notSet": "Ayarlanmadı",
+        "modelCatalogDesc": "Görünür modeller ve modele özel bağlam ayarları etkin Codex için Cockpit tarafından yönetilen model kataloğuna yazılır."
       },
       "testing": "Test ediliyor...",
       "testSuccess": "Sağlayıcı bağlantısı sağlıklı: {{protocol}}, {{model}}, {{latency}}.",
@@ -3483,6 +3564,56 @@
       "filterMissing": "Bilinmiyor ({{count}})",
       "accessTokenOnlyUsable": "Token kullanılabilir",
       "accessTokenOnlyUsableDetail": "Abonelik uç noktası sınırlı, ancak kota ve Codex kullanımı normal çalışıyor"
+    },
+    "switchProgress": {
+      "completed": "Geçiş tamamlandı",
+      "needsAttention": "İşlem gerekli",
+      "steps": {
+        "credentials": "Hesap bilgilerini oku",
+        "accessToken": "access_token kontrol et",
+        "idToken": "id_token kontrol et",
+        "stopRuntime": "Önceki çalışmayı durdur",
+        "refreshTokens": "Giriş bilgilerini güncelle",
+        "writeCredentials": "İstemci bilgilerini yaz",
+        "syncSettings": "Hesap ayarlarını eşitle",
+        "startClient": "Codex istemcisini başlat"
+      },
+      "status": {
+        "pending": "Bekliyor",
+        "running": "İşleniyor",
+        "completed": "Tamamlandı",
+        "warning": "Güncelleme gerekli",
+        "skipped": "Atlandı",
+        "error": "Başarısız"
+      },
+      "detail": {
+        "missing": "Kimlik bilgisi bulunamadı",
+        "opaqueToken": "Opak Token; süreyi hizmet doğrular",
+        "expiryUnknown": "Geçerlilik süresi bilinmiyor",
+        "expiresAt": "{{time}} tarihine kadar geçerli ({{relative}})",
+        "readingCredentials": "Yerel hesap ve Token bilgileri okunuyor...",
+        "nonOAuthAccount": "OAuth hesabı değil; giriş Token kontrolü gerekmiyor",
+        "credentialsFound": "Yüklendi: {{tokens}}",
+        "notApplicable": "Bu kontrol hesap için geçerli değil",
+        "refreshNeeded": "Süresi dolmuş veya güvenlik aralığında; güncelleme gerekli",
+        "tokenValid": "Geçerli; güncelleme gerekmiyor",
+        "stoppingRuntime": "ChatGPT/Codex ve app-server güvenle durduruluyor...",
+        "runtimeStopped": "Önceki istemci çalışması güvenle durduruldu",
+        "waiting": "Önceki adım bekleniyor",
+        "refreshingTokens": "Yeni access_token, id_token ve refresh_token alınıp kaydediliyor...",
+        "refreshSkipped": "AT ve ID Token geçerli; refresh_token kullanılmadı",
+        "refreshFailed": "Tam Token kümesi otomatik güncellenemedi",
+        "refreshResultReused": "Başka bir güncelleme sahibinin son Token değerleri kullanıldı",
+        "refreshCompleted": "Tam Token kümesi güvenle güncellendi ve kaydedildi",
+        "credentialsWritten": "auth.json / keychain resmi kurallara göre güncellendi",
+        "writingCredentials": "Hedef hesabın giriş bilgileri yazılıyor...",
+        "settingsSynced": "Hesap bağı, hız ve ilgili ayarlar eşitlendi",
+        "syncingSettings": "Hesap bağı ve ayarlar eşitleniyor...",
+        "launchDisabled": "Otomatik başlatma kapalı; istemciyi daha sonra elle başlatın",
+        "clientStartWarning": "Bilgiler değişti ancak istemci başlamadı; daha sonra deneyin",
+        "clientStarted": "Codex istemcisi başlatıldı",
+        "startingClient": "Codex istemcisi başlatılıyor..."
+      }
     },
     "apiSwitchNotice": {
       "title": "Codex oturumları gizli",

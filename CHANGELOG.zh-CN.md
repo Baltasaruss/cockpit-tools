@@ -7,6 +7,30 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [1.3.25] - 2026-08-23
+
+### 变更
+
+- **Codex 切号与重新授权更加可靠**：解决部分账号切换后需要重新登录、重新授权后账号状态或新登录信息未生效的问题；授权完成后可继续切号或启动原实例。
+- **Codex 客户端授权与 API Service 可用性分开判断**：客户端需要重新授权但 API Token 仍可用时，账号继续提供 API Service，也不会被计为无效账号。
+- **Codex 多开实例增加账号占用保护**：同一 OAuth 账号不会同时用于多个官方实例；发生占用时可定位当前实例、改选其他账号或转移账号使用权。
+- **Codex API Service 端口冲突时可自动恢复**：原端口不可用时会自动更换本地端口并恢复服务，账号、API Key 和账号池设置保持不变。
+- **行为备份改为有界保留**：Claude、Codex、WorkBuddy、CodeBuddy 及相关会话和配置修复备份按来源与实例保留最新一份，避免长期占用磁盘空间。
+
+### 修复
+
+- **修复 Codex API Service 流式对话卡住和不同对话身份互相影响的问题**：流式响应结束后会正常完成请求，不同对话保持独立会话身份。
+- **修复 Codex 账号重新添加后 API Service 统计归零的问题**：统计按官方 Codex 账号 ID 归属；删除后重新授权或导入同一官方账号，原有请求数、Token 用量和账号计费会继续保留。
+- **修复 Codex 默认实例识别和启停异常**：默认实例及其后台进程可以被正确识别、启动和关闭。
+- **修复已关闭 WebSocket 的 Codex 实例仍反复尝试连接的问题**：API Service 会保持实例当前的 WebSocket 设置。
+
+### 新增
+
+- **Grok 切号可同步 OpenCode 登录信息**：可选择在切换 Grok 账号时同步 OpenCode，并自动重启 OpenCode 使新账号立即生效；第三方自定义地址账号不会覆盖现有登录。感谢 @FB208（[#2002](https://github.com/jlcodes99/cockpit-tools/pull/2002)）。
+- **备份存储目录支持迁移到其他磁盘**：macOS 和 Windows 可在设置中选择新的本地备份目录；迁移完成后继续使用原有备份，并可按来源查看与清理占用空间。
+- **Codex 账号支持导出为官方 `auth.json` 文件**：OAuth、API Key 和 Agent Identity 账号会按对应格式导出，多个账号会生成独立文件。
+- **Codex 模型目录支持按模型配置上下文窗口与压缩阈值**：每个模型可使用默认值或自定义配置，并同步用于 Codex 客户端和 API Service。
+
 ## [1.3.24] - 2026-08-20
 
 ### 修复
@@ -19,10 +43,6 @@
 - **Codex 切号后启动设置移到 Codex App 启动路径旁**：说明文案同步明确，开启后会在切换账号后启动或重启 Codex App。
 
 ## [1.3.23] - 2026-08-19
-
-### 新增
-
-- **Grok 切号可选同步 OpenCode 授权**：设置中开启后，切换 Grok 账号会写入 `~/.local/share/opencode/auth.json` 的 `xai` 条目（OAuth 写 access/refresh，官方 API Key 写 key）；第三方自定义 Base URL 账号跳过，同步失败不阻断切号。可另开「自动重启 OpenCode」使登录立即生效。
 
 ### 变更
 

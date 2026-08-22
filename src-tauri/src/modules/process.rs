@@ -1550,6 +1550,10 @@ fn sanitize_macos_gui_launch_env(cmd: &mut Command) {
     cmd.env_remove("ELECTRON_NO_ASAR");
     cmd.env_remove("ELECTRON_FORCE_WINDOW_MENU_BAR");
     cmd.env_remove("ELECTRON_NO_ATTACH_CONSOLE");
+    // Default Codex instances must resolve their own ~/.codex and Electron data directory.
+    // Managed instances pass both values explicitly through `open --env` after this cleanup.
+    cmd.env_remove("CODEX_HOME");
+    cmd.env_remove("CODEX_ELECTRON_USER_DATA_PATH");
 }
 
 fn managed_proxy_env_pairs() -> Vec<(&'static str, String)> {
@@ -2535,6 +2539,86 @@ fn find_codex_process_exe() -> Option<std::path::PathBuf> {
 fn is_codex_macos_main_process_command_line(lower_cmdline: &str) -> bool {
     lower_cmdline.contains("chatgpt.app/contents/macos/chatgpt")
         || lower_cmdline.contains("codex.app/contents/macos/codex")
+}
+
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexProcessTreeEntry {
+    pid: u32,
+    parent_pid: u32,
+    command_line: String,
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn is_codex_direct_app_server_command_line(
+    command_line: &str,
+    expected_resource_executable: &str,
+) -> bool {
+    let command_line = command_line.trim();
+    let expected = expected_resource_executable.trim();
+    if command_line.is_empty() || expected.is_empty() {
+        return false;
+    }
+
+    let remainder = if let Some(remainder) = command_line.strip_prefix(expected) {
+        remainder
+    } else {
+        let quoted = format!("\"{}\"", expected);
+        let Some(remainder) = command_line.strip_prefix(&quoted) else {
+            return false;
+        };
+        remainder
+    };
+    let args = remainder.trim_start();
+    let Some(after_app_server) = args.strip_prefix("app-server") else {
+        return false;
+    };
+    if !after_app_server.is_empty() && !after_app_server.starts_with(char::is_whitespace) {
+        return false;
+    }
+    !after_app_server.trim_start().starts_with("daemon")
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn select_codex_direct_app_server_descendants(
+    entries: &[CodexProcessTreeEntry],
+    root_pids: &[u32],
+    expected_resource_executable: &str,
+) -> Vec<u32> {
+    let roots: HashSet<u32> = root_pids.iter().copied().filter(|pid| *pid != 0).collect();
+    if roots.is_empty() {
+        return Vec::new();
+    }
+    let parents: HashMap<u32, u32> = entries
+        .iter()
+        .map(|entry| (entry.pid, entry.parent_pid))
+        .collect();
+    let mut selected = Vec::new();
+
+    for entry in entries {
+        if !is_codex_direct_app_server_command_line(
+            &entry.command_line,
+            expected_resource_executable,
+        ) {
+            continue;
+        }
+        let mut current = entry.parent_pid;
+        let mut visited = HashSet::new();
+        while current != 0 && visited.insert(current) {
+            if roots.contains(&current) {
+                selected.push(entry.pid);
+                break;
+            }
+            let Some(parent) = parents.get(&current) else {
+                break;
+            };
+            current = *parent;
+        }
+    }
+
+    selected.sort();
+    selected.dedup();
+    selected
 }
 
 #[cfg(target_os = "macos")]
@@ -10707,6 +10791,110 @@ pub fn collect_codex_process_entries() -> Vec<(u32, Option<String>)> {
         .collect()
 }
 
+#[cfg(target_os = "macos")]
+fn collect_codex_process_tree_entries() -> Vec<CodexProcessTreeEntry> {
+    let output = match Command::new("ps")
+        .args(["-axww", "-o", "pid=,ppid=,command="])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut pid_parts = line.trim().splitn(2, |ch: char| ch.is_whitespace());
+            let pid = pid_parts.next()?.trim().parse::<u32>().ok()?;
+            let remainder = pid_parts.next()?.trim_start();
+            let mut parent_parts = remainder.splitn(2, |ch: char| ch.is_whitespace());
+            let parent_pid = parent_parts.next()?.trim().parse::<u32>().ok()?;
+            let command_line = parent_parts.next()?.trim().to_string();
+            if command_line.is_empty() {
+                return None;
+            }
+            Some(CodexProcessTreeEntry {
+                pid,
+                parent_pid,
+                command_line,
+            })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn collect_codex_direct_app_server_pids_for_roots(root_pids: &[u32]) -> Vec<u32> {
+    let Some(app_root) = resolve_codex_launch_path()
+        .ok()
+        .and_then(|path| resolve_macos_app_root_from_launch_path(&path))
+        .or_else(|| resolve_macos_app_root_from_config("codex"))
+    else {
+        return Vec::new();
+    };
+    let expected_resource_executable = Path::new(&app_root)
+        .join("Contents")
+        .join("Resources")
+        .join("codex")
+        .to_string_lossy()
+        .to_string();
+    select_codex_direct_app_server_descendants(
+        &collect_codex_process_tree_entries(),
+        root_pids,
+        &expected_resource_executable,
+    )
+}
+
+/// 查找指定 Codex profile 对应的官方 direct `app-server` 子进程。
+///
+/// 官方桌面端负责启动 app-server，Cockpit 无法接管它的 stdio；这里提供只读的
+/// 进程归属查询，供认证诊断记录 PID、网络连接和实例关系。
+#[cfg(target_os = "macos")]
+pub fn collect_codex_app_server_pids_for_profile(profile_dir: &Path) -> Vec<u32> {
+    let profile_key = normalize_path_for_compare(&profile_dir.to_string_lossy());
+    let default_profile_key = dirs::home_dir()
+        .map(|home| home.join(".codex"))
+        .map(|path| normalize_path_for_compare(&path.to_string_lossy()));
+    let root_pids = collect_codex_process_entries()
+        .into_iter()
+        .filter_map(|(pid, codex_home)| {
+            let matches_profile = codex_home
+                .as_deref()
+                .map(normalize_path_for_compare)
+                .is_some_and(|home| home == profile_key)
+                || (codex_home.is_none()
+                    && default_profile_key.as_deref() == Some(profile_key.as_str()));
+            matches_profile.then_some(pid)
+        })
+        .collect::<Vec<_>>();
+    collect_codex_direct_app_server_pids_for_roots(&root_pids)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn collect_codex_app_server_pids_for_profile(_profile_dir: &Path) -> Vec<u32> {
+    Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+fn close_captured_codex_direct_app_servers(
+    captured_pids: &[u32],
+    timeout_secs: u64,
+) -> Result<(), String> {
+    let remaining = collect_running_pids(captured_pids);
+    if remaining.is_empty() {
+        return Ok(());
+    }
+    crate::modules::logger::log_warn(&format!(
+        "[Codex Close] direct app-server remained after main process exit; closing captured pids={}",
+        summarize_pid_list_for_log(&remaining)
+    ));
+    close_pids(&remaining, timeout_secs.min(5).max(1)).map_err(|error| {
+        format!(
+            "failed to close Codex direct app-server before auth switch: {}",
+            error
+        )
+    })
+}
+
 #[cfg(target_os = "windows")]
 fn collect_codex_process_entries_from_powershell(
     expected_exe_path: &str,
@@ -11731,6 +11919,16 @@ pub fn close_codex_instances(codex_homes: &[String], timeout_secs: u64) -> Resul
             crate::modules::logger::log_info("受管 Codex 实例未在运行，无需关闭");
             return Ok(());
         }
+        // Capture direct stdio app-server descendants before Electron exits. Once the main
+        // process is gone they can be re-parented, and an in-flight OAuth refresh could otherwise
+        // write the old token tuple after the account switch commits the new credentials.
+        let direct_app_server_pids = collect_codex_direct_app_server_pids_for_roots(&pids);
+        if !direct_app_server_pids.is_empty() {
+            crate::modules::logger::log_info(&format!(
+                "[Codex Close] captured direct app-server pids={}",
+                summarize_pid_list_for_log(&direct_app_server_pids)
+            ));
+        }
 
         crate::modules::logger::log_info(&format!(
             "准备关闭 {} 个受管 Codex 主进程...",
@@ -11746,6 +11944,7 @@ pub fn close_codex_instances(codex_homes: &[String], timeout_secs: u64) -> Resul
             if wait_pids_exit(&graceful_pids, graceful_wait_secs) {
                 let remaining = collect_running_pids(&pids);
                 if remaining.is_empty() {
+                    close_captured_codex_direct_app_servers(&direct_app_server_pids, timeout_secs)?;
                     crate::modules::logger::log_info(&format!(
                         "[Codex Close] graceful close finished, targets={}",
                         summarize_pid_list_for_log(&pids)
@@ -11778,6 +11977,7 @@ pub fn close_codex_instances(codex_homes: &[String], timeout_secs: u64) -> Resul
                 );
             }
         }
+        close_captured_codex_direct_app_servers(&direct_app_server_pids, timeout_secs)?;
 
         let still_running = !collect_running_pids(&pids).is_empty();
         if still_running {
@@ -14420,7 +14620,10 @@ mod legacy_platform_adapter_cleanup_tests {
 
 #[cfg(all(test, target_os = "macos"))]
 mod codex_macos_launch_tests {
-    use super::is_codex_macos_main_process_command_line;
+    use super::{
+        is_codex_direct_app_server_command_line, is_codex_macos_main_process_command_line,
+        select_codex_direct_app_server_descendants, CodexProcessTreeEntry,
+    };
 
     #[test]
     fn matches_chatgpt_and_legacy_codex_main_processes() {
@@ -14433,6 +14636,68 @@ mod codex_macos_launch_tests {
         assert!(!is_codex_macos_main_process_command_line(
             "/applications/chatgpt.app/contents/resources/codex app-server"
         ));
+    }
+
+    #[test]
+    fn matches_only_bundled_direct_app_server_commands() {
+        let executable = "/Applications/ChatGPT.app/Contents/Resources/codex";
+        assert!(is_codex_direct_app_server_command_line(
+            "/Applications/ChatGPT.app/Contents/Resources/codex app-server --analytics-default-enabled",
+            executable,
+        ));
+        assert!(is_codex_direct_app_server_command_line(
+            "\"/Applications/ChatGPT.app/Contents/Resources/codex\" app-server --listen stdio://",
+            executable,
+        ));
+        assert!(!is_codex_direct_app_server_command_line(
+            "/Applications/ChatGPT.app/Contents/Resources/codex app-server daemon",
+            executable,
+        ));
+        assert!(!is_codex_direct_app_server_command_line(
+            "/opt/homebrew/bin/codex app-server --analytics-default-enabled",
+            executable,
+        ));
+        assert!(!is_codex_direct_app_server_command_line(
+            "/Applications/ChatGPT.app/Contents/Resources/codex exec hello",
+            executable,
+        ));
+    }
+
+    #[test]
+    fn selects_direct_app_server_only_from_target_main_process_tree() {
+        let executable = "/Applications/ChatGPT.app/Contents/Resources/codex";
+        let entries = vec![
+            CodexProcessTreeEntry {
+                pid: 100,
+                parent_pid: 1,
+                command_line: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT".to_string(),
+            },
+            CodexProcessTreeEntry {
+                pid: 110,
+                parent_pid: 100,
+                command_line: "helper".to_string(),
+            },
+            CodexProcessTreeEntry {
+                pid: 120,
+                parent_pid: 110,
+                command_line: format!("{} app-server --analytics-default-enabled", executable),
+            },
+            CodexProcessTreeEntry {
+                pid: 200,
+                parent_pid: 1,
+                command_line: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT".to_string(),
+            },
+            CodexProcessTreeEntry {
+                pid: 220,
+                parent_pid: 200,
+                command_line: format!("{} app-server --analytics-default-enabled", executable),
+            },
+        ];
+
+        assert_eq!(
+            select_codex_direct_app_server_descendants(&entries, &[100], executable),
+            vec![120]
+        );
     }
 }
 

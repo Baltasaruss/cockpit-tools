@@ -3258,6 +3258,7 @@ export function SettingsPage() {
               </button>
             </div>
           )}
+          <SettingsAccountTransferSection directoryEntryOnly />
           <fieldset
             className="settings-general-fieldset"
             disabled={!generalLoaded}

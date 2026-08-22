@@ -790,6 +790,7 @@ export function CodexApiServicePage() {
   const [testChatInput, setTestChatInput] = useState("");
   const [testDialogError, setTestDialogError] = useState("");
   const [portKilling, setPortKilling] = useState(false);
+  const [sidecarRestarting, setSidecarRestarting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copiedField, setCopiedField] = useState<CopyField | null>(null);
@@ -1929,6 +1930,37 @@ export function CodexApiServicePage() {
       setError(String(err).replace(/^Error:\s*/, ""));
     } finally {
       setPortKilling(false);
+    }
+  };
+
+  const handleRestartSidecar = async () => {
+    const confirmed = await confirmDialog(
+      t(
+        "codex.localAccess.restartConfirmMessage",
+        "将仅重启 API 服务 Sidecar，不修改账号、Token、API Key 或账号池配置。正在进行中的请求可能中断，确认继续吗？",
+      ),
+      {
+        title: t("codex.localAccess.restartTitle", "重启 API 服务"),
+        kind: "warning",
+        okLabel: t("codex.localAccess.restartAction", "重启 Sidecar"),
+        cancelLabel: t("common.cancel", "取消"),
+      },
+    );
+    if (!confirmed) return;
+    setSidecarRestarting(true);
+    setError("");
+    setNotice("");
+    try {
+      const next =
+        await codexLocalAccessService.restartCodexLocalAccessSidecar();
+      setState(next);
+      setNotice(
+        t("codex.localAccess.restartSuccess", "API 服务 Sidecar 已重启"),
+      );
+    } catch (err) {
+      setError(String(err).replace(/^Error:\s*/, ""));
+    } finally {
+      setSidecarRestarting(false);
     }
   };
 
@@ -3604,10 +3636,29 @@ export function CodexApiServicePage() {
               type="button"
               className="btn btn-secondary"
               onClick={() => void reloadState()}
-              disabled={busy || activating || testDialogRunning}
+              disabled={busy || activating || testDialogRunning || sidecarRestarting}
             >
               <RefreshCw size={14} />
               {t("codex.localAccess.refreshStats", "刷新统计")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => void handleRestartSidecar()}
+              disabled={
+                !collection ||
+                busy ||
+                activating ||
+                testDialogRunning ||
+                sidecarRestarting
+              }
+              title={t("codex.localAccess.restartAction", "重启 Sidecar")}
+            >
+              <RefreshCw
+                size={14}
+                className={sidecarRestarting ? "loading-spinner" : ""}
+              />
+              {t("codex.localAccess.restartAction", "重启 Sidecar")}
             </button>
             <button
               type="button"
@@ -7298,6 +7349,7 @@ export function CodexApiServicePage() {
         onRotateApiKey={() =>
           codexLocalAccessService.rotateCodexLocalAccessApiKey().then(setState)
         }
+        onRestartSidecar={handleRestartSidecar}
         onKillPort={handleKillPort}
         onToggleEnabled={handleToggleEnabled}
         onRecoverAccounts={handleRecoverAccounts}
@@ -7313,6 +7365,7 @@ export function CodexApiServicePage() {
         testing={testDialogRunning}
         starting={false}
         portCleanupBusy={portKilling}
+        sidecarRestarting={sidecarRestarting}
       />
     </div>
   );

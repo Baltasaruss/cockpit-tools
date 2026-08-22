@@ -8,6 +8,7 @@ pub mod antigravity_switch_history;
 pub mod app_lifecycle;
 pub mod atomic_write;
 pub mod auto_local_import;
+pub mod backup_storage;
 pub mod claude_account;
 pub mod claude_desktop_gateway;
 pub mod claude_instance;

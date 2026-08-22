@@ -107,6 +107,9 @@ pub struct UserConfig {
     /// 是否启用 Codex 客户端中的 API 服务额度显示注入
     #[serde(default = "default_codex_app_ui_injection_enabled")]
     pub codex_app_ui_injection_enabled: bool,
+    /// 是否通过 CDP 阻止受管 Codex 实例因外壳 OAuth 状态切换到登录页
+    #[serde(default)]
+    pub codex_login_page_guard_enabled: bool,
     /// 是否全局允许 Codex app-server 第三方客户端（账户级开关仍可单独放行）
     #[serde(default = "default_codex_cli_only_allow_app_server_clients")]
     pub codex_cli_only_allow_app_server_clients: bool,
@@ -245,6 +248,9 @@ pub struct UserConfig {
     /// 最近一次自动备份时间（ISO 8601）
     #[serde(default)]
     pub auto_backup_last_backup_at: Option<String>,
+    /// Cockpit 生成的本地备份根目录；为空时使用数据目录下的 backups
+    #[serde(default)]
+    pub backup_directory: String,
     /// WebDAV 备份同步是否启用
     #[serde(default = "default_webdav_sync_enabled")]
     pub webdav_sync_enabled: bool,
@@ -1180,6 +1186,7 @@ impl Default for UserConfig {
             codex_auto_refresh_minutes: default_codex_auto_refresh(),
             codex_sync_wsl: default_codex_sync_wsl(),
             codex_app_ui_injection_enabled: default_codex_app_ui_injection_enabled(),
+            codex_login_page_guard_enabled: false,
             codex_cli_only_allow_app_server_clients:
                 default_codex_cli_only_allow_app_server_clients(),
             codex_wsl_config_dir: default_codex_wsl_config_dir(),
@@ -1230,6 +1237,7 @@ impl Default for UserConfig {
             auto_backup_retention_days: default_auto_backup_retention_days(),
             auto_backup_retention_days_migrated: default_auto_backup_retention_days_migrated(),
             auto_backup_last_backup_at: None,
+            backup_directory: String::new(),
             webdav_sync_enabled: default_webdav_sync_enabled(),
             webdav_sync_url: default_webdav_sync_url(),
             webdav_sync_username: default_webdav_sync_username(),
@@ -2598,6 +2606,22 @@ mod tests {
         }))
         .expect("显式关闭配置反序列化应成功");
         assert!(!disabled_cfg.codex_app_ui_injection_enabled);
+    }
+
+    #[test]
+    fn codex_login_page_guard_defaults_to_disabled() {
+        let default_cfg = UserConfig::default();
+        assert!(!default_cfg.codex_login_page_guard_enabled);
+
+        let upgraded_cfg: UserConfig =
+            serde_json::from_value(serde_json::json!({})).expect("旧配置反序列化应成功");
+        assert!(!upgraded_cfg.codex_login_page_guard_enabled);
+
+        let enabled_cfg: UserConfig = serde_json::from_value(serde_json::json!({
+            "codex_login_page_guard_enabled": true
+        }))
+        .expect("显式启用配置反序列化应成功");
+        assert!(enabled_cfg.codex_login_page_guard_enabled);
     }
 
     #[test]
