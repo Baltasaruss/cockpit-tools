@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [1.3.23] - 2026-08-19
 
+### Added
+
+- **Optional OpenCode auth sync on Grok switch**: when enabled in Settings, switching a Grok account writes the `xai` entry in `~/.local/share/opencode/auth.json` (OAuth writes access/refresh; official API keys write `key`); third-party custom Base URL accounts are skipped and failures do not block the switch. An optional restart applies the login immediately.
+
 ### Changed
 
 - **Codex OAuth device fingerprint defaults to Session again and isolates API Service identity per account**: accounts that were not explicitly set to Device or Full use Session; accounts that 1.3.22 switched to Off on upgrade also return to Session. Session mode issues a stable installation / session / thread / turn identity per account and rewrites parent/fork lineage plus workspace paths, Git remotes, and commits so local accounts do not share one environment identity. After startup, the local API service is synced away from the previous default-off write; Off / Device / Full can still be chosen manually.

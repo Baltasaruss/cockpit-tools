@@ -93,6 +93,8 @@ interface GeneralConfig {
   cursor_auto_refresh_minutes: number;
   grok_auto_refresh_minutes: number;
   grok_sync_official_auth_on_switch: boolean;
+  grok_opencode_sync_on_switch?: boolean;
+  grok_opencode_auth_overwrite_on_switch?: boolean;
   codebuddy_auto_refresh_minutes: number;
   codebuddy_cn_auto_refresh_minutes: number;
   qoder_auto_refresh_minutes: number;
@@ -2102,6 +2104,58 @@ export function QuickSettingsPopover({ type }: QuickSettingsPopoverProps) {
                     'quickSettings.grok.syncOfficialAuthOnSwitchDesc',
                     '开启后，默认实例切换 OAuth 账号会写入官方 ~/.grok/auth.json；关闭时使用独立 GROK_HOME。API Key 和多开实例不改写官方登录。',
                   )}
+                </div>
+                <div className="qs-row" style={{ marginTop: 8 }}>
+                  <div className="qs-row-label">
+                    <span>
+                      {t(
+                        'settings.general.grokOpencodeAuthOverwrite',
+                        '切换 Grok 时覆盖 OpenCode 登录信息',
+                      )}
+                    </span>
+                  </div>
+                  <div className="qs-row-control">
+                    <label className="qs-switch">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(config.grok_opencode_auth_overwrite_on_switch)}
+                        onChange={(event) =>
+                          saveConfig(
+                            event.target.checked
+                              ? { grok_opencode_auth_overwrite_on_switch: true }
+                              : {
+                                  grok_opencode_auth_overwrite_on_switch: false,
+                                  grok_opencode_sync_on_switch: false,
+                                },
+                          )
+                        }
+                      />
+                      <span className="qs-switch-slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div className="qs-row">
+                  <div className="qs-row-label">
+                    <span>
+                      {t(
+                        'settings.general.grokOpencodeRestart',
+                        '切换 Grok 时自动重启 OpenCode',
+                      )}
+                    </span>
+                  </div>
+                  <div className="qs-row-control">
+                    <label className="qs-switch">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(config.grok_opencode_sync_on_switch)}
+                        disabled={!config.grok_opencode_auth_overwrite_on_switch}
+                        onChange={(event) =>
+                          saveConfig({ grok_opencode_sync_on_switch: event.target.checked })
+                        }
+                      />
+                      <span className="qs-switch-slider"></span>
+                    </label>
+                  </div>
                 </div>
               </div>
             )}

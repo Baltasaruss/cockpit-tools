@@ -134,6 +134,12 @@ pub struct UserConfig {
     /// 默认实例切号时是否同步写入官方 ~/.grok/auth.json
     #[serde(default)]
     pub grok_sync_official_auth_on_switch: bool,
+    /// 切换 Grok 时是否自动重启 OpenCode
+    #[serde(default = "default_grok_opencode_sync_on_switch")]
+    pub grok_opencode_sync_on_switch: bool,
+    /// 切换 Grok 时是否覆盖 OpenCode 登录信息
+    #[serde(default = "default_grok_opencode_auth_overwrite_on_switch")]
+    pub grok_opencode_auth_overwrite_on_switch: bool,
     /// Claude 自动刷新间隔（分钟），-1 表示禁用
     #[serde(default = "default_claude_auto_refresh")]
     pub claude_auto_refresh_minutes: i32,
@@ -980,6 +986,12 @@ fn default_ghcp_opencode_sync_on_switch() -> bool {
 fn default_ghcp_opencode_auth_overwrite_on_switch() -> bool {
     false
 }
+fn default_grok_opencode_sync_on_switch() -> bool {
+    false
+}
+fn default_grok_opencode_auth_overwrite_on_switch() -> bool {
+    false
+}
 fn default_ghcp_launch_on_switch() -> bool {
     true
 }
@@ -1178,6 +1190,9 @@ impl Default for UserConfig {
             cursor_auto_refresh_minutes: default_cursor_auto_refresh(),
             grok_auto_refresh_minutes: default_grok_auto_refresh(),
             grok_sync_official_auth_on_switch: false,
+            grok_opencode_sync_on_switch: default_grok_opencode_sync_on_switch(),
+            grok_opencode_auth_overwrite_on_switch:
+                default_grok_opencode_auth_overwrite_on_switch(),
             claude_auto_refresh_minutes: default_claude_auto_refresh(),
             codebuddy_auto_refresh_minutes: default_codebuddy_auto_refresh(),
             codebuddy_cn_auto_refresh_minutes: default_codebuddy_cn_auto_refresh(),
@@ -2555,6 +2570,18 @@ mod tests {
         let migrated_cfg: UserConfig =
             serde_json::from_value(serde_json::json!({})).expect("旧配置反序列化应成功");
         assert!(!migrated_cfg.grok_sync_official_auth_on_switch);
+    }
+
+    #[test]
+    fn grok_opencode_sync_defaults_to_disabled() {
+        let default_cfg = UserConfig::default();
+        assert!(!default_cfg.grok_opencode_sync_on_switch);
+        assert!(!default_cfg.grok_opencode_auth_overwrite_on_switch);
+
+        let migrated_cfg: UserConfig =
+            serde_json::from_value(serde_json::json!({})).expect("旧配置反序列化应成功");
+        assert!(!migrated_cfg.grok_opencode_sync_on_switch);
+        assert!(!migrated_cfg.grok_opencode_auth_overwrite_on_switch);
     }
 
     #[test]

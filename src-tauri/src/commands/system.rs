@@ -106,6 +106,10 @@ pub struct GeneralConfig {
     pub grok_auto_refresh_minutes: i32,
     /// 默认实例切号时是否同步写入官方 ~/.grok/auth.json
     pub grok_sync_official_auth_on_switch: bool,
+    /// 切换 Grok 时是否自动重启 OpenCode
+    pub grok_opencode_sync_on_switch: bool,
+    /// 切换 Grok 时是否覆盖 OpenCode 登录信息
+    pub grok_opencode_auth_overwrite_on_switch: bool,
     /// Claude 自动刷新间隔（分钟），-1 表示禁用
     pub claude_auto_refresh_minutes: i32,
     /// CodeBuddy 自动刷新间隔（分钟），-1 表示禁用
@@ -1136,6 +1140,8 @@ fn is_general_config_patch_field(key: &str) -> bool {
             | "cursor_auto_refresh_minutes"
             | "grok_auto_refresh_minutes"
             | "grok_sync_official_auth_on_switch"
+            | "grok_opencode_sync_on_switch"
+            | "grok_opencode_auth_overwrite_on_switch"
             | "claude_auto_refresh_minutes"
             | "codebuddy_auto_refresh_minutes"
             | "codebuddy_cn_auto_refresh_minutes"
@@ -1408,6 +1414,12 @@ fn apply_general_config_updates(
     {
         next.ghcp_opencode_sync_on_switch =
             next.ghcp_opencode_auth_overwrite_on_switch && next.ghcp_opencode_sync_on_switch;
+    }
+    if updates.contains_key("grok_opencode_sync_on_switch")
+        || updates.contains_key("grok_opencode_auth_overwrite_on_switch")
+    {
+        next.grok_opencode_sync_on_switch =
+            next.grok_opencode_auth_overwrite_on_switch && next.grok_opencode_sync_on_switch;
     }
 
     let codex_threshold = json_i32(updates, "codex_quota_alert_threshold")?;
@@ -2626,6 +2638,9 @@ pub fn get_general_config(app: tauri::AppHandle) -> Result<GeneralConfig, String
         cursor_auto_refresh_minutes: user_config.cursor_auto_refresh_minutes,
         grok_auto_refresh_minutes: user_config.grok_auto_refresh_minutes,
         grok_sync_official_auth_on_switch: user_config.grok_sync_official_auth_on_switch,
+        grok_opencode_sync_on_switch: user_config.grok_opencode_sync_on_switch,
+        grok_opencode_auth_overwrite_on_switch: user_config
+            .grok_opencode_auth_overwrite_on_switch,
         claude_auto_refresh_minutes: user_config.claude_auto_refresh_minutes,
         codebuddy_auto_refresh_minutes: user_config.codebuddy_auto_refresh_minutes,
         codebuddy_cn_auto_refresh_minutes: user_config.codebuddy_cn_auto_refresh_minutes,
@@ -3063,6 +3078,8 @@ pub fn save_general_config(
     cursor_auto_refresh_minutes: Option<i32>,
     grok_auto_refresh_minutes: Option<i32>,
     grok_sync_official_auth_on_switch: Option<bool>,
+    grok_opencode_sync_on_switch: Option<bool>,
+    grok_opencode_auth_overwrite_on_switch: Option<bool>,
     claude_auto_refresh_minutes: Option<i32>,
     codebuddy_auto_refresh_minutes: Option<i32>,
     codebuddy_cn_auto_refresh_minutes: Option<i32>,
@@ -3306,6 +3323,15 @@ pub fn save_general_config(
         if let Some(value) = grok_sync_official_auth_on_switch {
             current.grok_sync_official_auth_on_switch = value;
         }
+        let next_grok_opencode_auth_overwrite_on_switch = grok_opencode_auth_overwrite_on_switch
+            .unwrap_or(current.grok_opencode_auth_overwrite_on_switch);
+        current.grok_opencode_auth_overwrite_on_switch =
+            next_grok_opencode_auth_overwrite_on_switch;
+        current.grok_opencode_sync_on_switch = if next_grok_opencode_auth_overwrite_on_switch {
+            grok_opencode_sync_on_switch.unwrap_or(current.grok_opencode_sync_on_switch)
+        } else {
+            false
+        };
         if let Some(value) = claude_auto_refresh_minutes {
             current.claude_auto_refresh_minutes = value;
         }
