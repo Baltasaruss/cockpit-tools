@@ -1946,10 +1946,19 @@ pub fn open_local_path(path: String) -> Result<(), String> {
     open_path_in_system(p.as_path())
 }
 
+#[tauri::command]
+pub async fn windows_elevated_close_processes(pids: Vec<u32>) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        modules::windows_operation::elevated_close_supported_processes(&pids)
+    })
+    .await
+    .map_err(|error| format!("WINDOWS_ELEVATION_TASK_FAILED: {}", error))?
+}
+
 /// 保存文本文件
 #[tauri::command]
 pub async fn save_text_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))
+    modules::atomic_write::write_string_atomic(std::path::Path::new(&path), &content)
 }
 
 /// 获取下载目录

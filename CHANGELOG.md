@@ -7,6 +7,23 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.28] - 2026-08-23
+
+### Fixed
+
+- **Fixed account switching for the official ChatGPT/Codex desktop app on Linux/Ubuntu and completed its instance lifecycle support**: Cockpit detects the official `chatgpt` installation and applies the same transactional credential checks and refresh, occupancy protection, desktop-runtime shutdown, profile-service shutdown, credential writes, and relaunch used on macOS and Windows. Managed instances use isolated `CODEX_HOME` and Electron user-data directories, can be detected and stopped independently, and can be focused when Linux window-control tools are available.
+- **Codex CLI mode no longer closes the official desktop client by mistake**: when CLI mode is explicitly selected, switching accounts and starting, stopping, or closing all instances manages only the associated profile services and configuration; App mode on macOS, Windows, and Linux continues to manage the official desktop runtime.
+- **Fixed Trae Work CN / Trae Solo CN accounts being overwritten by stale local sessions or classified as Trae CN**: runtime sessions now synchronize tokens only when the platform matches while preserving the OAuth platform, host, scope, device-key, and ExchangeToken context. Non-running `storage.json` snapshots participate only when they are newer than the saved credentials, preventing platform drift and loss of the current refresh flow.
+- **Fixed Trae Work CN accounts being reclassified as Trae CN after refresh**: runtime snapshots after OAuth now synchronize tokens only when account identity, platform, and credential freshness match. Stale `storage.json` data can no longer replace `platformId`, callback metadata, device keys, or Exchange context, and snapshots from another Trae platform are rejected explicitly to prevent reclassification or invalidating the current authentication flow.
+
+### Added
+
+- **Windows system operations now use a unified recovery dialog**: when account switching, instance lifecycle actions, API Service sidecars, port cleanup, backups, or exports encounter access denial, `os error 5`, file-in-use errors, or missing programs, a top-level dialog shows the original cause and redacted details with retry, manual-resolution, open-location, and copy-error actions. Supported client processes can continue through one-time Windows authorization within a restricted safety boundary, while non-critical background probes remain silent.
+
+### Changed
+
+- **Official release builds now use more parallel execution**: macOS Universal builds alongside the platform packages, checksum and Homebrew finalization run in parallel, and Cask PRs that are already mergeable no longer fail during auto-merge, reducing wait times for later releases.
+
 ## [1.3.27] - 2026-08-23
 
 ### Fixed

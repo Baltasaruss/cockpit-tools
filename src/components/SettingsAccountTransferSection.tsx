@@ -60,6 +60,7 @@ import {
 } from '../services/scheduledBackupService';
 import { ALL_PLATFORM_IDS, PlatformId } from '../types/platform';
 import { getPlatformLabel } from '../utils/platformMeta';
+import { presentWindowsOperationError } from '../utils/windowsOperationDialog';
 
 type TransferFeedbackTone = 'loading' | 'success' | 'error';
 type FeedbackSetter = Dispatch<SetStateAction<TransferFeedback | null>>;
@@ -769,7 +770,7 @@ export function SettingsAccountTransferSection({
       tone: 'loading',
       text: t('settings.transfer.backup.feedback.running'),
     });
-    try {
+    const runBackup = async () => {
       const result = await createManagedBackup({
         trigger: 'manual',
         selection,
@@ -788,7 +789,20 @@ export function SettingsAccountTransferSection({
           count: result.deleted_files.length,
         }),
       });
+    };
+    try {
+      await runBackup();
     } catch (error) {
+      if (
+        presentWindowsOperationError({
+          error,
+          operation: 'backup',
+          retry: runBackup,
+        })
+      ) {
+        setBackupFeedback(null);
+        return;
+      }
       setBackupFeedback({
         tone: 'error',
         text: t('settings.transfer.backup.feedback.runFailed', {
@@ -817,6 +831,19 @@ export function SettingsAccountTransferSection({
           text: t('settings.transfer.backup.feedback.deleteSuccess'),
         });
       } catch (error) {
+        if (
+          presentWindowsOperationError({
+            error,
+            operation: 'delete_file',
+            retry: async () => {
+              await deleteAutoBackupFile(fileName);
+              await loadAutoBackupState(true);
+            },
+          })
+        ) {
+          setBackupFeedback(null);
+          return;
+        }
         setBackupFeedback({
           tone: 'error',
           text: t('settings.transfer.backup.feedback.deleteFailed', {
@@ -948,6 +975,16 @@ export function SettingsAccountTransferSection({
     try {
       await openAutoBackupDir();
     } catch (error) {
+      if (
+        presentWindowsOperationError({
+          error,
+          operation: 'open_path',
+          retry: openAutoBackupDir,
+        })
+      ) {
+        setBackupFeedback(null);
+        return;
+      }
       setBackupFeedback({
         tone: 'error',
         text: t('settings.transfer.backup.feedback.openFolderFailed', {
@@ -959,6 +996,7 @@ export function SettingsAccountTransferSection({
 
   const handleChangeBackupDirectory = useCallback(async () => {
     if (!backupSettings || backupDirectorySaving) return;
+    let selectedPath: string | null = null;
     try {
       const selected = await open({
         directory: true,
@@ -966,6 +1004,7 @@ export function SettingsAccountTransferSection({
         defaultPath: backupSettings.directory_path || undefined,
       });
       if (!selected || typeof selected !== 'string') return;
+      selectedPath = selected;
       if (selected.trim() === backupSettings.directory_path.trim()) return;
       setBackupDirectorySaving(true);
       setBackupFeedback({
@@ -979,6 +1018,25 @@ export function SettingsAccountTransferSection({
       setShowBackupMigrationConfirm(true);
       setBackupFeedback(null);
     } catch (error) {
+      if (
+        presentWindowsOperationError({
+          error,
+          operation: 'backup',
+          retry: selectedPath
+            ? async () => {
+                const preview = await previewBackupDirectoryChange(selectedPath as string);
+                setBackupMigrationPreview(preview);
+                setBackupMigrationError(null);
+                setBackupMigrationResult(null);
+                setShowBackupMigrationConfirm(true);
+                setBackupFeedback(null);
+              }
+            : undefined,
+        })
+      ) {
+        setBackupFeedback(null);
+        return;
+      }
       setBackupFeedback({
         tone: 'error',
         text: t('settings.transfer.backup.feedback.directoryChangeFailed', {

@@ -68,6 +68,7 @@ import { SingleSelectDropdown } from "./SingleSelectDropdown";
 import type { CodexAppSpeed } from "../types/codex";
 import { getCodexExperimentalModelErrorMessage } from "../utils/codexExperimentalModel";
 import { isCodexInstanceAccountConflict } from "../utils/codexInstanceLaunchConflict";
+import { presentWindowsOperationError } from "../utils/windowsOperationDialog";
 
 type MessageState = { text: string; tone?: "error" };
 type AccountLike = {
@@ -702,9 +703,9 @@ export function InstancesManager<TAccount extends AccountLike>({
   );
   const isGrokApp = appType === "grok";
   const supportsInstanceInitialization = !isGrokApp;
-  const isCliOnlyApp = isGrokApp;
   const isCodexApp = appType === "codex";
   const isClaudeApp = appType === "claude";
+  const isCliOnlyApp = isGrokApp;
   const supportsLaunchModeSelect = isCodexApp || isClaudeApp;
   const resolveInstanceLaunchMode = (
     instance?: InstanceProfile | null,
@@ -1514,6 +1515,21 @@ export function InstancesManager<TAccount extends AccountLike>({
         if (handleCodexManagedStoreLaunchError(e)) {
           return "failed";
         }
+        const retryStart = async () => {
+          const startedInstance = await startInstance(instance.id);
+          await Promise.resolve(onInstanceStarted?.(startedInstance));
+          triggerDelayedRefreshAfterStart();
+        };
+        if (
+          presentWindowsOperationError({
+            error: e,
+            operation: "launch_app",
+            retry: retryStart,
+            manualContinue: retryStart,
+          })
+        ) {
+          return "failed";
+        }
         setMessage({ text: String(e), tone: "error" });
         return "failed";
       } finally {
@@ -1573,6 +1589,20 @@ export function InstancesManager<TAccount extends AccountLike>({
       await stopInstance(instance.id);
       setMessage({ text: t("instances.messages.stopped", "实例已关闭") });
     } catch (e) {
+      const retryStop = async () => {
+        await stopInstance(instance.id);
+        await refreshInstances();
+      };
+      if (
+        presentWindowsOperationError({
+          error: e,
+          operation: "stop_process",
+          retry: retryStop,
+          manualContinue: retryStop,
+        })
+      ) {
+        return;
+      }
       setMessage({ text: String(e), tone: "error" });
     } finally {
       unmarkInstanceStopping(instance.id);
@@ -1585,6 +1615,18 @@ export function InstancesManager<TAccount extends AccountLike>({
       await openInstanceWindow(runningNoticeInstance.id);
       setRunningNoticeInstance(null);
     } catch (e) {
+      if (
+        presentWindowsOperationError({
+          error: e,
+          operation: "open_path",
+          retry: async () => {
+            await openInstanceWindow(runningNoticeInstance.id);
+            setRunningNoticeInstance(null);
+          },
+        })
+      ) {
+        return;
+      }
       setMessage({ text: String(e), tone: "error" });
     }
   };
@@ -1596,6 +1638,17 @@ export function InstancesManager<TAccount extends AccountLike>({
       await openInstanceWindow(instance.id);
     } catch (e) {
       if (handleMissingPathError(e, instance.id)) {
+        return;
+      }
+      if (
+        presentWindowsOperationError({
+          error: e,
+          operation: "open_path",
+          retry: async () => {
+            await openInstanceWindow(instance.id);
+          },
+        })
+      ) {
         return;
       }
       setMessage({ text: String(e), tone: "error" });

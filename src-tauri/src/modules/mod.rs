@@ -110,6 +110,7 @@ pub mod webdav_domain;
 pub mod webdav_sync;
 pub mod webkit_cache_maintenance;
 pub mod websocket;
+pub mod windows_operation;
 pub mod windsurf_account;
 pub mod windsurf_devin_oauth;
 pub mod windsurf_instance;

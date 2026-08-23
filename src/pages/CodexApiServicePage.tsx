@@ -47,6 +47,7 @@ import {
   usePlatformLayoutStore,
 } from "../stores/usePlatformLayoutStore";
 import { getPlatformLabel } from "../utils/platformMeta";
+import { presentWindowsOperationError } from "../utils/windowsOperationDialog";
 import { useCodexAccountStore } from "../stores/useCodexAccountStore";
 import {
   isCodexApiKeyScopeAccountActive,
@@ -1619,6 +1620,19 @@ export function CodexApiServicePage() {
       await task();
       setNotice(successText);
     } catch (err) {
+      if (
+        presentWindowsOperationError({
+          error: err,
+          operation: "unknown",
+          summary: successText,
+          retry: async () => {
+            await task();
+            setNotice(successText);
+          },
+        })
+      ) {
+        return;
+      }
       setError(String(err).replace(/^Error:\s*/, ""));
     } finally {
       setBusy(false);
@@ -1759,6 +1773,22 @@ export function CodexApiServicePage() {
       );
     } catch (err) {
       if (!mountedRef.current) return;
+      if (
+        presentWindowsOperationError({
+          error: err,
+          operation: "start_sidecar",
+          summary: t("codex.localAccess.activateAction", "启动 API 服务"),
+          retry: async () => {
+            const next = await codexLocalAccessService.activateCodexLocalAccess();
+            if (!mountedRef.current) return;
+            setState(next);
+            await fetchCurrentAccount();
+            await refreshApiServiceCurrent();
+          },
+        })
+      ) {
+        return;
+      }
       setError(String(err).replace(/^Error:\s*/, ""));
     } finally {
       if (mountedRef.current) {
@@ -1927,6 +1957,21 @@ export function CodexApiServicePage() {
         t("codex.localAccess.killPortSuccessUnknown", "API 服务端口已清理"),
       );
     } catch (err) {
+      const retryKillPort = async () => {
+        const result = await codexLocalAccessService.killCodexLocalAccessPort();
+        setState(result.state);
+      };
+      if (
+        presentWindowsOperationError({
+          error: err,
+          operation: "stop_process",
+          summary: t("codex.localAccess.killPortTitle", "清理 API 服务端口"),
+          retry: retryKillPort,
+          manualContinue: retryKillPort,
+        })
+      ) {
+        return;
+      }
       setError(String(err).replace(/^Error:\s*/, ""));
     } finally {
       setPortKilling(false);
@@ -1958,6 +2003,19 @@ export function CodexApiServicePage() {
         t("codex.localAccess.restartSuccess", "API 服务 Sidecar 已重启"),
       );
     } catch (err) {
+      if (
+        presentWindowsOperationError({
+          error: err,
+          operation: "start_sidecar",
+          summary: t("codex.localAccess.restartTitle", "重启 API 服务"),
+          retry: async () => {
+            const next = await codexLocalAccessService.restartCodexLocalAccessSidecar();
+            setState(next);
+          },
+        })
+      ) {
+        return;
+      }
       setError(String(err).replace(/^Error:\s*/, ""));
     } finally {
       setSidecarRestarting(false);

@@ -19,6 +19,10 @@ const CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX: &str = "CODEX_INSTANCE_ACCOUNT_CON
 static CODEX_INSTANCE_STARTS_IN_PROGRESS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static CODEX_INSTANCE_START_FLOW_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
+fn launch_mode_uses_desktop_runtime(launch_mode: &InstanceLaunchMode) -> bool {
+    *launch_mode == InstanceLaunchMode::App
+}
+
 #[derive(Debug)]
 struct CodexInstanceStartGuard {
     instance_id: String,
@@ -878,6 +882,12 @@ mod tests {
         assert_eq!(plan.program, "gnome-terminal");
         assert_eq!(plan.args, ["--", "bash", "-lc", "codex; exec bash"]);
         assert_eq!(plan.terminal_name, "gnome-terminal");
+    }
+
+    #[test]
+    fn cli_launch_mode_does_not_manage_a_desktop_runtime() {
+        assert!(launch_mode_uses_desktop_runtime(&InstanceLaunchMode::App));
+        assert!(!launch_mode_uses_desktop_runtime(&InstanceLaunchMode::Cli));
     }
 
     #[test]
@@ -2118,22 +2128,28 @@ async fn codex_start_instance_internal(
         ));
         let close_started = Instant::now();
         modules::codex_app_injection::stop_for_profile(&default_dir);
-        let fast_closed = if skip_default_bind_account_injection {
-            modules::process::close_codex_default_fast_by_pid(default_settings.last_pid, 20)?
-        } else {
-            false
-        };
-        if !fast_closed {
-            modules::process::close_codex_default(20)?;
-        }
-        modules::codex_local_access::stop_provider_gateways_for_profile(&default_dir).await;
-        modules::logger::log_info(&format!(
-            "[Codex Start] default close phase finished, mode={}, elapsed_ms={}",
+        let close_mode = if launch_mode_uses_desktop_runtime(&default_settings.launch_mode) {
+            let fast_closed = if skip_default_bind_account_injection {
+                modules::process::close_codex_default_fast_by_pid(default_settings.last_pid, 20)?
+            } else {
+                false
+            };
+            if !fast_closed {
+                modules::process::close_codex_default(20)?;
+            }
             if fast_closed {
                 "fast-pid"
             } else {
                 "full-probe"
-            },
+            }
+        } else {
+            modules::logger::log_info("[Codex Start] CLI 模式无需关闭桌面运行态，继续准备实例配置");
+            "cli-no-desktop"
+        };
+        modules::codex_local_access::stop_provider_gateways_for_profile(&default_dir).await;
+        modules::logger::log_info(&format!(
+            "[Codex Start] default close phase finished, mode={}, elapsed_ms={}",
+            close_mode,
             close_started.elapsed().as_millis()
         ));
         let speed_started = Instant::now();
@@ -2679,8 +2695,11 @@ pub async fn codex_start_instance(
 pub async fn codex_stop_instance(instance_id: String) -> Result<CodexInstanceProfileView, String> {
     if instance_id == DEFAULT_INSTANCE_ID {
         let default_dir = modules::codex_instance::get_default_codex_home()?;
+        let default_settings = modules::codex_instance::load_default_settings()?;
         modules::codex_app_injection::stop_for_profile(&default_dir);
-        modules::process::close_codex_default(20)?;
+        if launch_mode_uses_desktop_runtime(&default_settings.launch_mode) {
+            modules::process::close_codex_default(20)?;
+        }
         modules::codex_local_access::stop_provider_gateways_for_profile(&default_dir).await;
         let updated = modules::codex_instance::update_default_pid(None)?;
         let default_bind_account_id = resolve_default_account_id(&updated);
@@ -2727,16 +2746,22 @@ pub async fn codex_close_all_instances() -> Result<(), String> {
     let default_home = modules::codex_instance::get_default_codex_home()?;
     modules::codex_app_injection::stop_for_profile(&default_home);
     let mut target_homes: Vec<String> = Vec::new();
-    target_homes.push(default_home.to_string_lossy().to_string());
+    if launch_mode_uses_desktop_runtime(&store.default_settings.launch_mode) {
+        target_homes.push(default_home.to_string_lossy().to_string());
+    }
     for instance in &store.instances {
         let home = instance.user_data_dir.trim();
         if !home.is_empty() {
             modules::codex_app_injection::stop_for_profile(Path::new(home));
-            target_homes.push(home.to_string());
+            if launch_mode_uses_desktop_runtime(&instance.launch_mode) {
+                target_homes.push(home.to_string());
+            }
         }
     }
 
-    modules::process::close_codex_instances(&target_homes, 20)?;
+    if !target_homes.is_empty() {
+        modules::process::close_codex_instances(&target_homes, 20)?;
+    }
     modules::codex_local_access::stop_provider_gateways_for_profile(&default_home).await;
     for instance in &store.instances {
         let home = instance.user_data_dir.trim();

@@ -691,6 +691,7 @@ pub fn run() {
             // System Commands
             commands::system::open_data_folder,
             commands::system::open_local_path,
+            commands::system::windows_elevated_close_processes,
             commands::system::save_text_file,
             commands::system::get_downloads_dir,
             commands::system::get_auto_backup_settings,

@@ -19,6 +19,7 @@ import { FileText, FolderOpen, RefreshCw, X } from 'lucide-react';
 import { SideNav } from './components/layout/SideNav';
 import { BootReadyMarker, VisibleBootPage } from './components/BootReadyMarker';
 import { GlobalModal } from './components/GlobalModal';
+import { WindowsOperationDialog } from './components/WindowsOperationDialog';
 import { CodexSwitchProgressModal } from './components/CodexSwitchProgressModal';
 import { CodexInstanceLaunchProgressModal } from './components/CodexInstanceLaunchProgressModal';
 import { AnnouncementHost } from './components/AnnouncementCenter';
@@ -3715,6 +3716,7 @@ function MainApp() {
       <GlobalModal />
       <CodexSwitchProgressModal />
       <CodexInstanceLaunchProgressModal />
+      <WindowsOperationDialog />
 
       {/* 关闭确认对话框 */}
       {showCloseDialog && (

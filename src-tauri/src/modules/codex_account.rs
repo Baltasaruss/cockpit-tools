@@ -7766,6 +7766,14 @@ fn format_io_error(action: &str, path: &Path, error: &std::io::Error) -> String 
             path.display()
         );
     }
+    if let Some(error) = crate::modules::windows_operation::format_permission_io_error(
+        "write_file",
+        action,
+        path.to_string_lossy().as_ref(),
+        error,
+    ) {
+        return error;
+    }
     format!("{}失败: path={}, error={}", action, path.display(), error)
 }
 

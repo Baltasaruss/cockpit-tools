@@ -16,6 +16,8 @@ import { conciseCodexCredentialFailure } from "../utils/codexCredentialProgress"
 import { requestCodexOpenAddAccount } from "../utils/codexAddAccountRequest";
 import type { CodexSwitchAuthFailure } from "../utils/codexSwitchAuthFailure";
 import { parseCodexSwitchAuthFailure } from "../utils/codexSwitchAuthFailure";
+import { presentWindowsOperationError } from "../utils/windowsOperationDialog";
+import { parseWindowsOperationError } from "../utils/windowsOperationError";
 import "./CodexSwitchProgressModal.css";
 import "./CodexInstanceLaunchProgressModal.css";
 
@@ -241,6 +243,9 @@ export function CodexInstanceLaunchProgressModal() {
       ? t("instances.defaultName", "默认实例")
       : owner.instanceName || owner.instanceId;
   const authFailure = state.status === "error" ? state.authFailure : null;
+  const windowsOperationError = state.error
+    ? parseWindowsOperationError(state.error)
+    : null;
   const isApiOnlyAuthFailure = authFailure?.apiOnlyAvailable === true;
   const accountId =
     authFailure?.accountId ||
@@ -401,41 +406,67 @@ export function CodexInstanceLaunchProgressModal() {
           ? t("instances.accountLease.failedTitle")
           : t("instances.accountLease.title");
 
-  const locateOwner = async () => {
+  const performLocateOwner = async () => {
     const owner = state.conflict?.owners[0];
     if (!owner) return;
+    if (owner.managed) {
+      await codexInstanceService.openInstanceWindow(owner.instanceId);
+    } else {
+      await invoke("codex_focus_runtime_owner", {
+        pid: owner.pid,
+        userDataDir: owner.userDataDir,
+        isDefault: owner.isDefault,
+      });
+    }
+  };
+  const locateOwner = async () => {
     setActionBusy("locate");
     setActionError(null);
     try {
-      if (owner.managed) {
-        await codexInstanceService.openInstanceWindow(owner.instanceId);
-      } else {
-        await invoke("codex_focus_runtime_owner", {
-          pid: owner.pid,
-          userDataDir: owner.userDataDir,
-          isDefault: owner.isDefault,
-        });
-      }
+      await performLocateOwner();
     } catch (error) {
+      if (
+        presentWindowsOperationError({
+          error,
+          operation: "open_path",
+          retry: performLocateOwner,
+        })
+      ) {
+        return;
+      }
       setActionError(String(error));
     } finally {
       setActionBusy(null);
     }
   };
+  const performTransferAccount = async () => {
+    const instance = await codexInstanceService.startInstance(state.instanceId, {
+      transferConflictingAccount: true,
+    });
+    window.dispatchEvent(
+      new CustomEvent("codex:instance-launch-transferred", {
+        detail: { instance },
+      }),
+    );
+  };
   const transferAccount = async () => {
     setActionBusy("transfer");
     setActionError(null);
     try {
-      const instance = await codexInstanceService.startInstance(state.instanceId, {
-        transferConflictingAccount: true,
-      });
-      window.dispatchEvent(
-        new CustomEvent("codex:instance-launch-transferred", {
-          detail: { instance },
-        }),
-      );
+      await performTransferAccount();
     } catch (error) {
       setActionBusy(null);
+      if (
+        presentWindowsOperationError({
+          error,
+          operation: "launch_app",
+          summary: t("instances.accountLease.failedTitle"),
+          retry: performTransferAccount,
+          manualContinue: performTransferAccount,
+        })
+      ) {
+        return;
+      }
       setActionError(String(error).replace(/^Error:\s*/, ""));
     }
   };
@@ -612,7 +643,7 @@ export function CodexInstanceLaunchProgressModal() {
           )}
           {!authFailure && (state.error || actionError) && (
             <div className="codex-switch-progress-error">
-              {actionError || state.error}
+              {actionError || windowsOperationError?.originalReason || state.error}
             </div>
           )}
         </div>

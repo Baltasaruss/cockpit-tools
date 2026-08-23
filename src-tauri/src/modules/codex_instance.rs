@@ -27,6 +27,8 @@ const CODEX_SHARED_COPY_MARKER_FILE_NAME: &str = ".cockpit-tools-shared-copy";
 const CODEX_WINDOWS_APP_DATA_DIR_NAME: &str = "codex-app-data";
 #[cfg(target_os = "macos")]
 const CODEX_MACOS_APP_DATA_DIR_NAME: &str = "codex-app-data";
+#[cfg(target_os = "linux")]
+const CODEX_LINUX_APP_DATA_DIR_NAME: &str = "codex-app-data";
 #[cfg(target_os = "windows")]
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
@@ -277,6 +279,29 @@ pub fn get_macos_app_user_data_dir(codex_home: &Path) -> Result<PathBuf, String>
     let normalized = normalize_macos_codex_home_for_hash(codex_home);
     let digest = format!("{:x}", md5::compute(normalized.as_bytes()));
     Ok(root.join(digest))
+}
+
+#[cfg(target_os = "linux")]
+fn normalize_linux_codex_home_for_hash(path: &Path) -> String {
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    resolved.to_string_lossy().to_string()
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_linux_app_user_data_dir(codex_home: &Path) -> Result<PathBuf, String> {
+    let root = get_default_instances_root_dir()?
+        .parent()
+        .ok_or("无法获取 Codex 实例根目录")?
+        .join(CODEX_LINUX_APP_DATA_DIR_NAME);
+    let normalized = normalize_linux_codex_home_for_hash(codex_home);
+    let digest = format!("{:x}", md5::compute(normalized.as_bytes()));
+    Ok(root.join(digest))
+}
+
+#[cfg(target_os = "linux")]
+pub fn delete_linux_app_user_data_dir(codex_home: &Path) -> Result<(), String> {
+    let app_user_data_dir = get_linux_app_user_data_dir(codex_home)?;
+    modules::instance::delete_instance_directory(&app_user_data_dir)
 }
 
 #[cfg(unix)]
@@ -1038,6 +1063,8 @@ pub fn delete_instance(instance_id: &str) -> Result<(), String> {
         modules::instance::delete_instance_directory(&dir_path)?;
         #[cfg(target_os = "windows")]
         delete_windows_app_user_data_dir(&dir_path)?;
+        #[cfg(target_os = "linux")]
+        delete_linux_app_user_data_dir(&dir_path)?;
     }
 
     store.instances.remove(index);

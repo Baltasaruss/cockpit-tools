@@ -62,6 +62,7 @@ import { useCodexInstanceStore } from "../stores/useCodexInstanceStore";
 import * as codexService from "../services/codexService";
 import * as codexInstanceService from "../services/codexInstanceService";
 import * as codexLocalAccessService from "../services/codexLocalAccessService";
+import { presentWindowsOperationError } from "../utils/windowsOperationDialog";
 import { TagEditModal } from "../components/TagEditModal";
 import {
   ExportJsonModal,
@@ -5477,6 +5478,27 @@ export function CodexAccountsPage() {
       if (e instanceof CodexSwitchAccountError && e.authFailure) {
         return;
       }
+      const retrySwitch = async () => {
+        try {
+          await executeCodexAccountSwitch(accountId);
+        } catch (retryError) {
+          if (retryError instanceof CodexSwitchAccountError && retryError.authFailure) {
+            return;
+          }
+          throw retryError;
+        }
+      };
+      if (
+        presentWindowsOperationError({
+          error: e,
+          operation: "unknown",
+          summary: t("codex.switch", "切换账号"),
+          retry: retrySwitch,
+          manualContinue: retrySwitch,
+        })
+      ) {
+        return;
+      }
       setMessage({
         text: t("codex.switchFailed", {
           error: formatCodexAuthFailureMessage(e),
@@ -10413,6 +10435,18 @@ export function CodexAccountsPage() {
     try {
       await handleToggleLocalAccessEnabled();
     } catch (error) {
+      if (
+        presentWindowsOperationError({
+          error,
+          operation: "start_sidecar",
+          summary: t("codex.localAccess.toggleService", "切换 API 服务"),
+          retry: async () => {
+            await handleToggleLocalAccessEnabled();
+          },
+        })
+      ) {
+        return;
+      }
       setMessage({
         text: t("messages.actionFailed", {
           action: t("codex.localAccess.toggleService", "切换 API 服务"),
@@ -10430,6 +10464,18 @@ export function CodexAccountsPage() {
         return;
       }
     } catch (error) {
+      if (
+        presentWindowsOperationError({
+          error,
+          operation: "start_sidecar",
+          summary: t("codex.localAccess.activateAction", "启动 API 服务"),
+          retry: async () => {
+            await handleActivateLocalAccess();
+          },
+        })
+      ) {
+        return;
+      }
       setMessage({
         text: t("messages.actionFailed", {
           action: t("codex.localAccess.activateAction", "启动 API 服务"),

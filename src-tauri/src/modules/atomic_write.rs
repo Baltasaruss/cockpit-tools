@@ -22,6 +22,14 @@ fn path_write_lock(path: &Path) -> Result<Arc<Mutex<()>>, String> {
 }
 
 fn format_io_error(action: &str, path: &Path, err: &std::io::Error) -> String {
+    if let Some(error) = crate::modules::windows_operation::format_permission_io_error(
+        "write_file",
+        action,
+        path.to_string_lossy().as_ref(),
+        err,
+    ) {
+        return error;
+    }
     format!("{}失败: path={}, error={}", action, path.display(), err)
 }
 

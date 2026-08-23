@@ -670,11 +670,16 @@ fn restart_codex_specified_app_if_enabled(user_config: &config::UserConfig) {
 
 async fn stop_default_codex_runtime_before_auth_commit() -> Result<(), String> {
     let codex_home = codex_account::get_codex_home();
+    let launch_mode = crate::modules::codex_instance::load_default_settings()?.launch_mode;
     crate::modules::codex_app_injection::stop_for_profile(&codex_home);
 
-    tauri::async_runtime::spawn_blocking(|| process::close_codex_default(20))
-        .await
-        .map_err(|error| format!("停止 Codex 旧授权运行态后台任务失败: {}", error))??;
+    if launch_mode == crate::models::InstanceLaunchMode::App {
+        tauri::async_runtime::spawn_blocking(|| process::close_codex_default(20))
+            .await
+            .map_err(|error| format!("停止 Codex 旧授权运行态后台任务失败: {}", error))??;
+    } else {
+        logger::log_info("[Codex Switch][Backend] CLI 模式无需关闭桌面运行态，继续提交新授权");
+    }
 
     codex_local_access::stop_provider_gateways_for_profile(&codex_home).await;
     if let Err(error) = crate::modules::codex_instance::update_default_pid(None) {
@@ -967,8 +972,8 @@ pub async fn switch_codex_account(
         account_id,
         flow_started.elapsed().as_millis()
     ));
-    // 切换账号事务：先准备并验证目标凭据，通过后才让旧 ChatGPT 与
-    // app-server 退出并提交，避免刷新失败后把用户留在客户端已关闭状态。
+    // 切换账号事务：先准备并验证目标凭据，通过后再按启动模式停止旧运行态并提交。
+    // 桌面模式关闭官方客户端；CLI 模式保留终端进程，仅停止受管 profile 服务。
     let switch_started = Instant::now();
     let step_app = app.clone();
     let step_account_id = account_id.clone();

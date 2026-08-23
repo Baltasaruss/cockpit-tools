@@ -7,6 +7,7 @@ import * as codexLocalAccessService from "../services/codexLocalAccessService";
 import { requestCodexOpenAddAccount } from "../utils/codexAddAccountRequest";
 import { conciseCodexCredentialFailure } from "../utils/codexCredentialProgress";
 import type { CodexSwitchAuthFailure } from "../utils/codexSwitchAuthFailure";
+import { parseWindowsOperationError } from "../utils/windowsOperationError";
 import "./CodexSwitchProgressModal.css";
 
 type SwitchStage = "preparing" | "credentials" | "writing" | "starting" | "completed";
@@ -210,6 +211,9 @@ export function CodexSwitchProgressModal() {
   const account = accounts.find((item) => item.id === state.accountId);
   const accountLabel = account?.account_name || account?.email || state.accountId;
   const isError = state.status === "error";
+  const windowsOperationError = isError
+    ? parseWindowsOperationError(state.error)
+    : null;
   const authFailure = isError ? state.authFailure : null;
   const isApiOnlyAuthFailure = authFailure?.apiOnlyAvailable === true;
   const authReason = authFailure
@@ -548,7 +552,7 @@ export function CodexSwitchProgressModal() {
           )}
           {isError && !authFailure && (
             <div className="codex-switch-progress-error" role="alert">
-              {state.error}
+              {windowsOperationError?.originalReason || state.error}
             </div>
           )}
         </div>
