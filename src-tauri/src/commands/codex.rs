@@ -672,16 +672,9 @@ async fn stop_default_codex_runtime_before_auth_commit() -> Result<(), String> {
     let codex_home = codex_account::get_codex_home();
     crate::modules::codex_app_injection::stop_for_profile(&codex_home);
 
-    let stop_home = codex_home.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        process::close_codex_default(20)?;
-        crate::modules::codex_official_app_server::stop_daemon(
-            &stop_home,
-            std::time::Duration::from_secs(5),
-        )
-    })
-    .await
-    .map_err(|error| format!("停止 Codex 旧授权运行态后台任务失败: {}", error))??;
+    tauri::async_runtime::spawn_blocking(|| process::close_codex_default(20))
+        .await
+        .map_err(|error| format!("停止 Codex 旧授权运行态后台任务失败: {}", error))??;
 
     codex_local_access::stop_provider_gateways_for_profile(&codex_home).await;
     if let Err(error) = crate::modules::codex_instance::update_default_pid(None) {

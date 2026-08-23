@@ -7,6 +7,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [1.3.27] - 2026-08-23
+
+### 修复
+
+- **修复 Windows Codex 切号被系统权限阻断的问题**：恢复稳定的官方客户端关闭与启动方式，不再直接调用 WindowsApps 内部的 `codex.exe app-server daemon stop`，避免“拒绝访问（os error 5）”或 PowerShell 不可用导致切号失败。
+
 ## [1.3.26] - 2026-08-23
 
 ### 修复
