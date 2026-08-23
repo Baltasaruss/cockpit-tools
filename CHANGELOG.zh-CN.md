@@ -7,6 +7,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [1.3.26] - 2026-08-23
+
+### 修复
+
+- **修复 Windows 新版 Codex 切号失败问题**：修复启动官方 `Codex app-server daemon stop` 时，因 WindowsApps 中的 `codex.exe` 返回“拒绝访问（os error 5）”而无法继续切换账号的问题。
+
 ## [1.3.25] - 2026-08-23
 
 ### 变更

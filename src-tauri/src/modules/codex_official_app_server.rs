@@ -22,16 +22,46 @@ const APP_SERVER_DAEMON_STOP_POLL_INTERVAL: Duration = Duration::from_millis(50)
 /// 切号必须在覆盖 auth 存储前调用，避免旧 AuthManager 用旧账号内存态校验新账号凭证。
 pub fn stop_daemon(codex_home: &Path, timeout: Duration) -> Result<(), String> {
     let executable = official_app_server_executable()?;
-    let mut child = build_daemon_stop_command(&executable, codex_home)
-        .spawn()
-        .map_err(|error| {
-            format!(
+    let mut child = match build_daemon_stop_command(&executable, codex_home).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            #[cfg(target_os = "windows")]
+            if should_retry_daemon_stop_via_powershell(&executable, &error) {
+                crate::modules::logger::log_warn(&format!(
+                    "[Codex Official AppServer] WindowsApps direct daemon stop denied; retrying through PowerShell: executable={}, codex_home={}, error={}",
+                    executable.display(),
+                    codex_home.display(),
+                    error
+                ));
+                build_windows_daemon_stop_powershell_command(&executable, codex_home)
+                    .spawn()
+                    .map_err(|fallback_error| {
+                        format!(
+                            "启动官方 Codex app-server daemon stop 失败，PowerShell 兜底也失败 ({} / CODEX_HOME={}): direct_error={}, fallback_error={}",
+                            executable.display(),
+                            codex_home.display(),
+                            error,
+                            fallback_error
+                        )
+                    })?
+            } else {
+                return Err(format!(
+                    "启动官方 Codex app-server daemon stop 失败 ({} / CODEX_HOME={}): {}",
+                    executable.display(),
+                    codex_home.display(),
+                    error
+                ));
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            return Err(format!(
                 "启动官方 Codex app-server daemon stop 失败 ({} / CODEX_HOME={}): {}",
                 executable.display(),
                 codex_home.display(),
                 error
-            )
-        })?;
+            ));
+        }
+    };
     let started = Instant::now();
     loop {
         match child.try_wait() {
@@ -73,6 +103,51 @@ pub fn stop_daemon(codex_home: &Path, timeout: Duration) -> Result<(), String> {
             }
         }
     }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn should_retry_daemon_stop_via_powershell(
+    executable: &Path,
+    error: &std::io::Error,
+) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+        && executable
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+            .contains("\\windowsapps\\")
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn escape_powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_daemon_stop_powershell_command(
+    executable: &Path,
+    codex_home: &Path,
+) -> Command {
+    let executable = escape_powershell_single_quoted(&executable.to_string_lossy());
+    let codex_home = escape_powershell_single_quoted(&codex_home.to_string_lossy());
+    let script = format!(
+        "$env:CODEX_HOME='{codex_home}'; $process=Start-Process -FilePath '{executable}' -ArgumentList @('app-server','daemon','stop') -PassThru -Wait -WindowStyle Hidden -ErrorAction Stop; exit $process.ExitCode"
+    );
+    let mut command = Command::new("powershell.exe");
+    crate::modules::process::apply_managed_proxy_env_to_command(&mut command);
+    command
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
 }
 
 pub fn rebuild_thread_metadata(codex_home: &Path) -> Result<(), String> {
