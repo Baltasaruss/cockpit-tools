@@ -4302,6 +4302,18 @@ pub fn save_user_memory_list(
     modules::user_memory::save_user_memory_list(&id, items)
 }
 
+#[tauri::command]
+pub fn load_ui_preferences() -> Result<modules::ui_preferences::UiPreferences, String> {
+    modules::ui_preferences::load_ui_preferences()
+}
+
+#[tauri::command]
+pub fn save_ui_preferences(
+    values: std::collections::BTreeMap<String, String>,
+) -> Result<modules::ui_preferences::UiPreferences, String> {
+    modules::ui_preferences::save_ui_preferences(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
