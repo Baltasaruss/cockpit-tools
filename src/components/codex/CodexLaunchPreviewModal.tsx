@@ -1,0 +1,972 @@
+import {
+  ArrowRight,
+  BarChart3,
+  CircleAlert,
+  KeyRound,
+  Play,
+  Save,
+  Server,
+  SlidersHorizontal,
+  UserRound,
+  Wrench,
+  X,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { useTranslation } from "react-i18next";
+import { useEscClose } from "../../hooks/useEscClose";
+import {
+  saveCodexInstanceQuickConfig,
+  getCodexInstanceQuickConfig,
+} from "../../services/codexInstanceService";
+import type {
+  CodexAccount,
+  CodexExperimentalModelDefinition,
+  CodexQuickConfig,
+} from "../../types/codex";
+import {
+  formatCodexLoginProvider,
+  getCodexAuthMetadata,
+  getCodexSubscriptionPresentationForAccount,
+  isCodexApiKeyAccount,
+} from "../../types/codex";
+import type { UnifiedQuotaMetric } from "../../presentation/platformAccountPresentation";
+import { buildCodexAccountPresentation } from "../../presentation/platformAccountPresentation";
+import { ModalErrorMessage, useModalErrorState } from "../ModalErrorMessage";
+import {
+  SingleSelectDropdown,
+  type SingleSelectOption,
+} from "../SingleSelectDropdown";
+import { CodexQuotaMiniRows } from "./CodexQuotaMiniRows";
+import { CodexExperimentalModelEditor } from "./CodexExperimentalModelEditor";
+import { CodexSessionVisibilityRepairModal } from "./CodexSessionVisibilityRepairModal";
+import "./CodexLaunchPreviewModal.css";
+
+export const DEFAULT_CODEX_INSTANCE_ID = "__default__";
+
+export interface CodexLaunchPreviewFact {
+  label: string;
+  value: string;
+  monospace?: boolean;
+  wide?: boolean;
+}
+
+export interface CodexLaunchPreviewUsage {
+  label: string;
+  requests?: string | null;
+  tokens?: string | null;
+  cost?: string | null;
+  extraLabel?: string | null;
+  extraValue?: string | null;
+}
+
+export interface CodexLaunchPreviewSummary {
+  badgeLabel?: string;
+  contextText?: string;
+  statusLabel?: string;
+  statusTone?: "success" | "warning" | "neutral";
+  facts?: CodexLaunchPreviewFact[];
+  quotaItems?: UnifiedQuotaMetric[];
+  usage?: CodexLaunchPreviewUsage | null;
+  tags?: string[];
+  footerText?: string;
+}
+
+export interface CodexLaunchPreviewAction {
+  id: string;
+  label: string;
+  description: string;
+  actionLabel?: string;
+  control?: ReactNode;
+  disabled?: boolean;
+  tone?: "default" | "danger";
+  onAction?: () => void | Promise<void>;
+}
+
+interface CodexLaunchPreviewModalProps {
+  account?: CodexAccount | null;
+  accountLabel: string;
+  accountMetaLabel?: string;
+  summary?: CodexLaunchPreviewSummary;
+  actions?: CodexLaunchPreviewAction[];
+  instanceId?: string;
+  instanceLabel?: string;
+  instanceOptions?: SingleSelectOption[];
+  onInstanceChange?: (instanceId: string) => void | Promise<void>;
+  mode?: "account" | "instance" | "apiService";
+  onClose: () => void;
+  onExecute: (launchAfterSwitch: boolean) => Promise<boolean>;
+}
+
+interface ModelConfigSnapshot {
+  enabled: boolean;
+  models: CodexExperimentalModelDefinition[];
+  defaultModelId: string | null;
+}
+
+export function CodexLaunchPreviewModal({
+  account,
+  accountLabel,
+  accountMetaLabel,
+  summary,
+  actions,
+  instanceId = DEFAULT_CODEX_INSTANCE_ID,
+  instanceLabel,
+  instanceOptions,
+  onInstanceChange,
+  mode = "account",
+  onClose,
+  onExecute,
+}: CodexLaunchPreviewModalProps) {
+  const { t } = useTranslation();
+  const [loadedConfig, setLoadedConfig] = useState<CodexQuickConfig | null>(
+    null,
+  );
+  const [catalogEnabled, setCatalogEnabled] = useState(false);
+  const [models, setModels] = useState<CodexExperimentalModelDefinition[]>([]);
+  const [defaultModelId, setDefaultModelId] = useState<string | null>(null);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [changingInstance, setChangingInstance] = useState(false);
+  const [runningActionId, setRunningActionId] = useState<string | null>(null);
+  const [executing, setExecuting] = useState<"switch" | "launch" | null>(null);
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [modelConfigOpen, setModelConfigOpen] = useState(false);
+  const [modelConfigSnapshot, setModelConfigSnapshot] =
+    useState<ModelConfigSnapshot | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const {
+    message: error,
+    scrollKey: errorScrollKey,
+    set: setError,
+  } = useModalErrorState();
+
+  const busy =
+    loading ||
+    saving ||
+    changingInstance ||
+    runningActionId !== null ||
+    executing !== null;
+  const requestClose = useCallback(() => {
+    const hasStackedModal = Array.from(
+      document.querySelectorAll<HTMLElement>(".modal-overlay"),
+    ).some(
+      (element) => !element.classList.contains("codex-launch-preview-overlay"),
+    );
+    if (!hasStackedModal) onClose();
+  }, [onClose]);
+  useEscClose(!busy && !repairOpen && !modelConfigOpen, requestClose);
+
+  const applyLoadedConfig = useCallback((config: CodexQuickConfig) => {
+    setLoadedConfig(config);
+    setCatalogEnabled(config.experimental_model_catalog_enabled);
+    setModels(config.experimental_model_catalog_models);
+    setDefaultModelId(
+      config.experimental_model_catalog_default_model_id ?? null,
+    );
+    setModelsError(null);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadedConfig(null);
+    setCatalogEnabled(false);
+    setModels([]);
+    setDefaultModelId(null);
+    setModelsError(null);
+    setNotice(null);
+    void getCodexInstanceQuickConfig(instanceId)
+      .then((config) => {
+        if (active) applyLoadedConfig(config);
+      })
+      .catch((loadError) => {
+        if (!active) return;
+        setError(
+          t("instances.form.codexQuickConfig.loadFailed", {
+            defaultValue: "加载当前 Codex 配置失败：{{error}}",
+            error: String(loadError).replace(/^Error:\s*/, ""),
+          }),
+        );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [account?.id, applyLoadedConfig, instanceId, setError, t]);
+
+  const dirty = useMemo(() => {
+    if (!loadedConfig) return false;
+    return (
+      loadedConfig.experimental_model_catalog_enabled !== catalogEnabled ||
+      JSON.stringify(loadedConfig.experimental_model_catalog_models) !==
+        JSON.stringify(models) ||
+      (loadedConfig.experimental_model_catalog_default_model_id ?? null) !==
+        defaultModelId
+    );
+  }, [catalogEnabled, defaultModelId, loadedConfig, models]);
+
+  const persistDraft = useCallback(async () => {
+    if (!loadedConfig || (catalogEnabled && modelsError)) {
+      if (catalogEnabled && modelsError) setError(modelsError);
+      return false;
+    }
+    if (!dirty) return true;
+    setSaving(true);
+    setNotice(null);
+    setError(null);
+    try {
+      const saved = await saveCodexInstanceQuickConfig(
+        instanceId,
+        undefined,
+        undefined,
+        catalogEnabled,
+        models,
+        defaultModelId,
+      );
+      applyLoadedConfig(saved);
+      setNotice(
+        t(
+          "codex.modelProviders.quickConfig.saveSuccess",
+          "当前 Codex 配置已保存",
+        ),
+      );
+      return true;
+    } catch (saveError) {
+      setError(
+        t("instances.form.codexQuickConfig.saveFailed", {
+          defaultValue: "保存 Codex 配置失败：{{error}}",
+          error: String(saveError).replace(/^Error:\s*/, ""),
+        }),
+      );
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    applyLoadedConfig,
+    catalogEnabled,
+    defaultModelId,
+    dirty,
+    loadedConfig,
+    models,
+    modelsError,
+    instanceId,
+    setError,
+    t,
+  ]);
+
+  const handleExecute = useCallback(
+    async (launchAfterSwitch: boolean) => {
+      if (busy) return;
+      const saved = await persistDraft();
+      if (!saved) return;
+      setExecuting(launchAfterSwitch ? "launch" : "switch");
+      setNotice(null);
+      setError(null);
+      try {
+        const started = await onExecute(launchAfterSwitch);
+        if (!started) setExecuting(null);
+      } catch (executeError) {
+        setError(String(executeError).replace(/^Error:\s*/, ""));
+        setExecuting(null);
+      }
+    },
+    [busy, onExecute, persistDraft, setError],
+  );
+
+  const unavailable =
+    loadedConfig &&
+    !loadedConfig.experimental_model_catalog_available &&
+    !loadedConfig.experimental_model_catalog_enabled;
+  const defaultModel = defaultModelId
+    ? models.find((model) => model.model_id === defaultModelId)
+    : null;
+  const defaultModelLabel =
+    defaultModel?.display_name ||
+    defaultModel?.model_id ||
+    t("codex.experimentalModelCatalog.models.followOfficial", "跟随官方");
+
+  const isApiKeySubject = Boolean(account && isCodexApiKeyAccount(account));
+  const accountPresentation = useMemo(
+    () => (account ? buildCodexAccountPresentation(account, t) : null),
+    [account, t],
+  );
+  const accountAuthMetadata = useMemo(
+    () => (account && !isApiKeySubject ? getCodexAuthMetadata(account) : null),
+    [account, isApiKeySubject],
+  );
+  const accountSubscription = useMemo(
+    () =>
+      account && !isApiKeySubject
+        ? getCodexSubscriptionPresentationForAccount(account, t)
+        : null,
+    [account, isApiKeySubject, t],
+  );
+  const fallbackContextText = useMemo(() => {
+    if (!account) return "";
+    if (isApiKeySubject) {
+      return (
+        account.api_provider_name?.trim() ||
+        account.api_base_url?.trim() ||
+        account.auth_mode?.trim() ||
+        "API Key"
+      );
+    }
+    const organizationId = account.organization_id?.trim();
+    const workspace =
+      accountAuthMetadata?.workspaces.find(
+        (item) => organizationId && item.id === organizationId,
+      ) ||
+      accountAuthMetadata?.workspaces.find((item) => item.is_default) ||
+      accountAuthMetadata?.workspaces[0];
+    const loginProvider = formatCodexLoginProvider(
+      accountAuthMetadata?.authProvider,
+    );
+    return (
+      account.account_name?.trim() ||
+      workspace?.title?.trim() ||
+      loginProvider ||
+      account.auth_mode?.trim() ||
+      "Codex"
+    );
+  }, [account, accountAuthMetadata, isApiKeySubject]);
+  const fallbackFacts = useMemo<CodexLaunchPreviewFact[]>(() => {
+    if (!account) return [];
+    if (isApiKeySubject) {
+      const modelCount = account.api_model_catalog?.length ?? 0;
+      return [
+        {
+          label: t("codex.api.provider.label", "供应商"),
+          value:
+            account.api_provider_name?.trim() ||
+            account.api_provider_id?.trim() ||
+            t("codex.api.provider.custom", "自定义"),
+        },
+        {
+          label: t("codex.api.baseUrl", "Base URL"),
+          value: account.api_base_url?.trim() || "-",
+          monospace: true,
+          wide: true,
+        },
+        {
+          label: t("codex.api.modelCatalog.label", "模型列表"),
+          value:
+            modelCount > 0
+              ? t("codex.api.modelCatalog.count", {
+                  count: modelCount,
+                  defaultValue: "{{count}} 个模型",
+                })
+              : t("common.none", "暂无"),
+        },
+      ];
+    }
+    return [
+      {
+        label: t("kiro.account.userId", "用户 ID"),
+        value:
+          accountAuthMetadata?.userId?.trim() ||
+          account.user_id?.trim() ||
+          t("common.none", "暂无"),
+        monospace: true,
+      },
+      {
+        label: t("codex.apiSwitchNotice.type.account", "账号"),
+        value:
+          accountAuthMetadata?.chatgptAccountId?.trim() ||
+          account.account_id?.trim() ||
+          t("common.none", "暂无"),
+        monospace: true,
+      },
+      {
+        label: t("codex.subscription.label", "有效期"),
+        value: accountSubscription
+          ? `${accountSubscription.valueText}${
+              accountSubscription.detailText
+                ? ` · ${accountSubscription.detailText}`
+                : ""
+            }`
+          : t("common.none", "暂无"),
+      },
+    ];
+  }, [account, accountAuthMetadata, accountSubscription, isApiKeySubject, t]);
+  const displayFacts = summary?.facts ?? fallbackFacts;
+  const displayQuotaItems =
+    summary?.quotaItems ?? accountPresentation?.quotaItems.slice(0, 3) ?? [];
+  const displayActions = actions ?? [];
+  const displayBadgeLabel =
+    summary?.badgeLabel ||
+    accountMetaLabel ||
+    account?.plan_type ||
+    accountPresentation?.planLabel ||
+    (mode === "apiService" ? "API Key" : "Codex");
+  const displayContextText = summary?.contextText || fallbackContextText;
+  const speedAction = displayActions.find((action) => action.id === "speed");
+  const footerToolActions = displayActions.filter(
+    (action) => action.id !== "delete" && action.id !== "speed",
+  );
+  const subjectIcon =
+    mode === "apiService" ? (
+      <Server size={19} />
+    ) : isApiKeySubject ? (
+      <KeyRound size={19} />
+    ) : (
+      <UserRound size={19} />
+    );
+
+  const openModelConfig = useCallback(() => {
+    if (busy || unavailable) return;
+    setModelConfigSnapshot({
+      enabled: catalogEnabled,
+      models: models.map((model) => ({
+        ...model,
+        reasoning_efforts: model.reasoning_efforts
+          ? [...model.reasoning_efforts]
+          : undefined,
+      })),
+      defaultModelId,
+    });
+    setCatalogEnabled(true);
+    setNotice(null);
+    setError(null);
+    setModelConfigOpen(true);
+  }, [busy, catalogEnabled, defaultModelId, models, setError, unavailable]);
+
+  const handleInstanceChange = useCallback(
+    async (nextInstanceId: string) => {
+      if (
+        busy ||
+        !onInstanceChange ||
+        !nextInstanceId ||
+        nextInstanceId === instanceId
+      ) {
+        return;
+      }
+      const saved = await persistDraft();
+      if (!saved) return;
+      setChangingInstance(true);
+      setNotice(null);
+      setError(null);
+      try {
+        await onInstanceChange(nextInstanceId);
+      } catch (changeError) {
+        setError(String(changeError).replace(/^Error:\s*/, ""));
+      } finally {
+        setChangingInstance(false);
+      }
+    },
+    [busy, instanceId, onInstanceChange, persistDraft, setError],
+  );
+
+  const closeModelConfig = useCallback(
+    (apply: boolean) => {
+      if (apply) {
+        setCatalogEnabled(true);
+      } else if (modelConfigSnapshot) {
+        setCatalogEnabled(modelConfigSnapshot.enabled);
+        setModels(modelConfigSnapshot.models);
+        setDefaultModelId(modelConfigSnapshot.defaultModelId);
+      }
+      setModelConfigSnapshot(null);
+      setModelConfigOpen(false);
+      setModelsError(null);
+    },
+    [modelConfigSnapshot],
+  );
+
+  const handleAuxiliaryAction = useCallback(
+    async (action: CodexLaunchPreviewAction) => {
+      if (busy || action.disabled || !action.onAction) return;
+      setRunningActionId(action.id);
+      setNotice(null);
+      setError(null);
+      try {
+        await action.onAction();
+      } catch (actionError) {
+        setError(String(actionError).replace(/^Error:\s*/, ""));
+      } finally {
+        setRunningActionId(null);
+      }
+    },
+    [busy, setError],
+  );
+
+  const renderFooterAction = (action: CodexLaunchPreviewAction) => (
+    <div
+      key={action.id}
+      className={`codex-launch-preview-action-item ${
+        action.control ? "has-control" : ""
+      }`}
+      title={action.description}
+    >
+      {action.control ? (
+        <>
+          <span className="codex-launch-preview-action-label">
+            {action.label}
+          </span>
+          {action.control}
+        </>
+      ) : (
+        <button
+          type="button"
+          className={`codex-launch-preview-action-button ${
+            action.tone === "danger" ? "is-danger" : ""
+          }`}
+          onClick={() => void handleAuxiliaryAction(action)}
+          disabled={busy || action.disabled || !action.onAction}
+        >
+          {runningActionId === action.id
+            ? t("common.loading", "加载中...")
+            : action.label}
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      <div className="modal-overlay codex-launch-preview-overlay">
+        <div className="modal codex-launch-preview-modal">
+          <div className="modal-header">
+            <div className="codex-launch-preview-title-icon">
+              <Play size={18} />
+            </div>
+            <div className="codex-launch-preview-heading">
+              <h2>{t("codex.launchPreview.title")}</h2>
+            </div>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={requestClose}
+              disabled={busy}
+              aria-label={t("common.close", "关闭")}
+            >
+              <X />
+            </button>
+          </div>
+
+          <div className="modal-body">
+            <ModalErrorMessage message={error} scrollKey={errorScrollKey} />
+
+            <section className="codex-launch-preview-summary-card">
+              <div className="codex-launch-preview-summary-head">
+                <div className="codex-launch-preview-subject">
+                  <div className="codex-launch-preview-subject-icon">
+                    {subjectIcon}
+                  </div>
+                  <div className="codex-launch-preview-subject-copy">
+                    <div className="codex-launch-preview-subject-title-row">
+                      <strong title={accountLabel}>{accountLabel}</strong>
+                      <span className="codex-launch-preview-plan-badge">
+                        {displayBadgeLabel}
+                      </span>
+                      {summary?.statusLabel && (
+                        <span
+                          className={`codex-launch-preview-status-badge ${
+                            summary.statusTone ?? "neutral"
+                          }`}
+                        >
+                          {summary.statusLabel}
+                        </span>
+                      )}
+                    </div>
+                    {displayContextText && (
+                      <span title={displayContextText}>
+                        {displayContextText}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="codex-launch-preview-summary-controls">
+                  <div
+                    className={`codex-launch-preview-target${
+                      instanceOptions?.length && onInstanceChange
+                        ? " is-switchable"
+                        : ""
+                    }`}
+                  >
+                    <span>
+                      {t(
+                        "codex.sessionManager.repairModal.targetInstance",
+                        "目标实例",
+                      )}
+                    </span>
+                    {instanceOptions?.length && onInstanceChange ? (
+                      <SingleSelectDropdown
+                        value={instanceId}
+                        options={instanceOptions}
+                        onChange={(nextInstanceId) =>
+                          void handleInstanceChange(nextInstanceId)
+                        }
+                        className="codex-launch-preview-instance-select"
+                        menuClassName="codex-launch-preview-instance-menu"
+                        disabled={busy}
+                        ariaLabel={t(
+                          "codex.sessionManager.repairModal.targetInstance",
+                          "目标实例",
+                        )}
+                        menuWidth={260}
+                      />
+                    ) : (
+                      <>
+                        <strong>
+                          {instanceLabel ||
+                            t("instances.defaultName", "默认实例")}
+                        </strong>
+                        <ArrowRight size={16} />
+                      </>
+                    )}
+                  </div>
+                  {speedAction?.control && (
+                    <div
+                      className="codex-launch-preview-header-speed"
+                      title={speedAction.description}
+                    >
+                      <span>{speedAction.label}</span>
+                      {speedAction.control}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {displayFacts.length > 0 && (
+                <div className="codex-launch-preview-facts">
+                  {displayFacts.map((fact, index) => (
+                    <div
+                      key={`${fact.label}-${index}`}
+                      className={fact.wide ? "is-wide" : undefined}
+                    >
+                      <span>{fact.label}</span>
+                      <strong
+                        className={fact.monospace ? "is-monospace" : undefined}
+                        title={fact.value}
+                      >
+                        {fact.value}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {summary?.usage &&
+                (summary.usage.requests ||
+                  summary.usage.tokens ||
+                  summary.usage.cost ||
+                  summary.usage.extraValue) && (
+                  <div className="codex-launch-preview-usage">
+                    <div className="codex-launch-preview-usage-title">
+                      <BarChart3 size={15} />
+                      <span>{summary.usage.label}</span>
+                    </div>
+                    <div className="codex-launch-preview-usage-grid">
+                      {summary.usage.requests && (
+                        <div>
+                          <span>
+                            {t("codex.localAccess.stats.requests", "总请求数")}
+                          </span>
+                          <strong>{summary.usage.requests}</strong>
+                        </div>
+                      )}
+                      {summary.usage.tokens && (
+                        <div>
+                          <span>
+                            {t("codex.localAccess.stats.tokens", "总 Token 数")}
+                          </span>
+                          <strong>{summary.usage.tokens}</strong>
+                        </div>
+                      )}
+                      {(summary.usage.cost || summary.usage.extraValue) && (
+                        <div>
+                          {summary.usage.cost && (
+                            <>
+                              <span>
+                                {t(
+                                  "codex.localAccess.stats.estimatedCost",
+                                  "估算价值",
+                                )}
+                              </span>
+                              <strong>{summary.usage.cost}</strong>
+                            </>
+                          )}
+                          {summary.usage.extraValue && (
+                            <div className="codex-launch-preview-usage-extra">
+                              <span>{summary.usage.extraLabel}</span>
+                              <strong>{summary.usage.extraValue}</strong>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+              {displayQuotaItems.length > 0 && (
+                <div className="codex-launch-preview-quota">
+                  <CodexQuotaMiniRows items={displayQuotaItems} t={t} />
+                </div>
+              )}
+
+              {summary?.tags && summary.tags.length > 0 && (
+                <div className="codex-launch-preview-tags">
+                  {summary.tags.slice(0, 8).map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                  {summary.tags.length > 8 && (
+                    <span>+{summary.tags.length - 8}</span>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <div className="codex-launch-preview-tool-list">
+              <section className="codex-launch-preview-tool-row">
+                <div className="codex-launch-preview-tool-icon">
+                  <SlidersHorizontal size={16} />
+                </div>
+                <div className="codex-launch-preview-tool-copy">
+                  <h3>
+                    {t(
+                      "codex.experimentalModelCatalog.models.contextConfig",
+                      "上下文与压缩",
+                    )}
+                  </h3>
+                  <p>{t("codex.launchPreview.modelConfigDialogDescription")}</p>
+                  <div className="codex-launch-preview-tool-meta">
+                    <span className={catalogEnabled ? "is-enabled" : ""}>
+                      {loading
+                        ? t("common.loading", "加载中...")
+                        : catalogEnabled
+                          ? t("codex.launchPreview.modelConfigEnabled")
+                          : t("codex.launchPreview.modelConfigDisabled")}
+                    </span>
+                    <span>
+                      {t("codex.launchPreview.defaultModel", "默认模型")}：
+                      {defaultModelLabel}
+                    </span>
+                    {models.length > 0 && (
+                      <span>
+                        {t("codex.api.modelCatalog.count", {
+                          count: models.length,
+                          defaultValue: "{{count}} 个模型",
+                        })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm codex-launch-preview-tool-action"
+                  onClick={openModelConfig}
+                  disabled={busy || Boolean(unavailable)}
+                >
+                  {catalogEnabled
+                    ? t("codex.launchPreview.manageModelConfig")
+                    : t("codex.launchPreview.enablePerModel")}
+                </button>
+              </section>
+
+              <section className="codex-launch-preview-tool-row">
+                <div className="codex-launch-preview-tool-icon">
+                  <Wrench size={16} />
+                </div>
+                <div className="codex-launch-preview-tool-copy">
+                  <h3>
+                    {t(
+                      "codex.sessionManager.actions.repairVisibility",
+                      "修复可见性",
+                    )}
+                  </h3>
+                  <p>
+                    {t(
+                      "codex.sessionManager.repairModal.modeQuickDesc",
+                      "只校正官方 state DB 和会话文件首条元数据，适合日常切号后恢复。",
+                    )}
+                  </p>
+                  <div className="codex-launch-preview-tool-meta">
+                    <span>
+                      {t(
+                        "codex.sessionManager.repairModal.modeQuick",
+                        "快速修复",
+                      )}
+                    </span>
+                    <span>{t("codex.launchPreview.notApplied")}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm codex-launch-preview-tool-action"
+                  onClick={() => setRepairOpen(true)}
+                  disabled={busy}
+                >
+                  {t(
+                    "codex.sessionManager.actions.repairVisibility",
+                    "修复可见性",
+                  )}
+                </button>
+              </section>
+            </div>
+
+            {notice && (
+              <div className="add-status success">
+                <Save size={14} />
+                <span>{notice}</span>
+              </div>
+            )}
+            {dirty && !notice && (
+              <div className="codex-launch-preview-dirty">
+                <CircleAlert size={14} />
+                <span>{t("codex.launchPreview.unsavedConfig")}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="modal-footer codex-launch-preview-footer">
+            {footerToolActions.length > 0 && (
+              <div className="codex-launch-preview-footer-tools">
+                {footerToolActions.map(renderFooterAction)}
+              </div>
+            )}
+            <div className="codex-launch-preview-footer-main">
+              <div className="codex-launch-preview-footer-start">
+                {summary?.footerText && (
+                  <span className="codex-launch-preview-action-meta">
+                    {summary.footerText}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={requestClose}
+                  disabled={busy}
+                >
+                  {t("common.close", "关闭")}
+                </button>
+              </div>
+              <div className="codex-launch-preview-footer-primary">
+                {dirty && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => void persistDraft()}
+                    disabled={busy || (catalogEnabled && Boolean(modelsError))}
+                  >
+                    <Save size={15} />
+                    {saving
+                      ? t("common.saving", "保存中...")
+                      : t("common.save", "保存")}
+                  </button>
+                )}
+                {mode === "account" && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => void handleExecute(false)}
+                    disabled={busy || (catalogEnabled && Boolean(modelsError))}
+                  >
+                    {executing === "switch"
+                      ? t("common.loading", "加载中...")
+                      : t("codex.switch", "切换")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void handleExecute(mode !== "instance")}
+                  disabled={busy || (catalogEnabled && Boolean(modelsError))}
+                >
+                  {mode !== "instance" && <Play size={15} />}
+                  {executing !== null
+                    ? t("common.loading", "加载中...")
+                    : mode === "account"
+                      ? t("codex.launchPreview.switchAndStart")
+                      : mode === "apiService"
+                        ? t("codex.localAccess.activateAction", "启动 API 服务")
+                        : t("codex.launchPreview.startInstance")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <CodexSessionVisibilityRepairModal
+        open={repairOpen}
+        onClose={() => setRepairOpen(false)}
+        onRepaired={() => {
+          setNotice(t("codex.launchPreview.repairCompleted"));
+        }}
+      />
+
+      {modelConfigOpen && (
+        <div className="modal-overlay codex-launch-preview-model-config-overlay">
+          <div className="modal codex-launch-preview-model-config-modal">
+            <div className="modal-header">
+              <div>
+                <h2>{t("codex.launchPreview.modelConfigTitle")}</h2>
+                <p>{t("codex.launchPreview.modelConfigDialogDescription")}</p>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => closeModelConfig(false)}
+                disabled={busy}
+                aria-label={t("common.close", "关闭")}
+              >
+                <X />
+              </button>
+            </div>
+            <div className="modal-body">
+              <ModalErrorMessage
+                message={catalogEnabled ? modelsError : null}
+                scrollKey={errorScrollKey}
+              />
+              <CodexExperimentalModelEditor
+                models={models}
+                defaultModelId={defaultModelId}
+                mode="inline"
+                onChange={(nextModels) => {
+                  setModels(nextModels);
+                  setNotice(null);
+                  setError(null);
+                }}
+                onDefaultModelChange={(modelId) => {
+                  setDefaultModelId(modelId);
+                  setNotice(null);
+                  setError(null);
+                }}
+                onValidationChange={setModelsError}
+                disabled={busy}
+              />
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => closeModelConfig(false)}
+                disabled={busy}
+              >
+                {t("common.cancel", "取消")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => closeModelConfig(true)}
+                disabled={busy || (catalogEnabled && Boolean(modelsError))}
+              >
+                {t("codex.launchPreview.applyModelConfig")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

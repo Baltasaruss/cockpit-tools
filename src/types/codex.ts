@@ -313,6 +313,10 @@ export interface CodexSessionVisibilityRepairItem {
   updatedSqliteTimestampRowCount: number;
   addedSessionIndexEntryCount: number;
   updatedSessionIndexEntryCount: number;
+  insertedCatalogRowCount: number;
+  removedCatalogRowCount: number;
+  updatedGlobalStateEntryCount: number;
+  skippedRolloutFileCount: number;
   skippedSqliteFile: boolean;
   metadataRebuildFailed: boolean;
   backupDir?: string | null;
@@ -380,6 +384,11 @@ export interface CodexSessionVisibilityRepairSummary {
   updatedSqliteTimestampRowCount: number;
   addedSessionIndexEntryCount: number;
   updatedSessionIndexEntryCount: number;
+  insertedCatalogRowCount: number;
+  removedCatalogRowCount: number;
+  updatedGlobalStateEntryCount: number;
+  skippedRolloutFileCount: number;
+  encryptedContentWarning?: string | null;
   skippedSqliteFileCount: number;
   metadataRebuildFailedCount: number;
   items: CodexSessionVisibilityRepairItem[];

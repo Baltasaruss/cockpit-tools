@@ -82,11 +82,7 @@ type AccountLike = {
 type InstanceSortField = "createdAt" | "lastLaunchedAt";
 type SortDirection = "asc" | "desc";
 type StartInstanceOutcome =
-  | "started"
-  | "already-running"
-  | "missing-path"
-  | "failed"
-  | "cancelled";
+  "started" | "already-running" | "missing-path" | "failed" | "cancelled";
 type AccountSelectPortalPosition = {
   top: number;
   left: number;
@@ -658,10 +654,10 @@ export function InstancesManager<TAccount extends AccountLike>({
   const [formExperimentalModels, setFormExperimentalModels] = useState<
     CodexExperimentalModelDefinition[]
   >([]);
-  const [formExperimentalDefaultModelId, setFormExperimentalDefaultModelId] = useState<string | null>(null);
-  const [formExperimentalModelsError, setFormExperimentalModelsError] = useState<string | null>(
-    null,
-  );
+  const [formExperimentalDefaultModelId, setFormExperimentalDefaultModelId] =
+    useState<string | null>(null);
+  const [formExperimentalModelsError, setFormExperimentalModelsError] =
+    useState<string | null>(null);
   const [formCodexQuickConfigLoading, setFormCodexQuickConfigLoading] =
     useState(false);
   const [formCodexQuickConfigError, setFormCodexQuickConfigError] = useState<
@@ -1107,9 +1103,8 @@ export function InstancesManager<TAccount extends AccountLike>({
   useEffect(() => {
     if (!isCodexApp || !onInstanceStarted) return;
     const handleTransferredLaunch = (event: Event) => {
-      const instance = (
-        event as CustomEvent<{ instance?: InstanceProfile }>
-      ).detail?.instance;
+      const instance = (event as CustomEvent<{ instance?: InstanceProfile }>)
+        .detail?.instance;
       if (!instance) return;
       void Promise.resolve(onInstanceStarted(instance)).catch((error) => {
         setMessage({ text: String(error), tone: "error" });
@@ -1561,8 +1556,7 @@ export function InstancesManager<TAccount extends AccountLike>({
 
   const handleStart = async (instance: InstanceProfile) => {
     await startStoppedInstance(instance, {
-      showRunningNotice:
-        supportsStopControl && !usesTerminalLaunch(instance),
+      showRunningNotice: supportsStopControl && !usesTerminalLaunch(instance),
       showSuccessMessage: true,
     });
   };
@@ -1862,8 +1856,8 @@ export function InstancesManager<TAccount extends AccountLike>({
         formExperimentalModelCatalogEnabled ||
       JSON.stringify(formCodexQuickConfig.experimental_model_catalog_models) !==
         JSON.stringify(formExperimentalModels) ||
-      (formCodexQuickConfig.experimental_model_catalog_default_model_id ?? null) !==
-        formExperimentalDefaultModelId
+      (formCodexQuickConfig.experimental_model_catalog_default_model_id ??
+        null) !== formExperimentalDefaultModelId
     );
   }, [
     formCodexQuickConfig,
@@ -2161,6 +2155,7 @@ export function InstancesManager<TAccount extends AccountLike>({
         instanceId: instance.id,
         bindAccountId: normalizedNextId,
         followLocalAccount: instance.isDefault ? false : undefined,
+        deferBindAccountApplication: isCodexApp,
       });
     } catch (e) {
       setMessage({ text: String(e), tone: "error" });
@@ -2572,9 +2567,7 @@ export function InstancesManager<TAccount extends AccountLike>({
                     title={t("instances.actions.edit", "编辑")}
                     onClick={() => openEditModal(instance)}
                     disabled={
-                      isInstanceBusy ||
-                      restartingAll ||
-                      bulkActionLoading
+                      isInstanceBusy || restartingAll || bulkActionLoading
                     }
                   >
                     <Pencil size={16} />
@@ -3008,10 +3001,7 @@ export function InstancesManager<TAccount extends AccountLike>({
                           : [
                               {
                                 value: "__default__",
-                                label: t(
-                                  "instances.defaultName",
-                                  "默认实例",
-                                ),
+                                label: t("instances.defaultName", "默认实例"),
                               },
                             ]
                       }
@@ -3019,10 +3009,7 @@ export function InstancesManager<TAccount extends AccountLike>({
                         "instances.form.copySourcePlaceholder",
                         "选择来源实例",
                       )}
-                      ariaLabel={t(
-                        "instances.form.copySource",
-                        "复制来源实例",
-                      )}
+                      ariaLabel={t("instances.form.copySource", "复制来源实例")}
                       className="instance-copy-source-select"
                     />
                     <p className="form-hint">

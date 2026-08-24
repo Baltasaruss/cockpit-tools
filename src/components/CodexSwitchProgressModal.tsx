@@ -21,13 +21,7 @@ type SwitchStepId =
   | "writeCredentials"
   | "syncSettings"
   | "startClient";
-type SwitchStepStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "warning"
-  | "skipped"
-  | "error";
+type SwitchStepStatus = "pending" | "running" | "completed" | "warning" | "skipped" | "error";
 type SwitchStepDetails = Record<string, unknown>;
 
 interface SwitchProgressPayload {
@@ -40,6 +34,7 @@ interface SwitchProgressPayload {
   step?: SwitchStepId;
   stepStatus?: SwitchStepStatus;
   details?: SwitchStepDetails;
+  launchAfterSwitch?: boolean;
 }
 
 interface SwitchStepState {
@@ -55,6 +50,7 @@ interface SwitchProgressState {
   steps: SwitchStepState[];
   error?: string;
   authFailure?: CodexSwitchAuthFailure | null;
+  launchAfterSwitch?: boolean;
 }
 
 const EVENT_NAME = "codex-switch-progress";
@@ -69,12 +65,13 @@ const STEP_IDS: SwitchStepId[] = [
   "startClient",
 ];
 
-function createProgressState(accountId: string): SwitchProgressState {
+function createProgressState(accountId: string, launchAfterSwitch?: boolean): SwitchProgressState {
   return {
     accountId,
     progress: 4,
     status: "running",
     steps: STEP_IDS.map((id) => ({ id, status: "pending", details: {} })),
+    launchAfterSwitch,
   };
 }
 
@@ -112,12 +109,12 @@ export function CodexSwitchProgressModal() {
       }
 
       setState((previous) => {
-        if (detail.type === "start") return createProgressState(accountId);
-        const base =
-          previous?.accountId === accountId ? previous : createProgressState(accountId);
+        if (detail.type === "start") {
+          return createProgressState(accountId, detail.launchAfterSwitch);
+        }
+        const base = previous?.accountId === accountId ? previous : createProgressState(accountId);
         if (detail.type === "error") {
-          const errorText =
-            detail.error || base.error || t("common.failed", "失败");
+          const errorText = detail.error || base.error || t("common.failed", "失败");
           const steps = base.steps.map((step) => ({ ...step }));
           let targetIndex = steps.findIndex((step) => step.status === "running");
           if (targetIndex < 0) {
@@ -143,8 +140,7 @@ export function CodexSwitchProgressModal() {
             steps,
             status: "error",
             error: errorText,
-            authFailure:
-              detail.authFailure === undefined ? base.authFailure : detail.authFailure,
+            authFailure: detail.authFailure === undefined ? base.authFailure : detail.authFailure,
           };
         }
         if (detail.type === "complete" || detail.stage === "completed") {
@@ -211,9 +207,7 @@ export function CodexSwitchProgressModal() {
   const account = accounts.find((item) => item.id === state.accountId);
   const accountLabel = account?.account_name || account?.email || state.accountId;
   const isError = state.status === "error";
-  const windowsOperationError = isError
-    ? parseWindowsOperationError(state.error)
-    : null;
+  const windowsOperationError = isError ? parseWindowsOperationError(state.error) : null;
   const authFailure = isError ? state.authFailure : null;
   const isApiOnlyAuthFailure = authFailure?.apiOnlyAvailable === true;
   const authReason = authFailure
@@ -227,15 +221,9 @@ export function CodexSwitchProgressModal() {
             ? t("codex.switchAuth.idTokenUnavailable")
             : t("codex.authError.invalidGrant")
     : "";
-  const authTechnicalReason = authFailure
-    ? conciseCodexCredentialFailure(authFailure.message)
-    : "";
+  const authTechnicalReason = authFailure ? conciseCodexCredentialFailure(authFailure.message) : "";
 
-  const formatExpiry = (
-    expiresAt: number | null,
-    present: boolean | null,
-    opaque = false,
-  ) => {
+  const formatExpiry = (expiresAt: number | null, present: boolean | null, opaque = false) => {
     if (present === false) return t("codex.switchProgress.detail.missing");
     if (expiresAt === null) {
       return opaque
@@ -318,14 +306,10 @@ export function CodexSwitchProgressModal() {
           return [t("codex.switchProgress.detail.refreshSkipped")];
         }
         if (status === "error") {
-          const failure = conciseCodexCredentialFailure(
-            details.error || state.error,
-          );
+          const failure = conciseCodexCredentialFailure(details.error || state.error);
           return [
             t("codex.switchProgress.detail.refreshFailed"),
-            ...(failure
-              ? [`${t("codex.switchAuth.reasonLabel")}：${failure}`]
-              : []),
+            ...(failure ? [`${t("codex.switchAuth.reasonLabel")}：${failure}`] : []),
           ];
         }
         const lines = [
@@ -397,6 +381,7 @@ export function CodexSwitchProgressModal() {
       tab: "oauth",
       targetAccountId: accountId,
       retrySwitchAfterOAuth: true,
+      retrySwitchLaunchAfterSwitch: state.launchAfterSwitch,
     });
   };
 
@@ -409,14 +394,14 @@ export function CodexSwitchProgressModal() {
         state.accountId,
       ]);
       if (!result.syncedAccountIds.includes(state.accountId)) {
-        const skipped = result.skippedAccounts.find(
-          (item) => item.accountId === state.accountId,
-        );
+        const skipped = result.skippedAccounts.find((item) => item.accountId === state.accountId);
         throw new Error(skipped?.reason || "not_available");
       }
       setState(null);
       window.dispatchEvent(
-        new CustomEvent("app-request-navigate", { detail: "codex-api-service" }),
+        new CustomEvent("app-request-navigate", {
+          detail: "codex-api-service",
+        }),
       );
     } catch (error) {
       setActionError(
@@ -453,7 +438,11 @@ export function CodexSwitchProgressModal() {
             className={`codex-switch-progress-icon ${isError ? (isApiOnlyAuthFailure ? "warning" : "error") : ""} ${state.status === "completed" ? "completed" : ""}`}
           >
             {isError ? (
-              isApiOnlyAuthFailure ? <AlertTriangle size={20} /> : <X size={20} />
+              isApiOnlyAuthFailure ? (
+                <AlertTriangle size={20} />
+              ) : (
+                <X size={20} />
+              )
             ) : state.status === "completed" ? (
               <Check size={20} />
             ) : (
@@ -537,9 +526,7 @@ export function CodexSwitchProgressModal() {
               {authFailure.apiOnlyAvailable && authFailure.accessTokenExpiresAt && (
                 <div className="codex-switch-auth-expiry">
                   {t("codex.switchAuth.accessTokenExpiry", {
-                    time: new Date(
-                      authFailure.accessTokenExpiresAt * 1000,
-                    ).toLocaleString(),
+                    time: new Date(authFailure.accessTokenExpiresAt * 1000).toLocaleString(),
                   })}
                 </div>
               )}

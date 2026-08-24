@@ -2558,7 +2558,7 @@ fn is_codex_macos_main_process_command_line(lower_cmdline: &str) -> bool {
         || lower_cmdline.contains("codex.app/contents/macos/codex")
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "linux"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexProcessTreeEntry {
     pid: u32,
@@ -2566,7 +2566,7 @@ struct CodexProcessTreeEntry {
     command_line: String,
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "linux"))]
 fn is_codex_direct_app_server_command_line(
     command_line: &str,
     expected_resource_executable: &str,
@@ -2596,7 +2596,7 @@ fn is_codex_direct_app_server_command_line(
     !after_app_server.trim_start().starts_with("daemon")
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "linux"))]
 fn select_codex_direct_app_server_descendants(
     entries: &[CodexProcessTreeEntry],
     root_pids: &[u32],

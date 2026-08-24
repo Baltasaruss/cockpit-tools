@@ -47,10 +47,13 @@ export async function startInstance(
         options?.transferConflictingAccount === true ? true : null,
     });
   } finally {
-    console.info("[Codex Start][Service] invoke codex_start_instance finished", {
-      instanceId,
-      elapsedMs: Math.round(performance.now() - startedAt),
-    });
+    console.info(
+      "[Codex Start][Service] invoke codex_start_instance finished",
+      {
+        instanceId,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      },
+    );
   }
 }
 export const stopInstance = service.stopInstance;
@@ -91,6 +94,7 @@ export async function updateInstance(payload: {
   launchMode?: InstanceLaunchMode;
   appSpeed?: CodexAppSpeed;
   autoSyncThreads?: boolean;
+  deferBindAccountApplication?: boolean;
 }): Promise<InstanceProfile> {
   const body: Record<string, unknown> = {
     instanceId: payload.instanceId,
@@ -119,6 +123,9 @@ export async function updateInstance(payload: {
   if (payload.autoSyncThreads !== undefined) {
     body.autoSyncThreads = payload.autoSyncThreads;
   }
+  if (payload.deferBindAccountApplication !== undefined) {
+    body.deferBindAccountApplication = payload.deferBindAccountApplication;
+  }
   return await invoke("codex_update_instance", body);
 }
 
@@ -144,7 +151,8 @@ export async function saveCodexInstanceQuickConfig(
     autoCompactTokenLimit: autoCompactTokenLimit ?? null,
     experimentalModelCatalogEnabled: experimentalModelCatalogEnabled ?? null,
     experimentalModelCatalogModels: experimentalModelCatalogModels ?? null,
-    experimentalModelCatalogDefaultModelId: experimentalModelCatalogDefaultModelId ?? null,
+    experimentalModelCatalogDefaultModelId:
+      experimentalModelCatalogDefaultModelId ?? null,
   });
 }
 
@@ -236,23 +244,17 @@ export async function repairSessionVisibilityAcrossInstances(
   });
 }
 
-export async function listSessionVisibilityRepairInstances(): Promise<
-  CodexSessionVisibilityRepairInstanceList
-> {
+export async function listSessionVisibilityRepairInstances(): Promise<CodexSessionVisibilityRepairInstanceList> {
   return await invoke("codex_list_session_visibility_repair_instances");
 }
 
-export async function listSessionVisibilityRepairProviders(): Promise<
-  CodexSessionVisibilityRepairProviderList
-> {
+export async function listSessionVisibilityRepairProviders(): Promise<CodexSessionVisibilityRepairProviderList> {
   return await invoke("codex_list_session_visibility_repair_providers");
 }
 
 export async function listSessionsAcrossInstances(
   options: CodexSessionSearchOptions = {},
-): Promise<
-  CodexSessionRecord[]
-> {
+): Promise<CodexSessionRecord[]> {
   return await invoke("codex_list_sessions_across_instances", {
     titleQuery: options.titleQuery?.trim() || null,
     contentQuery: options.contentQuery?.trim() || null,

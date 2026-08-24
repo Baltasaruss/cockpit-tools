@@ -7,6 +7,29 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.29] - 2026-08-24
+
+### Added
+
+- **Codex adds a unified launch preview**: before starting OAuth accounts, API Keys, or the local API Service from the account overview or instance manager, users can review account, quota, usage, and target-instance status in one dialog, switch the target instance and runtime speed, manage visible and default models plus per-model reasoning, context, and compaction settings, repair session visibility, and use common account actions. Account launches can explicitly choose Switch or Switch and Start, and client state changes only after confirmation.
+- **Codex history now supports full provider migration and catalog repair**: migrate provider metadata across `sessions` and `archived_sessions`, update provider, user-event, workspace-path, and local-catalog records across all session SQLite databases, restore missing catalog rows, remove accidental sub-agent entries, normalize global workspace state, and warn when encrypted history may not continue across providers. Preview, selected-session, and multi-instance scopes remain available, with rollback backups and stopped-target protection before writes.
+- **Codex accounts now support device-code authorization**: choose browser OAuth or device auth at any time, open the Codex security setting when device codes need to be enabled, enter the verification code, and let Cockpit complete sign-in and account setup without using local callback port `1455`. Browser and device authorization also request the read and invoke scopes required by Codex Connectors.
+- **Codex API Service now supports Live and Realtime APIs**: create WebRTC calls, connect sideband and Realtime WebSockets, issue client secrets, create sessions and transcription sessions, translate Realtime content, and control calls with hangup, accept, reject, and refer operations.
+- **Codex API Service adds expanded request and conversation capabilities**: requests can use HTTP/SSE or Responses WebSocket transport, preserve reasoning replay across turns, run Multi-Agent V2 workloads, and expose the expanded Codex model catalog.
+
+### Changed
+
+- **Codex quick session repair now follows the official sidebar visibility rules**: it checks only the target instance's official `state_5.sqlite` and referenced rollouts, filters by the active provider, active state, preview, rollout path, and root-session source, fills missing previews for visible sessions, and avoids scanning or rewriting archived, sub-agent, or unrelated history files.
+- **Codex session-repair provider discovery is now faster**: target-provider candidates are read only from each instance's `config.toml` and official `state_5.sqlite`; opening the repair dialog no longer scans rollout files under `sessions` or `archived_sessions`.
+
+### Fixed
+
+- **Fixed Linux installers being missing from the official Release**: fixed a Linux-target compilation failure in Codex desktop process detection, restoring AppImage, deb, and rpm release builds for both x86_64 and aarch64.
+- **Fixed standalone OAuth launches being reported as expired after that OAuth account was bound to an API Key account**: combined profiles now retain the actual OAuth credential owner and recover the latest tokens rotated by the official client before launch. Unbinding, rebinding, or moving between stable, development, and managed instances no longer causes an old `refresh_token` to be reused and rejected as `refresh_token_reused`, while the original API Key provider configuration remains intact.
+- **Fixed Codex API Service usage being duplicated across members of the same Team/Workspace**: account-window statistics now use Cockpit's local account ID, so multiple local accounts that share one upstream `account_id` keep separate request and token totals.
+- **Fixed abnormal Codex API Key accounts showing generated `api-key-xxxx` identifiers instead of custom titles**: the account health dialog now prefers the manually assigned account name and falls back to the generated identifier only when no custom name is configured.
+- **Fixed quota refreshes being misreported as account errors while the official ChatGPT/Codex client is running**: quota queries now require only a valid `access_token` and no longer rotate the `refresh_token` because the `id_token` is nearing expiry or a proactive keepalive interval elapsed. When the official client owns the RT, Cockpit can still fetch current quota with a valid AT; if a newer AT must be awaited, the previous quota is retained without exposing the internal RT-ownership notice or marking the account as a quota failure.
+
 ## [1.3.28] - 2026-08-23
 
 ### Fixed

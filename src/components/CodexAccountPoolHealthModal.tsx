@@ -8,6 +8,7 @@ import type {
 } from "../types/codexLocalAccess";
 import { buildCodexAccountPresentation } from "../presentation/platformAccountPresentation";
 import { isBlockingCodexAccountQuotaError } from "../utils/codexQuotaError";
+import { resolveCodexHealthIssueDisplayName } from "../utils/codexAccountDisplayName";
 import {
   ModalErrorMessage,
   useModalErrorState,
@@ -43,17 +44,17 @@ interface HealthIssue {
   health: CodexLocalAccessAccountHealth | null;
 }
 
-/** Prefer email so org display names like "MicroCorp" don't hide which account it is. */
 function resolveIssueDisplayName(
   account: CodexAccount | undefined,
   health: CodexLocalAccessAccountHealth | null,
   accountId: string,
 ): string {
-  const email = account?.email?.trim() || health?.email?.trim();
-  if (email) return email;
-  const name = account?.account_name?.trim();
-  if (name) return name;
-  return accountId;
+  return resolveCodexHealthIssueDisplayName(
+    account?.account_name,
+    account?.email,
+    health?.email,
+    accountId,
+  );
 }
 
 function issueKindForHealth(

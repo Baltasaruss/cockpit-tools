@@ -7,6 +7,7 @@ export type CodexOpenAddAccountDetail = {
   autoJoinApiService?: boolean;
   targetAccountId?: string;
   retrySwitchAfterOAuth?: boolean;
+  retrySwitchLaunchAfterSwitch?: boolean;
   retryInstanceLaunchAfterOAuth?: boolean;
   retryInstanceId?: string;
   tab?: CodexAddAccountTab;
@@ -21,20 +22,22 @@ export function takePendingCodexOpenAddAccountRequest(): CodexOpenAddAccountDeta
 }
 
 /** Ask Codex suite pages to stay mounted and open the shared add-account modal. */
-export function requestCodexOpenAddAccount(
-  detail: CodexOpenAddAccountDetail = {},
-): void {
+export function requestCodexOpenAddAccount(detail: CodexOpenAddAccountDetail = {}): void {
   const autoJoinApiService = detail.autoJoinApiService === true;
   const targetAccountId = detail.targetAccountId?.trim() || undefined;
   const retrySwitchAfterOAuth = detail.retrySwitchAfterOAuth === true;
-  const retryInstanceLaunchAfterOAuth =
-    detail.retryInstanceLaunchAfterOAuth === true;
+  const retrySwitchLaunchAfterSwitch =
+    typeof detail.retrySwitchLaunchAfterSwitch === 'boolean'
+      ? detail.retrySwitchLaunchAfterSwitch
+      : undefined;
+  const retryInstanceLaunchAfterOAuth = detail.retryInstanceLaunchAfterOAuth === true;
   const retryInstanceId = detail.retryInstanceId?.trim() || undefined;
   const tab = detail.tab ?? 'oauth';
   const normalized = {
     autoJoinApiService,
     targetAccountId,
     retrySwitchAfterOAuth,
+    retrySwitchLaunchAfterSwitch,
     retryInstanceLaunchAfterOAuth,
     retryInstanceId,
     tab,

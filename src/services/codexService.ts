@@ -21,6 +21,13 @@ export interface CodexOAuthLoginStartResponse {
   authUrl: string;
 }
 
+export interface CodexDeviceAuthStartResponse {
+  loginId: string;
+  userCode: string;
+  verificationUrl: string;
+  pollIntervalSeconds: number;
+}
+
 /** 列出所有 Codex 账号 */
 export async function listCodexAccounts(): Promise<CodexAccount[]> {
   return await invoke('list_codex_accounts');
@@ -77,7 +84,9 @@ export async function getCodexApiServiceAppSpeedConfig(): Promise<CodexAppSpeedC
   return await invoke('get_codex_api_service_app_speed_config');
 }
 
-export async function saveCodexApiServiceAppSpeed(speed: CodexAppSpeed): Promise<CodexAppSpeedConfig> {
+export async function saveCodexApiServiceAppSpeed(
+  speed: CodexAppSpeed,
+): Promise<CodexAppSpeedConfig> {
   return await invoke('save_codex_api_service_app_speed', { speed });
 }
 
@@ -96,38 +105,55 @@ export async function refreshCodexAccountProfile(accountId: string): Promise<Cod
 /** 切换 Codex 账号 */
 export async function switchCodexAccount(
   accountId: string,
-  options?: { reauthTokenGeneration?: number },
+  options?: { reauthTokenGeneration?: number; launchAfterSwitch?: boolean },
 ): Promise<CodexAccount> {
   const startedAt = performance.now();
   console.info('[Codex Switch][Service] invoke switch_codex_account started', {
     accountId,
   });
   try {
-    window.dispatchEvent(new CustomEvent('codex-switch-progress', {
-      detail: { type: 'start', accountId, stage: 'preparing', progress: 4 },
-    }));
+    window.dispatchEvent(
+      new CustomEvent('codex-switch-progress', {
+        detail: {
+          type: 'start',
+          accountId,
+          stage: 'preparing',
+          progress: 4,
+          launchAfterSwitch: options?.launchAfterSwitch,
+        },
+      }),
+    );
     const account = await invoke<CodexAccount>('switch_codex_account', {
       accountId,
       autoRepairMode: null,
       reauthTokenGeneration:
-        typeof options?.reauthTokenGeneration === 'number'
-          ? options.reauthTokenGeneration
-          : null,
+        typeof options?.reauthTokenGeneration === 'number' ? options.reauthTokenGeneration : null,
+      launchAfterSwitch:
+        typeof options?.launchAfterSwitch === 'boolean' ? options.launchAfterSwitch : null,
     });
-    window.dispatchEvent(new CustomEvent('codex-switch-progress', {
-      detail: { type: 'complete', accountId, stage: 'completed', progress: 100 },
-    }));
+    window.dispatchEvent(
+      new CustomEvent('codex-switch-progress', {
+        detail: {
+          type: 'complete',
+          accountId,
+          stage: 'completed',
+          progress: 100,
+        },
+      }),
+    );
     return account;
   } catch (error) {
     const normalizedError = normalizeCodexSwitchError(error);
-    window.dispatchEvent(new CustomEvent('codex-switch-progress', {
-      detail: {
-        type: 'error',
-        accountId,
-        error: normalizedError.message,
-        authFailure: normalizedError.authFailure,
-      },
-    }));
+    window.dispatchEvent(
+      new CustomEvent('codex-switch-progress', {
+        detail: {
+          type: 'error',
+          accountId,
+          error: normalizedError.message,
+          authFailure: normalizedError.authFailure,
+        },
+      }),
+    );
     throw normalizedError;
   } finally {
     console.info('[Codex Switch][Service] invoke switch_codex_account finished', {
@@ -153,21 +179,15 @@ export async function startCodexBatchDelete(
   return await invoke('start_codex_batch_delete', { accountIds });
 }
 
-export async function getCodexBatchDelete(
-  jobId: string,
-): Promise<CodexBatchDeleteJobStatus> {
+export async function getCodexBatchDelete(jobId: string): Promise<CodexBatchDeleteJobStatus> {
   return await invoke('get_codex_batch_delete', { jobId });
 }
 
-export async function resumeCodexBatchDelete(
-  jobId: string,
-): Promise<CodexBatchDeleteJobStatus> {
+export async function resumeCodexBatchDelete(jobId: string): Promise<CodexBatchDeleteJobStatus> {
   return await invoke('resume_codex_batch_delete', { jobId });
 }
 
-export async function pauseCodexBatchDelete(
-  jobId: string,
-): Promise<CodexBatchDeleteJobStatus> {
+export async function pauseCodexBatchDelete(jobId: string): Promise<CodexBatchDeleteJobStatus> {
   return await invoke('pause_codex_batch_delete', { jobId });
 }
 
@@ -271,7 +291,10 @@ export async function startCodexBatchImportFromFiles(
   filePaths: string[],
   checkQuota = false,
 ): Promise<CodexBatchImportStartResult> {
-  return await invoke('start_codex_batch_import_from_files', { filePaths, checkQuota });
+  return await invoke('start_codex_batch_import_from_files', {
+    filePaths,
+    checkQuota,
+  });
 }
 
 export async function cancelCodexBatchImport(sessionId: string): Promise<void> {
@@ -301,9 +324,7 @@ export async function refreshCodexQuota(accountId: string): Promise<CodexQuota> 
 }
 
 /** 获取 Codex 主动重置次数明细 */
-export async function getCodexResetCredits(
-  accountId: string,
-): Promise<CodexResetCreditsSnapshot> {
+export async function getCodexResetCredits(accountId: string): Promise<CodexResetCreditsSnapshot> {
   return await invoke('get_codex_reset_credits', { accountId });
 }
 
@@ -339,6 +360,11 @@ export async function startCodexOAuthLogin(): Promise<CodexOAuthLoginStartRespon
   return await invoke('codex_oauth_login_start');
 }
 
+/** 官方 Codex device-auth 流程：返回设备码并在后端轮询授权结果 */
+export async function startCodexDeviceAuth(): Promise<CodexDeviceAuthStartResponse> {
+  return await invoke('codex_oauth_device_auth_start');
+}
+
 /** 在内置无痕 WebView 中打开当前 Codex OAuth 授权地址 */
 export async function openCodexOAuthIncognitoWindow(authUrl: string): Promise<void> {
   await invoke('codex_oauth_open_incognito_window', { authUrl });
@@ -347,7 +373,7 @@ export async function openCodexOAuthIncognitoWindow(authUrl: string): Promise<vo
 /** 新 OAuth 流程：完成登录 */
 export async function completeCodexOAuthLogin(
   loginId: string,
-  reauthAccountId?: string | null
+  reauthAccountId?: string | null,
 ): Promise<CodexAccount> {
   return await invoke('codex_oauth_login_completed', {
     loginId,
@@ -365,14 +391,17 @@ export async function submitCodexOAuthCallbackUrl(
   loginId: string,
   callbackUrl: string,
 ): Promise<void> {
-  return await invoke('codex_oauth_submit_callback_url', { loginId, callbackUrl });
+  return await invoke('codex_oauth_submit_callback_url', {
+    loginId,
+    callbackUrl,
+  });
 }
 
 /** 通过 Token 添加账号 */
 export async function addCodexAccountWithToken(
   idToken: string,
   accessToken: string,
-  refreshToken?: string
+  refreshToken?: string,
 ): Promise<CodexAccount> {
   return await invoke('add_codex_account_with_token', {
     idToken,
@@ -416,7 +445,10 @@ export async function addCodexAccountWithApiKey(
   });
 }
 
-export async function updateCodexAccountName(accountId: string, name: string): Promise<CodexAccount> {
+export async function updateCodexAccountName(
+  accountId: string,
+  name: string,
+): Promise<CodexAccount> {
   return await invoke('update_codex_account_name', { accountId, name });
 }
 
@@ -506,7 +538,10 @@ export async function closeCodexOAuthPort(): Promise<number> {
   return await invoke('close_codex_oauth_port');
 }
 
-export async function updateCodexAccountTags(accountId: string, tags: string[]): Promise<CodexAccount> {
+export async function updateCodexAccountTags(
+  accountId: string,
+  tags: string[],
+): Promise<CodexAccount> {
   return await invoke('update_codex_account_tags', { accountId, tags });
 }
 
@@ -514,7 +549,10 @@ export async function updateCodexAccountsFingerprintMode(
   accountIds: string[],
   mode: CodexFingerprintMode,
 ): Promise<CodexAccount[]> {
-  return await invoke('update_codex_accounts_fingerprint_mode', { accountIds, mode });
+  return await invoke('update_codex_accounts_fingerprint_mode', {
+    accountIds,
+    mode,
+  });
 }
 
 export async function updateCodexAccountClientPolicy(
@@ -534,7 +572,7 @@ export async function updateCodexAccountInstanceAccess(
   accessMode?: string | null,
   startupModel?: string | null,
 ): Promise<CodexAccount> {
-  return await invoke("update_codex_account_instance_access", {
+  return await invoke('update_codex_account_instance_access', {
     accountId,
     accessMode: accessMode ?? null,
     startupModel: startupModel ?? null,
@@ -565,7 +603,10 @@ export async function createPendingCodexOAuthAccount(
   email: string,
   update: CodexAccountNoteUpdate,
 ): Promise<CodexAccount> {
-  return await invoke('create_pending_codex_oauth_account', { email, ...update });
+  return await invoke('create_pending_codex_oauth_account', {
+    email,
+    ...update,
+  });
 }
 
 export interface CodexMailPreviewFetchResult {

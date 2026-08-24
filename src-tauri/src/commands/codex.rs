@@ -867,6 +867,7 @@ pub async fn switch_codex_account(
     account_id: String,
     auto_repair_mode: Option<codex_session_visibility::CodexSessionVisibilityAutoRepairMode>,
     reauth_token_generation: Option<u64>,
+    launch_after_switch: Option<bool>,
 ) -> Result<CodexAccount, String> {
     let mut progress_guard = CodexSwitchProgressGuard {
         app: app.clone(),
@@ -908,7 +909,8 @@ pub async fn switch_codex_account(
         && (access_token_refresh_due || id_token_refresh_due || initial_account.requires_reauth);
     let initial_token_generation = initial_account.token_generation;
     let user_config = config::get_user_config();
-    if user_config.codex_launch_on_switch {
+    let launch_after_switch = launch_after_switch.unwrap_or(user_config.codex_launch_on_switch);
+    if launch_after_switch {
         let default_settings = crate::modules::codex_instance::load_default_settings()?;
         if default_settings.launch_mode != crate::models::InstanceLaunchMode::Cli {
             process::ensure_codex_launch_path_configured()?;
@@ -1182,7 +1184,7 @@ pub async fn switch_codex_account(
         serde_json::json!({}),
     );
 
-    if user_config.codex_launch_on_switch {
+    if launch_after_switch {
         emit_codex_switch_step(
             &app,
             &account_id,
@@ -1199,6 +1201,7 @@ pub async fn switch_codex_account(
         let launch_error =
             match crate::commands::codex_instance::codex_start_default_with_prepared_profile(
                 app.clone(),
+                false,
             )
             .await
             {
@@ -1285,7 +1288,7 @@ async fn run_codex_post_refresh_checks(app: &AppHandle) {
     match codex_account::pick_auto_switch_target_if_needed() {
         Ok(Some(target)) => {
             let target_id = target.id.clone();
-            match switch_codex_account(app.clone(), target_id.clone(), None, None).await {
+            match switch_codex_account(app.clone(), target_id.clone(), None, None, None).await {
                 Ok(switched_account) => {
                     logger::log_info(&format!(
                         "[AutoSwitch][Codex] 自动切号完成: target_id={}, email={}",
@@ -1747,6 +1750,15 @@ pub async fn codex_oauth_login_start(
         response.login_id
     ));
     Ok(response)
+}
+
+/// OAuth：使用官方设备授权流程（无本地回调端口）
+#[tauri::command]
+pub async fn codex_oauth_device_auth_start(
+    app_handle: AppHandle,
+) -> Result<codex_oauth::CodexDeviceAuthStartResponse, String> {
+    logger::log_info("Codex OAuth device-auth 命令触发");
+    codex_oauth::start_device_auth(app_handle).await
 }
 
 /// OAuth：在内置无痕 WebView 中打开当前授权地址
@@ -4656,6 +4668,7 @@ pub async fn codex_local_access_activate(
         }
         match crate::commands::codex_instance::codex_start_default_with_prepared_profile(
             app.clone(),
+            true,
         )
         .await
         {

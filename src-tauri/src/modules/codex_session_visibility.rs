@@ -3,11 +3,13 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::modules;
 use chrono::{TimeZone, Utc};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{params_from_iter, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
@@ -20,6 +22,7 @@ const PREFERRED_SQLITE_DB_FILE: &str = "codex-dev.db";
 const OFFICIAL_STATE_DB_FILE: &str = "state_5.sqlite";
 const CONFIG_FILE_NAME: &str = "config.toml";
 const SESSION_INDEX_FILE: &str = "session_index.jsonl";
+const GLOBAL_STATE_FILE: &str = ".codex-global-state.json";
 const SESSION_DIRS: [&str; 2] = ["sessions", "archived_sessions"];
 const SESSION_VISIBILITY_REPAIR_BACKUP_PREFIX: &str = "backup-";
 const SESSION_VISIBILITY_REPAIR_BACKUP_SUFFIX: &str = "-session-visibility-repair";
@@ -27,6 +30,20 @@ const MAX_SESSION_VISIBILITY_REPAIR_BACKUPS: usize = 1;
 const SESSION_INDEX_ACTIVITY_DRIFT_MS: i128 = 3_600_000;
 pub const SESSION_VISIBILITY_REPAIR_PROGRESS_EVENT: &str =
     "codex:session_visibility_repair_progress";
+static SESSION_VISIBILITY_REPAIR_LOCK: Mutex<()> = Mutex::new(());
+
+fn acquire_session_visibility_repair_lock() -> Result<MutexGuard<'static, ()>, String> {
+    #[cfg(test)]
+    {
+        return SESSION_VISIBILITY_REPAIR_LOCK
+            .lock()
+            .map_err(|_| "Codex 历史会话修复任务锁已损坏".to_string());
+    }
+    #[cfg(not(test))]
+    SESSION_VISIBILITY_REPAIR_LOCK
+        .try_lock()
+        .map_err(|_| "已有 Codex 历史会话修复任务正在执行，请等待完成后重试".to_string())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +143,10 @@ pub struct CodexSessionVisibilityRepairItem {
     pub updated_sqlite_timestamp_row_count: usize,
     pub added_session_index_entry_count: usize,
     pub updated_session_index_entry_count: usize,
+    pub inserted_catalog_row_count: usize,
+    pub removed_catalog_row_count: usize,
+    pub updated_global_state_entry_count: usize,
+    pub skipped_rollout_file_count: usize,
     pub skipped_sqlite_file: bool,
     pub metadata_rebuild_failed: bool,
     pub backup_dir: Option<String>,
@@ -142,6 +163,11 @@ pub struct CodexSessionVisibilityRepairSummary {
     pub updated_sqlite_timestamp_row_count: usize,
     pub added_session_index_entry_count: usize,
     pub updated_session_index_entry_count: usize,
+    pub inserted_catalog_row_count: usize,
+    pub removed_catalog_row_count: usize,
+    pub updated_global_state_entry_count: usize,
+    pub skipped_rollout_file_count: usize,
+    pub encrypted_content_warning: Option<String>,
     pub skipped_sqlite_file_count: usize,
     pub metadata_rebuild_failed_count: usize,
     pub items: Vec<CodexSessionVisibilityRepairItem>,
@@ -163,6 +189,8 @@ struct RolloutProviderChange {
     absolute_path: PathBuf,
     updated_content: Option<RolloutProviderUpdate>,
     target_modified_at: Option<SystemTime>,
+    source_modified_at: Option<SystemTime>,
+    source_size: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +212,10 @@ struct CodexSessionVisibilityRepairOptions {
     repair_session_index: bool,
     update_existing_session_index_entries: bool,
     rebuild_metadata: bool,
+    repair_local_thread_catalog: bool,
+    normalize_global_state: bool,
+    require_stopped_instances: bool,
+    sidebar_visible_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,11 +316,38 @@ impl CodexSessionVisibilityRepairOptions {
             repair_session_index: false,
             update_existing_session_index_entries: false,
             rebuild_metadata: false,
+            repair_local_thread_catalog: false,
+            normalize_global_state: false,
+            require_stopped_instances: false,
+            sidebar_visible_only: true,
+        }
+    }
+
+    fn full_provider_migration() -> Self {
+        Self {
+            mode: CodexSessionVisibilityRepairMode::Deep,
+            dry_run: false,
+            repair_rollout: true,
+            repair_referenced_rollouts: false,
+            rewrite_all_session_meta: true,
+            sqlite_scope: SqliteRepairScope::AllSessionDbs,
+            repair_sqlite_timestamps: false,
+            collect_rollout_thread_facts: true,
+            repair_session_index: false,
+            update_existing_session_index_entries: false,
+            rebuild_metadata: true,
+            repair_local_thread_catalog: true,
+            normalize_global_state: true,
+            require_stopped_instances: true,
+            sidebar_visible_only: false,
         }
     }
 
     fn for_mode(mode: CodexSessionVisibilityRepairMode) -> Self {
-        Self::official_state_db_only(mode)
+        match mode {
+            CodexSessionVisibilityRepairMode::Quick => Self::official_state_db_only(mode),
+            CodexSessionVisibilityRepairMode::Deep => Self::full_provider_migration(),
+        }
     }
 
     fn for_auto_repair_mode(mode: CodexSessionVisibilityAutoRepairMode) -> Self {
@@ -306,6 +365,21 @@ impl CodexSessionVisibilityRepairOptions {
 struct RolloutThreadFacts {
     user_event_thread_ids: HashSet<String>,
     cwd_by_thread_id: HashMap<String, String>,
+    subagent_thread_ids: HashSet<String>,
+    encrypted_content_counts: HashMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CatalogRepairCounts {
+    inserted_rows: usize,
+    removed_rows: usize,
+    updated_rows: usize,
+}
+
+impl CatalogRepairCounts {
+    fn total(self) -> usize {
+        self.inserted_rows + self.removed_rows + self.updated_rows
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -332,6 +406,10 @@ struct RepairSingleInstanceResult {
     updated_sqlite_timestamp_rows: usize,
     added_session_index_entries: usize,
     updated_session_index_entries: usize,
+    inserted_catalog_rows: usize,
+    removed_catalog_rows: usize,
+    updated_global_state_entries: usize,
+    skipped_rollout_files: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -356,6 +434,10 @@ struct ThreadsTableColumns {
     first_user_message: bool,
     thread_source: bool,
     cwd: bool,
+    archived: bool,
+    preview: bool,
+    rollout_path: bool,
+    source: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -391,6 +473,7 @@ pub fn repair_session_visibility_quick_for_instance(
     instance_name: &str,
     data_dir: &Path,
 ) -> Result<CodexSessionVisibilityRepairSummary, String> {
+    let _repair_guard = acquire_session_visibility_repair_lock()?;
     let started = std::time::Instant::now();
     modules::logger::log_info(&format!(
         "[Codex Session Visibility] launch-target quick repair started: instance_id={}, instance_name={}, data_dir={}",
@@ -511,6 +594,7 @@ fn repair_session_visibility_across_instances_with_options(
     progress_reporter: ProgressReporter<'_>,
     selection: RepairTargetSelection,
 ) -> Result<CodexSessionVisibilityRepairSummary, String> {
+    let _repair_guard = acquire_session_visibility_repair_lock()?;
     report_repair_progress(
         progress_reporter,
         &run_id,
@@ -553,6 +637,11 @@ fn repair_session_visibility_for_instances_with_options(
     let mut updated_sqlite_timestamp_row_count = 0usize;
     let mut added_session_index_entry_count = 0usize;
     let mut updated_session_index_entry_count = 0usize;
+    let mut inserted_catalog_row_count = 0usize;
+    let mut removed_catalog_row_count = 0usize;
+    let mut updated_global_state_entry_count = 0usize;
+    let mut skipped_rollout_file_count = 0usize;
+    let mut encrypted_content_counts = HashMap::new();
     let mut skipped_sqlite_file_count = 0usize;
     let mut metadata_rebuild_failed_count = 0usize;
     let mut mutated_running_instance_count = 0usize;
@@ -583,6 +672,21 @@ fn repair_session_visibility_for_instances_with_options(
         );
         let running = is_instance_running(instance, &process_entries);
         let target_provider = selection.target_provider_for(&instance.data_dir)?;
+        let rollout_facts = if options.collect_rollout_thread_facts {
+            Some(collect_rollout_thread_facts(
+                &instance.data_dir,
+                &selection,
+            )?)
+        } else {
+            None
+        };
+        if let Some(facts) = &rollout_facts {
+            for (provider, count) in &facts.encrypted_content_counts {
+                *encrypted_content_counts
+                    .entry(provider.clone())
+                    .or_insert(0usize) += count;
+            }
+        }
         let rollout_changes = if options.repair_rollout {
             collect_rollout_provider_changes(
                 &instance.data_dir,
@@ -625,6 +729,23 @@ fn repair_session_visibility_for_instances_with_options(
         } else {
             SessionIndexRepairScan::default()
         };
+        let empty_rollout_facts = RolloutThreadFacts::default();
+        let catalog_scan = if options.repair_local_thread_catalog {
+            repair_local_thread_catalog_for_options(
+                &instance.data_dir,
+                &target_provider,
+                &selection,
+                rollout_facts.as_ref().unwrap_or(&empty_rollout_facts),
+                true,
+            )?
+        } else {
+            CatalogRepairCounts::default()
+        };
+        let global_state_entries_to_update = if options.normalize_global_state {
+            normalize_global_state(&instance.data_dir, true)?
+        } else {
+            0
+        };
         if sqlite_scan.skipped_unusable_database {
             skipped_sqlite_file_count += 1;
         }
@@ -633,7 +754,20 @@ fn repair_session_visibility_for_instances_with_options(
             || sqlite_rows_to_update > 0
             || sqlite_timestamp_rows_to_update > 0
             || session_index_scan.entries_to_add > 0
-            || session_index_scan.entries_to_update > 0;
+            || session_index_scan.entries_to_update > 0
+            || catalog_scan.total() > 0
+            || global_state_entries_to_update > 0;
+
+        if instance_has_planned_changes
+            && running
+            && options.require_stopped_instances
+            && !options.dry_run
+        {
+            return Err(format!(
+                "{} 正在运行；完整历史会话修复需要先完全退出对应 Codex App/ChatGPT 实例，避免会话文件或 SQLite 在修复过程中继续变化",
+                instance.name
+            ));
+        }
 
         if options.dry_run {
             if instance_has_planned_changes {
@@ -647,15 +781,23 @@ fn repair_session_visibility_for_instances_with_options(
             updated_sqlite_timestamp_row_count += sqlite_timestamp_rows_to_update;
             added_session_index_entry_count += session_index_scan.entries_to_add;
             updated_session_index_entry_count += session_index_scan.entries_to_update;
+            inserted_catalog_row_count += catalog_scan.inserted_rows;
+            removed_catalog_row_count += catalog_scan.removed_rows;
+            updated_sqlite_row_count += catalog_scan.updated_rows;
+            updated_global_state_entry_count += global_state_entries_to_update;
             items.push(CodexSessionVisibilityRepairItem {
                 instance_id: instance.id.clone(),
                 instance_name: instance.name.clone(),
                 target_provider,
                 changed_rollout_file_count: rollout_changes.len(),
-                updated_sqlite_row_count: sqlite_rows_to_update,
+                updated_sqlite_row_count: sqlite_rows_to_update + catalog_scan.updated_rows,
                 updated_sqlite_timestamp_row_count: sqlite_timestamp_rows_to_update,
                 added_session_index_entry_count: session_index_scan.entries_to_add,
                 updated_session_index_entry_count: session_index_scan.entries_to_update,
+                inserted_catalog_row_count: catalog_scan.inserted_rows,
+                removed_catalog_row_count: catalog_scan.removed_rows,
+                updated_global_state_entry_count: global_state_entries_to_update,
+                skipped_rollout_file_count: 0,
                 skipped_sqlite_file: sqlite_scan.skipped_unusable_database,
                 metadata_rebuild_failed: false,
                 backup_dir: None,
@@ -691,6 +833,10 @@ fn repair_session_visibility_for_instances_with_options(
                 updated_sqlite_timestamp_row_count: 0,
                 added_session_index_entry_count: 0,
                 updated_session_index_entry_count: 0,
+                inserted_catalog_row_count: 0,
+                removed_catalog_row_count: 0,
+                updated_global_state_entry_count: 0,
+                skipped_rollout_file_count: 0,
                 skipped_sqlite_file: sqlite_scan.skipped_unusable_database,
                 metadata_rebuild_failed,
                 backup_dir: None,
@@ -712,8 +858,11 @@ fn repair_session_visibility_for_instances_with_options(
         let backup_dir = backup_instance_files(
             &instance.data_dir,
             &rollout_changes,
-            sqlite_rows_to_update > 0 || sqlite_timestamp_rows_to_update > 0,
+            sqlite_rows_to_update > 0
+                || sqlite_timestamp_rows_to_update > 0
+                || catalog_scan.total() > 0,
             session_index_scan.entries_to_add > 0 || session_index_scan.entries_to_update > 0,
+            global_state_entries_to_update > 0,
             &instance.id,
             &target_provider,
             options,
@@ -751,7 +900,9 @@ fn repair_session_visibility_for_instances_with_options(
                 let restore_result = restore_instance_files_from_backup(
                     &instance.data_dir,
                     &backup_dir,
-                    sqlite_rows_to_update > 0 || sqlite_timestamp_rows_to_update > 0,
+                    sqlite_rows_to_update > 0
+                        || sqlite_timestamp_rows_to_update > 0
+                        || catalog_scan.total() > 0,
                 );
                 if let Err(restore_error) = restore_result {
                     return Err(format!(
@@ -771,11 +922,17 @@ fn repair_session_visibility_for_instances_with_options(
             }
         };
 
-        let instance_mutated = !rollout_changes.is_empty()
+        let applied_rollout_count = rollout_changes
+            .len()
+            .saturating_sub(repaired.skipped_rollout_files);
+        let instance_mutated = applied_rollout_count > 0
             || repaired.updated_sqlite_rows > 0
             || repaired.updated_sqlite_timestamp_rows > 0
             || repaired.added_session_index_entries > 0
-            || repaired.updated_session_index_entries > 0;
+            || repaired.updated_session_index_entries > 0
+            || repaired.inserted_catalog_rows > 0
+            || repaired.removed_catalog_rows > 0
+            || repaired.updated_global_state_entries > 0;
         let mut metadata_rebuild_failed = false;
         if options.rebuild_metadata && instance_mutated {
             report_repair_progress(
@@ -800,21 +957,29 @@ fn repair_session_visibility_for_instances_with_options(
                 mutated_running_instance_count += 1;
             }
         }
-        changed_rollout_file_count += rollout_changes.len();
+        changed_rollout_file_count += applied_rollout_count;
         updated_sqlite_row_count += repaired.updated_sqlite_rows;
         updated_sqlite_timestamp_row_count += repaired.updated_sqlite_timestamp_rows;
         added_session_index_entry_count += repaired.added_session_index_entries;
         updated_session_index_entry_count += repaired.updated_session_index_entries;
+        inserted_catalog_row_count += repaired.inserted_catalog_rows;
+        removed_catalog_row_count += repaired.removed_catalog_rows;
+        updated_global_state_entry_count += repaired.updated_global_state_entries;
+        skipped_rollout_file_count += repaired.skipped_rollout_files;
         backup_dirs.push(backup_dir_string.clone());
         items.push(CodexSessionVisibilityRepairItem {
             instance_id: instance.id.clone(),
             instance_name: instance.name.clone(),
             target_provider,
-            changed_rollout_file_count: rollout_changes.len(),
+            changed_rollout_file_count: applied_rollout_count,
             updated_sqlite_row_count: repaired.updated_sqlite_rows,
             updated_sqlite_timestamp_row_count: repaired.updated_sqlite_timestamp_rows,
             added_session_index_entry_count: repaired.added_session_index_entries,
             updated_session_index_entry_count: repaired.updated_session_index_entries,
+            inserted_catalog_row_count: repaired.inserted_catalog_rows,
+            removed_catalog_row_count: repaired.removed_catalog_rows,
+            updated_global_state_entry_count: repaired.updated_global_state_entries,
+            skipped_rollout_file_count: repaired.skipped_rollout_files,
             skipped_sqlite_file: sqlite_scan.skipped_unusable_database,
             metadata_rebuild_failed,
             backup_dir: Some(backup_dir_string),
@@ -848,6 +1013,10 @@ fn repair_session_visibility_for_instances_with_options(
             updated_sqlite_timestamp_row_count,
             added_session_index_entry_count,
             updated_session_index_entry_count,
+            inserted_catalog_row_count,
+            removed_catalog_row_count,
+            updated_global_state_entry_count,
+            skipped_rollout_file_count,
             mutated_running_instance_count,
         )
     } else {
@@ -858,6 +1027,10 @@ fn repair_session_visibility_for_instances_with_options(
             updated_sqlite_timestamp_row_count,
             added_session_index_entry_count,
             updated_session_index_entry_count,
+            inserted_catalog_row_count,
+            removed_catalog_row_count,
+            updated_global_state_entry_count,
+            skipped_rollout_file_count,
             mutated_running_instance_count,
             skipped_sqlite_file_count,
             metadata_rebuild_failed_count,
@@ -872,6 +1045,17 @@ fn repair_session_visibility_for_instances_with_options(
         updated_sqlite_timestamp_row_count,
         added_session_index_entry_count,
         updated_session_index_entry_count,
+        inserted_catalog_row_count,
+        removed_catalog_row_count,
+        updated_global_state_entry_count,
+        skipped_rollout_file_count,
+        encrypted_content_warning: build_encrypted_content_warning(
+            &encrypted_content_counts,
+            items
+                .first()
+                .map(|item| item.target_provider.as_str())
+                .unwrap_or(DEFAULT_PROVIDER_ID),
+        ),
         skipped_sqlite_file_count,
         metadata_rebuild_failed_count,
         items,
@@ -894,6 +1078,12 @@ fn repair_session_visibility_for_instances_with_options(
 pub fn list_session_visibility_repair_providers(
 ) -> Result<CodexSessionVisibilityRepairProviderList, String> {
     let instances = collect_instances()?;
+    collect_session_visibility_repair_providers_for_instances(&instances)
+}
+
+fn collect_session_visibility_repair_providers_for_instances(
+    instances: &[CodexSyncInstance],
+) -> Result<CodexSessionVisibilityRepairProviderList, String> {
     let default_provider = instances
         .first()
         .map(|instance| read_target_provider(&instance.data_dir))
@@ -908,7 +1098,7 @@ pub fn list_session_visibility_repair_providers(
         CodexSessionVisibilityRepairProviderSource::Config,
     );
 
-    for instance in &instances {
+    for instance in instances {
         match list_configured_provider_ids(&instance.data_dir) {
             Ok(provider_ids) => {
                 for provider_id in provider_ids {
@@ -926,24 +1116,7 @@ pub fn list_session_visibility_repair_providers(
             )),
         }
 
-        match collect_rollout_provider_ids(&instance.data_dir) {
-            Ok(provider_ids) => {
-                for provider_id in provider_ids {
-                    add_provider_source(
-                        &mut sources,
-                        provider_id,
-                        CodexSessionVisibilityRepairProviderSource::Rollout,
-                    );
-                }
-            }
-            Err(error) => modules::logger::log_warn(&format!(
-                "读取 Codex rollout provider 候选失败 ({}): {}",
-                instance.data_dir.display(),
-                error
-            )),
-        }
-
-        for db_path in sqlite_candidate_paths(&instance.data_dir) {
+        for db_path in official_state_db_candidate_paths(&instance.data_dir) {
             match sqlite_provider_ids(&db_path) {
                 Ok(provider_ids) => {
                     for provider_id in provider_ids {
@@ -1149,6 +1322,11 @@ fn repair_single_instance_with_progress(
     instance_index: usize,
     total_instances: usize,
 ) -> Result<RepairSingleInstanceResult, String> {
+    let rollout_facts = if options.collect_rollout_thread_facts {
+        collect_rollout_thread_facts(data_dir, selection)?
+    } else {
+        RolloutThreadFacts::default()
+    };
     let sqlite_rows_updated = if update_sqlite {
         report_repair_progress(
             progress_reporter,
@@ -1164,7 +1342,19 @@ fn repair_single_instance_with_progress(
     } else {
         0
     };
+    let catalog_repairs = if options.repair_local_thread_catalog {
+        repair_local_thread_catalog_for_options(
+            data_dir,
+            target_provider,
+            selection,
+            &rollout_facts,
+            false,
+        )?
+    } else {
+        CatalogRepairCounts::default()
+    };
     let rollout_total = rollout_changes.len();
+    let mut skipped_rollout_files = 0usize;
     for (rollout_index, change) in rollout_changes.iter().enumerate() {
         report_repair_progress(
             progress_reporter,
@@ -1184,7 +1374,9 @@ fn repair_single_instance_with_progress(
             rollout_total,
             Some(instance),
         );
-        rewrite_rollout_provider(change)?;
+        if !rewrite_rollout_provider(change)? {
+            skipped_rollout_files += 1;
+        }
     }
     let sqlite_timestamp_rows_updated = if update_sqlite_timestamps {
         report_repair_progress(
@@ -1216,11 +1408,20 @@ fn repair_single_instance_with_progress(
     } else {
         SessionIndexReconcileResult::default()
     };
+    let updated_global_state_entries = if options.normalize_global_state {
+        normalize_global_state(data_dir, false)?
+    } else {
+        0
+    };
     Ok(RepairSingleInstanceResult {
-        updated_sqlite_rows: sqlite_rows_updated,
+        updated_sqlite_rows: sqlite_rows_updated + catalog_repairs.updated_rows,
         updated_sqlite_timestamp_rows: sqlite_timestamp_rows_updated,
         added_session_index_entries: session_index_result.added_entries,
         updated_session_index_entries: session_index_result.updated_entries,
+        inserted_catalog_rows: catalog_repairs.inserted_rows,
+        removed_catalog_rows: catalog_repairs.removed_rows,
+        updated_global_state_entries,
+        skipped_rollout_files,
     })
 }
 
@@ -1231,6 +1432,10 @@ fn build_summary_message(
     updated_sqlite_timestamp_row_count: usize,
     added_session_index_entry_count: usize,
     updated_session_index_entry_count: usize,
+    inserted_catalog_row_count: usize,
+    removed_catalog_row_count: usize,
+    updated_global_state_entry_count: usize,
+    skipped_rollout_file_count: usize,
     mutated_running_instance_count: usize,
     _skipped_sqlite_file_count: usize,
     metadata_rebuild_failed_count: usize,
@@ -1274,17 +1479,44 @@ fn build_summary_message(
     } else {
         String::new()
     };
+    let catalog_suffix = if inserted_catalog_row_count > 0 || removed_catalog_row_count > 0 {
+        format!(
+            "，补齐 {} 条本地会话目录、移除 {} 条子 Agent 目录记录",
+            inserted_catalog_row_count, removed_catalog_row_count
+        )
+    } else {
+        String::new()
+    };
+    let global_state_suffix = if updated_global_state_entry_count > 0 {
+        format!(
+            "，规范化 {} 项全局工作区状态",
+            updated_global_state_entry_count
+        )
+    } else {
+        String::new()
+    };
+    let skipped_rollout_suffix = if skipped_rollout_file_count > 0 {
+        format!(
+            "；{} 个会话文件在扫描后发生变化，已安全跳过",
+            skipped_rollout_file_count
+        )
+    } else {
+        String::new()
+    };
 
     format!(
-        "已为 {} 个实例修复会话可见性：校正 {} 个会话文件，更新 {} 条 SQLite 可见性记录，校正 {} 条 SQLite 时间记录{}{}{}{}",
+        "已为 {} 个实例修复历史会话：校正 {} 个会话文件，更新 {} 条 SQLite 记录，校正 {} 条 SQLite 时间记录{}{}{}{}{}{}{}",
         mutated_instance_count,
         changed_rollout_file_count,
         updated_sqlite_row_count,
         updated_sqlite_timestamp_row_count,
         added_index_suffix,
         updated_index_suffix,
+        catalog_suffix,
+        global_state_suffix,
         running_suffix,
-        metadata_suffix
+        metadata_suffix,
+        skipped_rollout_suffix
     )
 }
 
@@ -1295,6 +1527,10 @@ fn build_dry_run_summary_message(
     updated_sqlite_timestamp_row_count: usize,
     added_session_index_entry_count: usize,
     updated_session_index_entry_count: usize,
+    inserted_catalog_row_count: usize,
+    removed_catalog_row_count: usize,
+    updated_global_state_entry_count: usize,
+    _skipped_rollout_file_count: usize,
     mutated_running_instance_count: usize,
 ) -> String {
     if mutated_instance_count == 0 {
@@ -1318,19 +1554,37 @@ fn build_dry_run_summary_message(
         String::new()
     };
     let running_suffix = if mutated_running_instance_count > 0 {
-        "。包含运行中的实例，确认修复后可能需要重启 Codex 才能完全刷新"
+        "。包含运行中的实例；完整修复前需要先完全退出对应 Codex App/ChatGPT 实例"
     } else {
         ""
     };
+    let catalog_suffix = if inserted_catalog_row_count > 0 || removed_catalog_row_count > 0 {
+        format!(
+            "，补齐 {} 条本地会话目录、移除 {} 条子 Agent 目录记录",
+            inserted_catalog_row_count, removed_catalog_row_count
+        )
+    } else {
+        String::new()
+    };
+    let global_state_suffix = if updated_global_state_entry_count > 0 {
+        format!(
+            "，规范化 {} 项全局工作区状态",
+            updated_global_state_entry_count
+        )
+    } else {
+        String::new()
+    };
 
     format!(
-        "预览将为 {} 个实例修复会话可见性：校正 {} 个会话文件，更新 {} 条 SQLite 可见性记录，校正 {} 条 SQLite 时间记录{}{}{}",
+        "预览将为 {} 个实例修复历史会话：校正 {} 个会话文件，更新 {} 条 SQLite 记录，校正 {} 条 SQLite 时间记录{}{}{}{}{}",
         mutated_instance_count,
         changed_rollout_file_count,
         updated_sqlite_row_count,
         updated_sqlite_timestamp_row_count,
         added_index_suffix,
         updated_index_suffix,
+        catalog_suffix,
+        global_state_suffix,
         running_suffix
     )
 }
@@ -1366,7 +1620,11 @@ fn is_instance_running(
     instance: &CodexSyncInstance,
     process_entries: &[(u32, Option<String>)],
 ) -> bool {
-    let codex_home = instance.data_dir.to_str();
+    let codex_home = if instance.id == DEFAULT_INSTANCE_ID {
+        None
+    } else {
+        instance.data_dir.to_str()
+    };
     modules::process::resolve_codex_pid_from_entries(instance.last_pid, codex_home, process_entries)
         .is_some()
 }
@@ -1514,45 +1772,6 @@ fn list_configured_provider_ids(data_dir: &Path) -> Result<Vec<String>, String> 
     Ok(ids)
 }
 
-fn collect_rollout_provider_ids(data_dir: &Path) -> Result<Vec<String>, String> {
-    let mut ids = HashSet::new();
-    for dir_name in SESSION_DIRS {
-        let root_dir = data_dir.join(dir_name);
-        if !root_dir.exists() {
-            continue;
-        }
-        for rollout_path in list_rollout_files(&root_dir)? {
-            let Some(content) = read_rollout_text(&rollout_path)? else {
-                continue;
-            };
-            for line in content.lines() {
-                let Ok(record) = serde_json::from_str::<JsonValue>(line.trim()) else {
-                    continue;
-                };
-                if record.get("type").and_then(JsonValue::as_str) != Some("session_meta") {
-                    continue;
-                }
-                let Some(provider_id) = record
-                    .get("payload")
-                    .and_then(JsonValue::as_object)
-                    .and_then(|payload| payload.get("model_provider"))
-                    .and_then(JsonValue::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                else {
-                    continue;
-                };
-                if is_valid_provider_id_for_discovery(provider_id) {
-                    ids.insert(provider_id.to_string());
-                }
-            }
-        }
-    }
-    let mut ids = ids.into_iter().collect::<Vec<_>>();
-    ids.sort();
-    Ok(ids)
-}
-
 fn sqlite_provider_ids(db_path: &Path) -> Result<Vec<String>, String> {
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -1572,32 +1791,30 @@ fn sqlite_provider_ids(db_path: &Path) -> Result<Vec<String>, String> {
             ));
         }
     };
-    let Some(columns) = read_threads_table_columns(&connection).map_err(|error| {
-        format_sqlite_read_error(db_path, "读取 SQLite threads 表结构失败", &error)
-    })?
-    else {
-        return Ok(Vec::new());
-    };
-    if !columns.model_provider {
-        return Ok(Vec::new());
-    }
-    let mut statement = connection
-        .prepare(
-            "SELECT DISTINCT model_provider FROM threads WHERE COALESCE(model_provider, '') <> ''",
-        )
-        .map_err(|error| {
+    let mut ids = HashSet::new();
+    for table in ["threads", "local_thread_catalog"] {
+        let columns = table_columns(&connection, table)?;
+        if !columns.contains("model_provider") {
+            continue;
+        }
+        let sql = format!(
+            "SELECT DISTINCT model_provider FROM {table} WHERE COALESCE(model_provider, '') <> ''"
+        );
+        let mut statement = connection.prepare(&sql).map_err(|error| {
             format_sqlite_read_error(db_path, "准备 SQLite provider 查询失败", &error)
         })?;
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|error| format_sqlite_read_error(db_path, "查询 SQLite provider 失败", &error))?;
-    let mut ids = HashSet::new();
-    for row in rows {
-        let provider_id = row.map_err(|error| {
-            format_sqlite_read_error(db_path, "读取 SQLite provider 失败", &error)
-        })?;
-        if is_valid_provider_id_for_discovery(&provider_id) {
-            ids.insert(provider_id);
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| {
+                format_sqlite_read_error(db_path, "查询 SQLite provider 失败", &error)
+            })?;
+        for row in rows {
+            let provider_id = row.map_err(|error| {
+                format_sqlite_read_error(db_path, "读取 SQLite provider 失败", &error)
+            })?;
+            if is_valid_provider_id_for_discovery(&provider_id) {
+                ids.insert(provider_id);
+            }
         }
     }
     let mut ids = ids.into_iter().collect::<Vec<_>>();
@@ -1611,6 +1828,7 @@ fn collect_rollout_provider_changes(
     options: CodexSessionVisibilityRepairOptions,
     selection: &RepairTargetSelection,
 ) -> Result<Vec<RolloutProviderChange>, String> {
+    let non_root_thread_ids = collect_non_root_thread_ids(&provider_sync_sqlite_paths(data_dir))?;
     let session_index_map = match read_session_index_map(data_dir) {
         Ok(value) => value,
         Err(error) => {
@@ -1641,6 +1859,16 @@ fn collect_rollout_provider_changes(
             if rewrite.session_meta_count == 0 {
                 continue;
             }
+            if rewrite.non_root_agent {
+                continue;
+            }
+            if rewrite
+                .thread_id
+                .as_ref()
+                .is_some_and(|thread_id| non_root_thread_ids.contains(thread_id))
+            {
+                continue;
+            }
             let session_id = rewrite.thread_id.clone();
             if let Some(session_id) = session_id.as_deref() {
                 if !selection.includes_session_id(session_id) {
@@ -1662,6 +1890,9 @@ fn collect_rollout_provider_changes(
             .and_then(modules::codex_session_file_time::system_time_from_unix_millis);
             let current_modified_at =
                 modules::codex_session_file_time::read_modified_time(&rollout_path);
+            let source_size = fs::metadata(&rollout_path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
             let provider_matches = !rewrite.rewrite_needed;
             let modified_time_matches = target_modified_at.is_none()
                 || modules::codex_session_file_time::same_modified_time_millis(
@@ -1680,6 +1911,8 @@ fn collect_rollout_provider_changes(
                 absolute_path: rollout_path,
                 updated_content: rewrite.updated_content,
                 target_modified_at,
+                source_modified_at: current_modified_at,
+                source_size,
             });
         }
     }
@@ -1696,7 +1929,14 @@ fn collect_referenced_rollout_provider_changes(
 ) -> Result<Vec<RolloutProviderChange>, String> {
     let mut candidates: HashMap<PathBuf, Option<SystemTime>> = HashMap::new();
     for db_path in sqlite_candidate_paths_for_options(data_dir, options) {
-        collect_referenced_rollout_paths_for_db(data_dir, &db_path, selection, &mut candidates)?;
+        collect_referenced_rollout_paths_for_db(
+            data_dir,
+            &db_path,
+            target_provider,
+            options.sidebar_visible_only,
+            selection,
+            &mut candidates,
+        )?;
     }
 
     let mut changes = Vec::new();
@@ -1715,6 +1955,9 @@ fn collect_referenced_rollout_provider_changes(
         if rewrite.session_meta_count == 0 || !rewrite.rewrite_needed {
             continue;
         }
+        if rewrite.non_root_agent {
+            continue;
+        }
         let Some(relative_path) = rollout_path
             .strip_prefix(data_dir)
             .ok()
@@ -1727,11 +1970,18 @@ fn collect_referenced_rollout_provider_changes(
             ));
             continue;
         };
+        let source_modified_at =
+            modules::codex_session_file_time::read_modified_time(&rollout_path);
+        let source_size = fs::metadata(&rollout_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
         changes.push(RolloutProviderChange {
             relative_path,
             absolute_path: rollout_path,
             updated_content: rewrite.updated_content,
             target_modified_at,
+            source_modified_at,
+            source_size,
         });
     }
 
@@ -1742,6 +1992,8 @@ fn collect_referenced_rollout_provider_changes(
 fn collect_referenced_rollout_paths_for_db(
     data_dir: &Path,
     db_path: &Path,
+    target_provider: &str,
+    sidebar_visible_only: bool,
     selection: &RepairTargetSelection,
     candidates: &mut HashMap<PathBuf, Option<SystemTime>>,
 ) -> Result<(), String> {
@@ -1792,14 +2044,42 @@ fn collect_referenced_rollout_paths_for_db(
     } else {
         "NULL"
     };
+    let mut predicates = vec!["rollout_path IS NOT NULL", "rollout_path <> ''"];
+    let provider_param = if sidebar_visible_only && names.contains("model_provider") {
+        predicates.push("(?1 IS NULL OR COALESCE(model_provider, '') <> ?1)");
+        Some(target_provider)
+    } else {
+        predicates.push("?1 IS NULL");
+        None
+    };
+    if sidebar_visible_only {
+        if names.contains("archived") {
+            predicates.push("COALESCE(archived, 0) = 0");
+        }
+        if names.contains("preview") && names.contains("first_user_message") {
+            predicates
+                .push("(COALESCE(preview, '') <> '' OR COALESCE(first_user_message, '') <> '')");
+        } else if names.contains("preview") {
+            predicates.push("COALESCE(preview, '') <> ''");
+        }
+        if names.contains("source") {
+            predicates.push(
+                "LOWER(COALESCE(source, '')) NOT LIKE '%subagent%' AND LOWER(COALESCE(source, '')) NOT LIKE '%internal%'",
+            );
+        }
+        if names.contains("thread_source") {
+            predicates.push("COALESCE(thread_source, '') <> 'ambient_suggestions'");
+        }
+    }
     let sql = format!(
-        "SELECT id, rollout_path, {updated_at_expr}, {updated_at_ms_expr} FROM threads WHERE rollout_path IS NOT NULL AND rollout_path <> ''"
+        "SELECT id, rollout_path, {updated_at_expr}, {updated_at_ms_expr} FROM threads WHERE {}",
+        predicates.join(" AND ")
     );
     let mut statement = connection.prepare(sql.as_str()).map_err(|error| {
         format_sqlite_read_error(db_path, "准备 SQLite rollout 引用查询失败", &error)
     })?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map([provider_param], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -1842,6 +2122,8 @@ struct RolloutProviderRewrite {
     rewrite_needed: bool,
     thread_id: Option<String>,
     session_meta_count: usize,
+    non_root_agent: bool,
+    providers: HashSet<String>,
 }
 
 fn rewrite_rollout_session_meta_providers(
@@ -1864,6 +2146,17 @@ fn rewrite_rollout_session_meta_providers(
                         continue;
                     };
                     rewrite.session_meta_count += 1;
+                    rewrite.non_root_agent |= payload
+                        .get("source")
+                        .is_some_and(source_value_marks_non_root_agent);
+                    if let Some(provider) = payload
+                        .get("model_provider")
+                        .and_then(JsonValue::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        rewrite.providers.insert(provider.to_string());
+                    }
                     if rewrite.thread_id.is_none() {
                         rewrite.thread_id = payload
                             .get("id")
@@ -1913,12 +2206,22 @@ fn rewrite_rollout_first_session_meta_provider(
         .and_then(|payload| payload.get("model_provider"))
         .and_then(JsonValue::as_str)
         .unwrap_or("");
+    let non_root_agent = record
+        .get("payload")
+        .and_then(|payload| payload.get("source"))
+        .is_some_and(source_value_marks_non_root_agent);
+    let providers = (!current_provider.is_empty())
+        .then(|| current_provider.to_string())
+        .into_iter()
+        .collect();
     if current_provider == target_provider {
         return Ok(RolloutProviderRewrite {
             updated_content: None,
             rewrite_needed: false,
             thread_id,
             session_meta_count: 1,
+            non_root_agent,
+            providers,
         });
     }
 
@@ -1936,7 +2239,29 @@ fn rewrite_rollout_first_session_meta_provider(
         rewrite_needed: true,
         thread_id,
         session_meta_count: 1,
+        non_root_agent,
+        providers,
     })
+}
+
+fn source_value_marks_non_root_agent(source: &JsonValue) -> bool {
+    match source {
+        JsonValue::Object(object) => {
+            object.contains_key("sub_agent")
+                || object.contains_key("subagent")
+                || object.contains_key("internal")
+        }
+        JsonValue::String(value) => source_text_marks_non_root_agent(value),
+        _ => false,
+    }
+}
+
+fn source_text_marks_non_root_agent(source: &str) -> bool {
+    let source = source.trim().to_ascii_lowercase();
+    source == "subagent"
+        || source == "internal"
+        || source.starts_with("subagent_")
+        || source.starts_with("internal_")
 }
 
 fn read_first_line(path: &Path) -> Result<Option<(String, String)>, String> {
@@ -2035,6 +2360,7 @@ fn collect_rollout_thread_facts(
     selection: &RepairTargetSelection,
 ) -> Result<RolloutThreadFacts, String> {
     let mut facts = RolloutThreadFacts::default();
+    let projectless_thread_ids = load_projectless_thread_ids(data_dir)?;
     for dir_name in SESSION_DIRS {
         let root_dir = data_dir.join(dir_name);
         if !root_dir.exists() {
@@ -2046,6 +2372,8 @@ fn collect_rollout_thread_facts(
             };
             let has_user_event =
                 content.contains("\"user_message\"") || content.contains("\"user_input\"");
+            let contains_encrypted_content = content.contains("encrypted_content");
+            let mut file_providers = HashSet::new();
             for line in content.lines() {
                 let Ok(record) = serde_json::from_str::<JsonValue>(line.trim()) else {
                     continue;
@@ -2067,20 +2395,210 @@ fn collect_rollout_thread_facts(
                 if !selection.includes_session_id(&thread_id) {
                     continue;
                 }
+                if payload
+                    .get("source")
+                    .is_some_and(source_value_marks_non_root_agent)
+                {
+                    facts.subagent_thread_ids.insert(thread_id.clone());
+                    continue;
+                }
+                if let Some(provider) = payload
+                    .get("model_provider")
+                    .and_then(JsonValue::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    file_providers.insert(provider.to_string());
+                }
                 if has_user_event {
                     facts.user_event_thread_ids.insert(thread_id.clone());
                 }
-                if let Some(cwd) = payload
-                    .get("cwd")
-                    .and_then(JsonValue::as_str)
-                    .and_then(to_desktop_workspace_path)
-                {
-                    facts.cwd_by_thread_id.entry(thread_id).or_insert(cwd);
+                if !projectless_thread_ids.contains(&thread_id) {
+                    if let Some(cwd) = payload
+                        .get("cwd")
+                        .and_then(JsonValue::as_str)
+                        .and_then(to_desktop_workspace_path)
+                    {
+                        facts.cwd_by_thread_id.entry(thread_id).or_insert(cwd);
+                    }
+                }
+            }
+            if contains_encrypted_content {
+                for provider in file_providers {
+                    *facts.encrypted_content_counts.entry(provider).or_insert(0) += 1;
                 }
             }
         }
     }
+    facts
+        .subagent_thread_ids
+        .extend(collect_non_root_thread_ids(&provider_sync_sqlite_paths(
+            data_dir,
+        ))?);
+    for thread_id in &facts.subagent_thread_ids {
+        facts.user_event_thread_ids.remove(thread_id);
+        facts.cwd_by_thread_id.remove(thread_id);
+    }
     Ok(facts)
+}
+
+fn read_global_state_object(data_dir: &Path) -> Result<serde_json::Map<String, JsonValue>, String> {
+    let path = data_dir.join(GLOBAL_STATE_FILE);
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 Codex 全局状态失败 ({}): {error}", path.display()))?;
+    let value = serde_json::from_str::<JsonValue>(&content)
+        .map_err(|error| format!("解析 Codex 全局状态失败 ({}): {error}", path.display()))?;
+    Ok(value.as_object().cloned().unwrap_or_default())
+}
+
+fn load_projectless_thread_ids(data_dir: &Path) -> Result<HashSet<String>, String> {
+    let state = read_global_state_object(data_dir)?;
+    Ok(state
+        .get("projectless-thread-ids")
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect())
+}
+
+fn normalized_workspace_paths(value: &JsonValue) -> Vec<String> {
+    let values = if let Some(values) = value.as_array() {
+        values
+            .iter()
+            .filter_map(JsonValue::as_str)
+            .collect::<Vec<_>>()
+    } else {
+        value.as_str().into_iter().collect::<Vec<_>>()
+    };
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for value in values {
+        let Some(normalized) = to_desktop_workspace_path(value) else {
+            continue;
+        };
+        let comparable = normalized
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase();
+        if seen.insert(comparable) {
+            result.push(normalized);
+        }
+    }
+    result
+}
+
+fn normalized_global_state_entries(
+    state: &serde_json::Map<String, JsonValue>,
+) -> serde_json::Map<String, JsonValue> {
+    let mut normalized = serde_json::Map::new();
+    for key in [
+        "electron-saved-workspace-roots",
+        "project-order",
+        "active-workspace-roots",
+    ] {
+        let Some(value) = state.get(key) else {
+            continue;
+        };
+        let paths = normalized_workspace_paths(value);
+        let next = if key == "active-workspace-roots" && !value.is_array() {
+            paths
+                .first()
+                .cloned()
+                .map(JsonValue::String)
+                .unwrap_or_else(|| value.clone())
+        } else {
+            JsonValue::Array(paths.into_iter().map(JsonValue::String).collect())
+        };
+        normalized.insert(key.to_string(), next);
+    }
+    if let Some(labels) = state
+        .get("electron-workspace-root-labels")
+        .and_then(JsonValue::as_object)
+    {
+        let mut next = serde_json::Map::new();
+        for (path, label) in labels {
+            next.insert(
+                to_desktop_workspace_path(path).unwrap_or_else(|| path.clone()),
+                label.clone(),
+            );
+        }
+        normalized.insert(
+            "electron-workspace-root-labels".to_string(),
+            JsonValue::Object(next),
+        );
+    }
+    if let Some(preferences) = state
+        .get("open-in-target-preferences")
+        .and_then(JsonValue::as_object)
+    {
+        let mut next_preferences = preferences.clone();
+        if let Some(per_path) = preferences.get("perPath").and_then(JsonValue::as_object) {
+            let mut next_per_path = serde_json::Map::new();
+            for (path, preference) in per_path {
+                next_per_path.insert(
+                    to_desktop_workspace_path(path).unwrap_or_else(|| path.clone()),
+                    preference.clone(),
+                );
+            }
+            next_preferences.insert("perPath".to_string(), JsonValue::Object(next_per_path));
+        }
+        normalized.insert(
+            "open-in-target-preferences".to_string(),
+            JsonValue::Object(next_preferences),
+        );
+    }
+    normalized
+}
+
+fn normalize_global_state(data_dir: &Path, dry_run: bool) -> Result<usize, String> {
+    let path = data_dir.join(GLOBAL_STATE_FILE);
+    if !path.exists() {
+        return Ok(0);
+    }
+    let mut state = read_global_state_object(data_dir)?;
+    let normalized = normalized_global_state_entries(&state);
+    let changed = normalized
+        .iter()
+        .filter(|(key, value)| state.get(*key) != Some(*value))
+        .count();
+    if changed == 0 || dry_run {
+        return Ok(changed);
+    }
+    for (key, value) in normalized {
+        state.insert(key, value);
+    }
+    let content = serde_json::to_string_pretty(&JsonValue::Object(state))
+        .map_err(|error| format!("序列化 Codex 全局状态失败: {error}"))?;
+    write_bytes_atomic(&path, format!("{content}\n").as_bytes())?;
+    Ok(changed)
+}
+
+fn build_encrypted_content_warning(
+    counts: &HashMap<String, usize>,
+    target_provider: &str,
+) -> Option<String> {
+    let mut providers = counts
+        .iter()
+        .filter(|(provider, count)| **count > 0 && provider.as_str() != target_provider)
+        .map(|(provider, _)| provider.clone())
+        .collect::<Vec<_>>();
+    providers.sort();
+    providers.dedup();
+    if providers.is_empty() {
+        return None;
+    }
+    let total = counts.values().sum::<usize>();
+    Some(format!(
+        "检测到 {total} 个会话文件包含来自 {} 的 encrypted_content。会话元数据可以迁移到 {target_provider}，但继续或压缩这些历史时仍可能出现 invalid_encrypted_content；需要可靠续聊时请切回原 Provider/账号或开启新会话。",
+        providers.join("、")
+    ))
 }
 
 pub(crate) fn to_desktop_workspace_path(value: &str) -> Option<String> {
@@ -3046,6 +3564,7 @@ fn count_sqlite_rows_to_update_for_options(
         let item = count_sqlite_rows_to_update_for_db(
             &db_path,
             target_provider,
+            options.sidebar_visible_only,
             facts.as_ref(),
             selection,
         )?;
@@ -3058,6 +3577,7 @@ fn count_sqlite_rows_to_update_for_options(
 fn count_sqlite_rows_to_update_for_db(
     db_path: &Path,
     target_provider: &str,
+    sidebar_visible_only: bool,
     facts: Option<&RolloutThreadFacts>,
     selection: &RepairTargetSelection,
 ) -> Result<SqliteProviderScan, String> {
@@ -3109,8 +3629,18 @@ fn count_sqlite_rows_to_update_for_db(
         });
     };
     let mut count = 0i64;
-    if let Some(where_clause) = build_threads_repair_where_clause(columns) {
-        if let Some(session_ids) = selection.session_ids() {
+    if let Some(where_clause) = build_threads_repair_where_clause(columns, sidebar_visible_only) {
+        if let Some(facts) = facts {
+            count += collect_eligible_thread_ids_for_repair(
+                &connection,
+                columns,
+                &where_clause,
+                target_provider,
+                selection,
+                &facts.subagent_thread_ids,
+            )?
+            .len() as i64;
+        } else if let Some(session_ids) = selection.session_ids() {
             if columns.model_provider {
                 let sql =
                     format!("SELECT COUNT(*) FROM threads WHERE ({where_clause}) AND id = ?2");
@@ -3245,8 +3775,13 @@ fn update_sqlite_provider_for_options(
     };
     let mut total = 0usize;
     for db_path in sqlite_candidate_paths_for_options(data_dir, options) {
-        total +=
-            update_sqlite_provider_for_db(&db_path, target_provider, facts.as_ref(), selection)?;
+        total += update_sqlite_provider_for_db(
+            &db_path,
+            target_provider,
+            options.sidebar_visible_only,
+            facts.as_ref(),
+            selection,
+        )?;
     }
     Ok(total)
 }
@@ -3254,6 +3789,7 @@ fn update_sqlite_provider_for_options(
 fn update_sqlite_provider_for_db(
     db_path: &Path,
     target_provider: &str,
+    sidebar_visible_only: bool,
     facts: Option<&RolloutThreadFacts>,
     selection: &RepairTargetSelection,
 ) -> Result<usize, String> {
@@ -3310,9 +3846,33 @@ fn update_sqlite_provider_for_db(
         .transaction()
         .map_err(|error| format_sqlite_write_error(db_path, &error))?;
     let mut updated_rows = 0usize;
-    if let Some(where_clause) = build_threads_repair_where_clause(columns) {
+    if let Some(where_clause) = build_threads_repair_where_clause(columns, sidebar_visible_only) {
         let set_clause = build_threads_repair_set_clause(columns);
-        if let Some(session_ids) = selection.session_ids() {
+        if let Some(facts) = facts {
+            let thread_ids = collect_eligible_thread_ids_for_repair(
+                &transaction,
+                columns,
+                &where_clause,
+                target_provider,
+                selection,
+                &facts.subagent_thread_ids,
+            )?;
+            if columns.model_provider {
+                let sql = format!("UPDATE threads SET {set_clause} WHERE id = ?2");
+                for thread_id in thread_ids {
+                    updated_rows += transaction
+                        .execute(sql.as_str(), (target_provider, thread_id.as_str()))
+                        .map_err(|error| format_sqlite_write_error(db_path, &error))?;
+                }
+            } else {
+                let sql = format!("UPDATE threads SET {set_clause} WHERE id = ?1");
+                for thread_id in thread_ids {
+                    updated_rows += transaction
+                        .execute(sql.as_str(), [thread_id.as_str()])
+                        .map_err(|error| format_sqlite_write_error(db_path, &error))?;
+                }
+            }
+        } else if let Some(session_ids) = selection.session_ids() {
             if columns.model_provider {
                 let sql =
                     format!("UPDATE threads SET {set_clause} WHERE ({where_clause}) AND id = ?2");
@@ -3410,10 +3970,17 @@ fn read_threads_table_columns(
         first_user_message: names.contains("first_user_message"),
         thread_source: names.contains("thread_source"),
         cwd: names.contains("cwd"),
+        archived: names.contains("archived"),
+        preview: names.contains("preview"),
+        rollout_path: names.contains("rollout_path"),
+        source: names.contains("source"),
     }))
 }
 
-fn build_threads_repair_where_clause(columns: ThreadsTableColumns) -> Option<String> {
+fn build_threads_repair_where_clause(
+    columns: ThreadsTableColumns,
+    sidebar_visible_only: bool,
+) -> Option<String> {
     let mut predicates = Vec::new();
     if columns.model_provider {
         predicates.push("COALESCE(model_provider, '') <> ?1");
@@ -3426,10 +3993,43 @@ fn build_threads_repair_where_clause(columns: ThreadsTableColumns) -> Option<Str
         predicates
             .push("(COALESCE(first_user_message, '') <> '' AND COALESCE(thread_source, '') = '')");
     }
+    if columns.preview && columns.first_user_message {
+        predicates.push("(COALESCE(preview, '') = '' AND COALESCE(first_user_message, '') <> '')");
+    }
     if predicates.is_empty() {
         None
     } else {
-        Some(predicates.join(" OR "))
+        let mut where_clause = format!("({})", predicates.join(" OR "));
+        if sidebar_visible_only {
+            let mut visibility = Vec::new();
+            if columns.archived {
+                visibility.push("COALESCE(archived, 0) = 0");
+            }
+            if columns.preview && columns.first_user_message {
+                visibility.push(
+                    "(COALESCE(preview, '') <> '' OR COALESCE(first_user_message, '') <> '')",
+                );
+            } else if columns.preview {
+                visibility.push("COALESCE(preview, '') <> ''");
+            }
+            if columns.rollout_path {
+                visibility.push("COALESCE(rollout_path, '') <> ''");
+            }
+            if columns.source {
+                visibility.push(
+                    "LOWER(COALESCE(source, '')) NOT LIKE '%subagent%' AND LOWER(COALESCE(source, '')) NOT LIKE '%internal%'",
+                );
+            }
+            if columns.thread_source {
+                visibility.push("COALESCE(thread_source, '') <> 'ambient_suggestions'");
+            }
+            if !visibility.is_empty() {
+                where_clause.push_str(" AND (");
+                where_clause.push_str(&visibility.join(" AND "));
+                where_clause.push(')');
+            }
+        }
+        Some(where_clause)
     }
 }
 
@@ -3448,7 +4048,583 @@ fn build_threads_repair_set_clause(columns: ThreadsTableColumns) -> String {
             "thread_source = CASE WHEN COALESCE(thread_source, '') = '' AND COALESCE(first_user_message, '') <> '' THEN 'user' ELSE thread_source END",
         );
     }
+    if columns.preview && columns.first_user_message {
+        assignments.push(
+            "preview = CASE WHEN COALESCE(preview, '') = '' THEN first_user_message ELSE preview END",
+        );
+    }
     assignments.join(", ")
+}
+
+fn collect_eligible_thread_ids_for_repair(
+    connection: &Connection,
+    columns: ThreadsTableColumns,
+    where_clause: &str,
+    target_provider: &str,
+    selection: &RepairTargetSelection,
+    excluded_thread_ids: &HashSet<String>,
+) -> Result<Vec<String>, String> {
+    if !columns.id {
+        return Ok(Vec::new());
+    }
+    let sql = format!("SELECT id FROM threads WHERE {where_clause}");
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("准备 SQLite 会话筛选失败: {}", error))?;
+    let mut ids = Vec::new();
+    if columns.model_provider {
+        let rows = statement
+            .query_map([target_provider], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("查询 SQLite 会话筛选失败: {}", error))?;
+        for row in rows {
+            let thread_id = row.map_err(|error| format!("读取 SQLite 会话筛选失败: {}", error))?;
+            if selection.includes_session_id(&thread_id)
+                && !excluded_thread_ids.contains(&thread_id)
+            {
+                ids.push(thread_id);
+            }
+        }
+    } else {
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("查询 SQLite 会话筛选失败: {}", error))?;
+        for row in rows {
+            let thread_id = row.map_err(|error| format!("读取 SQLite 会话筛选失败: {}", error))?;
+            if selection.includes_session_id(&thread_id)
+                && !excluded_thread_ids.contains(&thread_id)
+            {
+                ids.push(thread_id);
+            }
+        }
+    }
+    Ok(ids)
+}
+
+#[derive(Debug, Clone)]
+struct CatalogThreadRecord {
+    id: String,
+    display_title: String,
+    source_created_at: f64,
+    source_updated_at: f64,
+    cwd: String,
+    source_kind: String,
+    source_detail: String,
+    git_branch: Option<String>,
+    thread_source: Option<String>,
+    project_id: Option<String>,
+}
+
+fn table_columns(connection: &Connection, table: &str) -> Result<HashSet<String>, String> {
+    let escaped = table.replace('"', "\"\"");
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info(\"{escaped}\")"))
+        .map_err(|error| format!("读取 SQLite {table} 表结构失败: {error}"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("读取 SQLite {table} 表结构失败: {error}"))?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("读取 SQLite {table} 表结构失败: {error}"))?;
+    Ok(columns)
+}
+
+fn sqlite_text_expr(columns: &HashSet<String>, column: &str, fallback: &str) -> String {
+    if columns.contains(column) {
+        format!("COALESCE({column}, {fallback})")
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn sqlite_time_expr(
+    columns: &HashSet<String>,
+    seconds_column: &str,
+    millis_column: &str,
+) -> String {
+    if columns.contains(millis_column) {
+        format!("COALESCE({millis_column} / 1000.0, 0)")
+    } else if columns.contains(seconds_column) {
+        format!(
+            "CASE WHEN COALESCE({seconds_column}, 0) > 9999999999 THEN {seconds_column} / 1000.0 ELSE COALESCE({seconds_column}, 0) END"
+        )
+    } else {
+        "0".to_string()
+    }
+}
+
+fn collect_non_root_thread_ids(paths: &[PathBuf]) -> Result<HashSet<String>, String> {
+    let mut ids = HashSet::new();
+    let mut explicit_user_ids = HashSet::new();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| format!("打开 SQLite 会话库失败 ({}): {error}", path.display()))?;
+        for (table, column) in [
+            ("thread_spawn_edges", "child_thread_id"),
+            ("agent_job_items", "assigned_thread_id"),
+        ] {
+            if !table_columns(&connection, table)?.contains(column) {
+                continue;
+            }
+            let sql =
+                format!("SELECT DISTINCT {column} FROM {table} WHERE COALESCE({column}, '') <> ''");
+            let mut statement = connection
+                .prepare(&sql)
+                .map_err(|error| format!("准备子 Agent 会话查询失败: {error}"))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| format!("查询子 Agent 会话失败: {error}"))?;
+            for row in rows {
+                ids.insert(row.map_err(|error| format!("读取子 Agent 会话失败: {error}"))?);
+            }
+        }
+        for (table, id_column, source_column) in [
+            ("threads", "id", "source"),
+            ("local_thread_catalog", "thread_id", "source_kind"),
+        ] {
+            let columns = table_columns(&connection, table)?;
+            if !columns.contains(id_column) {
+                continue;
+            }
+            let source = sqlite_text_expr(&columns, source_column, "''");
+            let thread_source = sqlite_text_expr(&columns, "thread_source", "NULL");
+            let sql = format!(
+                "SELECT {id_column}, {source}, {thread_source} FROM {table} WHERE COALESCE({id_column}, '') <> ''"
+            );
+            let mut statement = connection
+                .prepare(&sql)
+                .map_err(|error| format!("准备会话类型查询失败: {error}"))?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1).unwrap_or_default(),
+                        row.get::<_, Option<String>>(2).unwrap_or(None),
+                    ))
+                })
+                .map_err(|error| format!("查询会话类型失败: {error}"))?;
+            for row in rows {
+                let (thread_id, source, thread_source) =
+                    row.map_err(|error| format!("读取会话类型失败: {error}"))?;
+                if thread_source
+                    .as_deref()
+                    .is_some_and(|value| value.trim().eq_ignore_ascii_case("user"))
+                {
+                    explicit_user_ids.insert(thread_id);
+                } else if thread_source_marks_non_root(thread_source.as_deref())
+                    || source_text_marks_non_root_agent(&source)
+                    || serde_json::from_str::<JsonValue>(&source)
+                        .is_ok_and(|value| source_value_marks_non_root_agent(&value))
+                {
+                    ids.insert(thread_id);
+                }
+            }
+        }
+    }
+    ids.retain(|thread_id| !explicit_user_ids.contains(thread_id));
+    Ok(ids)
+}
+
+fn thread_source_marks_non_root(value: Option<&str>) -> bool {
+    value.map(str::trim).is_some_and(|value| {
+        value.eq_ignore_ascii_case("subagent") || value.eq_ignore_ascii_case("memory_consolidation")
+    })
+}
+
+fn collect_catalog_thread_records(
+    paths: &[PathBuf],
+    selection: &RepairTargetSelection,
+    rollout_facts: &RolloutThreadFacts,
+) -> Result<(HashMap<String, CatalogThreadRecord>, HashSet<String>), String> {
+    let mut non_root_ids = collect_non_root_thread_ids(paths)?;
+    non_root_ids.extend(rollout_facts.subagent_thread_ids.iter().cloned());
+    let mut records = HashMap::new();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| format!("打开 SQLite 会话库失败 ({}): {error}", path.display()))?;
+        let columns = table_columns(&connection, "threads")?;
+        if !columns.contains("id") {
+            continue;
+        }
+        let title = if columns.contains("title") && columns.contains("first_user_message") {
+            "COALESCE(NULLIF(title, ''), NULLIF(first_user_message, ''), '')".to_string()
+        } else if columns.contains("title") {
+            "COALESCE(title, '')".to_string()
+        } else if columns.contains("first_user_message") {
+            "COALESCE(first_user_message, '')".to_string()
+        } else {
+            "''".to_string()
+        };
+        let created = sqlite_time_expr(&columns, "created_at", "created_at_ms");
+        let updated = sqlite_time_expr(&columns, "updated_at", "updated_at_ms");
+        let cwd = sqlite_text_expr(&columns, "cwd", "''");
+        let source = sqlite_text_expr(&columns, "source", "''");
+        let git_branch = sqlite_text_expr(&columns, "git_branch", "NULL");
+        let thread_source = sqlite_text_expr(&columns, "thread_source", "NULL");
+        let project_id = sqlite_text_expr(&columns, "project_id", "NULL");
+        let sql = format!(
+            "SELECT id, {title}, {created}, {updated}, {cwd}, {source}, {git_branch}, {thread_source}, {project_id} FROM threads WHERE COALESCE(id, '') <> ''"
+        );
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("准备会话目录修复查询失败 ({}): {error}", path.display()))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(CatalogThreadRecord {
+                    id: row.get(0)?,
+                    display_title: row.get::<_, String>(1).unwrap_or_default(),
+                    source_created_at: row.get::<_, f64>(2).unwrap_or_default(),
+                    source_updated_at: row.get::<_, f64>(3).unwrap_or_default(),
+                    cwd: row.get::<_, String>(4).unwrap_or_default(),
+                    source_kind: row.get::<_, String>(5).unwrap_or_default(),
+                    source_detail: row.get::<_, String>(5).unwrap_or_default(),
+                    git_branch: row.get::<_, Option<String>>(6).unwrap_or(None),
+                    thread_source: row.get::<_, Option<String>>(7).unwrap_or(None),
+                    project_id: row.get::<_, Option<String>>(8).unwrap_or(None),
+                })
+            })
+            .map_err(|error| format!("查询会话目录修复数据失败 ({}): {error}", path.display()))?;
+        for row in rows {
+            let record = row.map_err(|error| {
+                format!("读取会话目录修复数据失败 ({}): {error}", path.display())
+            })?;
+            if !selection.includes_session_id(&record.id) {
+                continue;
+            }
+            let explicitly_user = record
+                .thread_source
+                .as_deref()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("user"));
+            if explicitly_user {
+                non_root_ids.remove(&record.id);
+            }
+            if !explicitly_user
+                && (non_root_ids.contains(&record.id)
+                    || thread_source_marks_non_root(record.thread_source.as_deref())
+                    || source_text_marks_non_root_agent(&record.source_kind)
+                    || serde_json::from_str::<JsonValue>(&record.source_kind)
+                        .is_ok_and(|value| source_value_marks_non_root_agent(&value)))
+            {
+                non_root_ids.insert(record.id.clone());
+                continue;
+            }
+            let replace = records
+                .get(&record.id)
+                .map(|current: &CatalogThreadRecord| {
+                    record.source_updated_at > current.source_updated_at
+                })
+                .unwrap_or(true);
+            if replace {
+                records.insert(record.id.clone(), record);
+            }
+        }
+    }
+    for id in &non_root_ids {
+        records.remove(id);
+    }
+    Ok((records, non_root_ids))
+}
+
+fn local_catalog_host_id(connection: &Connection) -> Result<Option<String>, String> {
+    let columns = table_columns(connection, "local_thread_catalog_hosts")?;
+    if !columns.contains("host_id") {
+        return Ok(Some("local".to_string()));
+    }
+    let query = if columns.contains("host_kind") {
+        "SELECT host_id FROM local_thread_catalog_hosts WHERE LOWER(COALESCE(host_kind, '')) = 'local' ORDER BY host_id LIMIT 1"
+    } else {
+        "SELECT host_id FROM local_thread_catalog_hosts WHERE host_id = 'local' LIMIT 1"
+    };
+    match connection.query_row(query, [], |row| row.get::<_, String>(0)) {
+        Ok(value) if !value.trim().is_empty() => Ok(Some(value)),
+        Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(format!("读取本地会话目录 host 失败: {error}")),
+    }
+}
+
+fn repair_local_thread_catalog_for_options(
+    data_dir: &Path,
+    target_provider: &str,
+    selection: &RepairTargetSelection,
+    rollout_facts: &RolloutThreadFacts,
+    dry_run: bool,
+) -> Result<CatalogRepairCounts, String> {
+    let paths = provider_sync_sqlite_paths(data_dir);
+    let (records, non_root_ids) = collect_catalog_thread_records(&paths, selection, rollout_facts)?;
+    let mut totals = CatalogRepairCounts::default();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let mut connection = Connection::open(&path)
+            .map_err(|error| format!("打开会话目录数据库失败 ({}): {error}", path.display()))?;
+        let columns = table_columns(&connection, "local_thread_catalog")?;
+        let required = [
+            "host_id",
+            "thread_id",
+            "display_title",
+            "source_created_at",
+            "source_updated_at",
+            "cwd",
+            "source_kind",
+            "model_provider",
+            "observation_sequence",
+        ];
+        if !required.iter().all(|column| columns.contains(*column)) {
+            continue;
+        }
+        let Some(host_id) = local_catalog_host_id(&connection)? else {
+            continue;
+        };
+        let metadata_columns = table_columns(&connection, "local_thread_catalog_metadata")?;
+        let sync_state_columns = table_columns(&connection, "local_thread_catalog_sync_state")?;
+        let mut observation_sequence = connection
+            .query_row(
+                "SELECT COALESCE(MAX(observation_sequence), 0) FROM local_thread_catalog WHERE host_id = ?1",
+                [host_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("启动会话目录修复事务失败 ({}): {error}", path.display()))?;
+        let counts_before = totals;
+
+        for thread_id in &non_root_ids {
+            if !selection.includes_session_id(thread_id) {
+                continue;
+            }
+            totals.removed_rows += transaction
+                .execute(
+                    "DELETE FROM local_thread_catalog WHERE host_id = ?1 AND thread_id = ?2",
+                    (host_id.as_str(), thread_id.as_str()),
+                )
+                .map_err(|error| {
+                    format!("清理子 Agent 会话目录失败 ({}): {error}", path.display())
+                })?;
+        }
+
+        for record in records.values() {
+            let mut assignments = vec!["model_provider = ?1"];
+            if columns.contains("missing_candidate") {
+                assignments.push("missing_candidate = 0");
+            }
+            let update_sql = format!(
+                "UPDATE local_thread_catalog SET {} WHERE host_id = ?2 AND thread_id = ?3 AND (COALESCE(model_provider, '') <> ?1{})",
+                assignments.join(", "),
+                if columns.contains("missing_candidate") {
+                    " OR COALESCE(missing_candidate, 0) <> 0"
+                } else {
+                    ""
+                }
+            );
+            let updated = transaction
+                .execute(
+                    &update_sql,
+                    (target_provider, host_id.as_str(), record.id.as_str()),
+                )
+                .map_err(|error| format!("更新会话目录失败 ({}): {error}", path.display()))?;
+            totals.updated_rows += updated;
+            if updated > 0 {
+                continue;
+            }
+            let exists = transaction
+                .query_row(
+                    "SELECT 1 FROM local_thread_catalog WHERE host_id = ?1 AND thread_id = ?2 LIMIT 1",
+                    (host_id.as_str(), record.id.as_str()),
+                    |_| Ok(()),
+                )
+                .is_ok();
+            if exists {
+                continue;
+            }
+            observation_sequence += 1;
+            let mut insert_columns = vec![
+                "host_id",
+                "thread_id",
+                "display_title",
+                "source_created_at",
+                "source_updated_at",
+                "cwd",
+                "source_kind",
+                "model_provider",
+                "observation_sequence",
+            ];
+            let mut values = vec![
+                SqlValue::Text(host_id.clone()),
+                SqlValue::Text(record.id.clone()),
+                SqlValue::Text(record.display_title.clone()),
+                SqlValue::Real(record.source_created_at),
+                SqlValue::Real(record.source_updated_at),
+                SqlValue::Text(record.cwd.clone()),
+                SqlValue::Text(record.source_kind.clone()),
+                SqlValue::Text(target_provider.to_string()),
+                SqlValue::Integer(observation_sequence),
+            ];
+            for (column, value) in [
+                (
+                    "source_detail",
+                    SqlValue::Text(record.source_detail.clone()),
+                ),
+                (
+                    "git_branch",
+                    record
+                        .git_branch
+                        .clone()
+                        .map(SqlValue::Text)
+                        .unwrap_or(SqlValue::Null),
+                ),
+                (
+                    "thread_source",
+                    record
+                        .thread_source
+                        .clone()
+                        .map(SqlValue::Text)
+                        .unwrap_or(SqlValue::Null),
+                ),
+                (
+                    "project_id",
+                    record
+                        .project_id
+                        .clone()
+                        .map(SqlValue::Text)
+                        .unwrap_or(SqlValue::Null),
+                ),
+                ("missing_candidate", SqlValue::Integer(0)),
+                (
+                    "source_recency_at",
+                    SqlValue::Real(record.source_updated_at),
+                ),
+                ("pending_observed_title", SqlValue::Integer(0)),
+            ] {
+                if columns.contains(column) {
+                    insert_columns.push(column);
+                    values.push(value);
+                }
+            }
+            let placeholders = std::iter::repeat_n("?", insert_columns.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let insert_sql = format!(
+                "INSERT OR IGNORE INTO local_thread_catalog ({}) VALUES ({})",
+                insert_columns.join(", "),
+                placeholders
+            );
+            totals.inserted_rows += transaction
+                .execute(&insert_sql, params_from_iter(values))
+                .map_err(|error| format!("补写会话目录失败 ({}): {error}", path.display()))?;
+        }
+
+        let changed_rows = totals.total().saturating_sub(counts_before.total());
+        if changed_rows > 0 && metadata_columns.contains("catalog_revision") {
+            let updated = transaction
+                .execute(
+                    "UPDATE local_thread_catalog_metadata SET catalog_revision = catalog_revision + ?1",
+                    [changed_rows as i64],
+                )
+                .map_err(|error| {
+                    format!("更新会话目录版本失败 ({}): {error}", path.display())
+                })?;
+            if updated == 0 && metadata_columns.contains("id") {
+                transaction
+                    .execute(
+                        "INSERT INTO local_thread_catalog_metadata (id, catalog_revision) VALUES (1, ?1)",
+                        [changed_rows as i64],
+                    )
+                    .map_err(|error| {
+                        format!("初始化会话目录版本失败 ({}): {error}", path.display())
+                    })?;
+            }
+        }
+        if changed_rows > 0 && sync_state_columns.contains("host_id") {
+            let mut assignments = Vec::new();
+            let mut values = Vec::new();
+            if sync_state_columns.contains("initial_build_complete") {
+                assignments.push("initial_build_complete = 1");
+            }
+            if sync_state_columns.contains("observation_sequence") {
+                assignments
+                    .push("observation_sequence = MAX(COALESCE(observation_sequence, 0), ?)");
+                values.push(SqlValue::Integer(observation_sequence));
+            }
+            if sync_state_columns.contains("watermark_updated_at") {
+                assignments
+                    .push("watermark_updated_at = MAX(COALESCE(watermark_updated_at, 0), ?)");
+                values.push(SqlValue::Real(
+                    records
+                        .values()
+                        .map(|record| record.source_updated_at)
+                        .fold(0.0, f64::max),
+                ));
+            }
+            if sync_state_columns.contains("last_full_reconciled_at") {
+                assignments
+                    .push("last_full_reconciled_at = MAX(COALESCE(last_full_reconciled_at, 0), ?)");
+                values.push(SqlValue::Integer(Utc::now().timestamp()));
+            }
+            if !assignments.is_empty() {
+                let sql = format!(
+                    "UPDATE local_thread_catalog_sync_state SET {} WHERE host_id = ?",
+                    assignments.join(", ")
+                );
+                values.push(SqlValue::Text(host_id.clone()));
+                let updated = transaction
+                    .execute(&sql, params_from_iter(values))
+                    .map_err(|error| {
+                        format!("更新会话目录同步状态失败 ({}): {error}", path.display())
+                    })?;
+                if updated == 0 {
+                    let mut columns = vec!["host_id"];
+                    let mut values = vec![SqlValue::Text(host_id.clone())];
+                    if sync_state_columns.contains("watermark_updated_at") {
+                        columns.push("watermark_updated_at");
+                        values.push(SqlValue::Real(
+                            records
+                                .values()
+                                .map(|record| record.source_updated_at)
+                                .fold(0.0, f64::max),
+                        ));
+                    }
+                    if sync_state_columns.contains("initial_build_complete") {
+                        columns.push("initial_build_complete");
+                        values.push(SqlValue::Integer(1));
+                    }
+                    if sync_state_columns.contains("observation_sequence") {
+                        columns.push("observation_sequence");
+                        values.push(SqlValue::Integer(observation_sequence));
+                    }
+                    if sync_state_columns.contains("last_full_reconciled_at") {
+                        columns.push("last_full_reconciled_at");
+                        values.push(SqlValue::Integer(Utc::now().timestamp()));
+                    }
+                    let placeholders = std::iter::repeat_n("?", columns.len())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let insert_sql = format!(
+                        "INSERT INTO local_thread_catalog_sync_state ({}) VALUES ({})",
+                        columns.join(", "),
+                        placeholders
+                    );
+                    transaction
+                        .execute(&insert_sql, params_from_iter(values))
+                        .map_err(|error| {
+                            format!("初始化会话目录同步状态失败 ({}): {error}", path.display())
+                        })?;
+                }
+            }
+        }
+
+        if !dry_run {
+            transaction
+                .commit()
+                .map_err(|error| format!("提交会话目录修复失败 ({}): {error}", path.display()))?;
+        }
+    }
+    Ok(totals)
 }
 
 fn format_sqlite_read_error(path: &Path, action: &str, error: &rusqlite::Error) -> String {
@@ -3472,7 +4648,31 @@ fn format_sqlite_write_error(path: &Path, error: &rusqlite::Error) -> String {
     )
 }
 
-fn rewrite_rollout_provider(change: &RolloutProviderChange) -> Result<(), String> {
+fn rewrite_rollout_provider(change: &RolloutProviderChange) -> Result<bool, String> {
+    let metadata = match fs::metadata(&change.absolute_path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            modules::logger::log_warn(&format!(
+                "跳过已不可读取的 Codex rollout 文件 ({}): {}",
+                change.absolute_path.display(),
+                error
+            ));
+            return Ok(false);
+        }
+    };
+    let current_modified_at = metadata.modified().ok();
+    if metadata.len() != change.source_size
+        || !modules::codex_session_file_time::same_modified_time_millis(
+            current_modified_at,
+            change.source_modified_at,
+        )
+    {
+        modules::logger::log_warn(&format!(
+            "跳过修复扫描后发生变化的 Codex rollout 文件: {}",
+            change.absolute_path.display()
+        ));
+        return Ok(false);
+    }
     let original_modified_at =
         modules::codex_session_file_time::read_modified_time(&change.absolute_path);
     if let Some(updated_content) = change.updated_content.as_ref() {
@@ -3488,7 +4688,8 @@ fn rewrite_rollout_provider(change: &RolloutProviderChange) -> Result<(), String
     modules::codex_session_file_time::restore_modified_time(
         &change.absolute_path,
         change.target_modified_at.or(original_modified_at),
-    )
+    )?;
+    Ok(true)
 }
 
 fn rewrite_rollout_first_line(path: &Path, updated_first_line: &str) -> Result<(), String> {
@@ -3546,8 +4747,15 @@ fn sqlite_candidate_paths_for_options(
     match options.sqlite_scope {
         SqliteRepairScope::LegacyStateOnly => vec![data_dir.join(STATE_DB_FILE)],
         SqliteRepairScope::OfficialStateDbs => official_state_db_candidate_paths(data_dir),
-        SqliteRepairScope::AllSessionDbs => sqlite_candidate_paths(data_dir),
+        SqliteRepairScope::AllSessionDbs => provider_sync_sqlite_paths(data_dir),
     }
+}
+
+fn provider_sync_sqlite_paths(data_dir: &Path) -> Vec<PathBuf> {
+    sqlite_candidate_paths(data_dir)
+        .into_iter()
+        .filter(|path| has_provider_sync_table(path))
+        .collect()
 }
 
 fn official_state_db_candidate_paths(data_dir: &Path) -> Vec<PathBuf> {
@@ -3600,17 +4808,37 @@ fn has_codex_session_table(path: &Path) -> bool {
     let Ok(connection) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
         return false;
     };
-    ["threads", "automation_runs", "inbox_items"]
-        .iter()
-        .any(|table| {
-            connection
-                .query_row(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1",
-                    [table],
-                    |_| Ok(()),
-                )
-                .is_ok()
-        })
+    [
+        "threads",
+        "local_thread_catalog",
+        "automation_runs",
+        "inbox_items",
+    ]
+    .iter()
+    .any(|table| {
+        connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1",
+                [table],
+                |_| Ok(()),
+            )
+            .is_ok()
+    })
+}
+
+fn has_provider_sync_table(path: &Path) -> bool {
+    let Ok(connection) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return false;
+    };
+    ["threads", "local_thread_catalog"].iter().any(|table| {
+        connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1",
+                [table],
+                |_| Ok(()),
+            )
+            .is_ok()
+    })
 }
 
 fn relative_to_instance_root(data_dir: &Path, path: &Path) -> PathBuf {
@@ -3767,6 +4995,7 @@ fn backup_instance_files(
     rollout_changes: &[RolloutProviderChange],
     include_sqlite: bool,
     include_session_index: bool,
+    include_global_state: bool,
     instance_id: &str,
     target_provider: &str,
     options: CodexSessionVisibilityRepairOptions,
@@ -3841,6 +5070,27 @@ fn backup_instance_files(
         }
     }
 
+    let mut global_state_backup_created = false;
+    if include_global_state {
+        let source = data_dir.join(GLOBAL_STATE_FILE);
+        if source.exists() {
+            let target = backup_dir.join("files").join(GLOBAL_STATE_FILE);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!("创建全局状态备份目录失败 ({}): {error}", parent.display())
+                })?;
+            }
+            fs::copy(&source, &target).map_err(|error| {
+                format!(
+                    "备份 Codex 全局状态失败 ({} -> {}): {error}",
+                    source.display(),
+                    target.display()
+                )
+            })?;
+            global_state_backup_created = true;
+        }
+    }
+
     let manifest = json!({
         "instanceId": instance_id,
         "instanceRoot": data_dir,
@@ -3849,6 +5099,7 @@ fn backup_instance_files(
         "hasSqliteBackup": !sqlite_backup_files.is_empty(),
         "sqliteFiles": sqlite_backup_files,
         "hasSessionIndexBackup": session_index_backup_created,
+        "hasGlobalStateBackup": global_state_backup_created,
         "rolloutFiles": backed_up_files,
     });
     fs::write(
@@ -4043,6 +5294,61 @@ mod tests {
         mode: CodexSessionVisibilityRepairMode,
     ) -> CodexSessionVisibilityRepairOptions {
         CodexSessionVisibilityRepairOptions::for_mode(mode)
+    }
+
+    #[test]
+    fn provider_discovery_uses_config_and_official_state_db_without_scanning_rollouts() {
+        let data_dir = make_temp_dir("codex-session-provider-discovery-test");
+        fs::write(
+            data_dir.join(CONFIG_FILE_NAME),
+            "model_provider = \"relay\"\n[model_providers.alt]\nname = \"alternate\"\n",
+        )
+        .expect("write config");
+
+        let rollout_path = data_dir.join("sessions/2026/08/24/rollout-only.jsonl");
+        fs::create_dir_all(rollout_path.parent().expect("rollout parent"))
+            .expect("create rollout dir");
+        fs::write(
+            rollout_path,
+            "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"rollout-only\"}}\n",
+        )
+        .expect("write rollout");
+
+        let db_path = data_dir.join(STATE_DB_FILE);
+        let connection = Connection::open(&db_path).expect("open sqlite");
+        connection
+            .execute(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)",
+                [],
+            )
+            .expect("create threads table");
+        connection
+            .execute(
+                "INSERT INTO threads (id, model_provider) VALUES ('legacy-thread', 'legacy')",
+                [],
+            )
+            .expect("insert provider");
+        drop(connection);
+
+        let instances = vec![CodexSyncInstance {
+            id: DEFAULT_INSTANCE_ID.to_string(),
+            name: DEFAULT_INSTANCE_NAME.to_string(),
+            data_dir: data_dir.clone(),
+            last_pid: None,
+        }];
+        let result = collect_session_visibility_repair_providers_for_instances(&instances)
+            .expect("discover providers");
+        let ids = result
+            .providers
+            .iter()
+            .map(|provider| provider.id.as_str())
+            .collect::<HashSet<_>>();
+
+        assert!(ids.contains("relay"));
+        assert!(ids.contains("alt"));
+        assert!(ids.contains("legacy"));
+        assert!(!ids.contains("rollout-only"));
+        fs::remove_dir_all(&data_dir).expect("cleanup temp dir");
     }
 
     fn write_quick_repair_rollout_reference(
@@ -4364,6 +5670,85 @@ mod tests {
     }
 
     #[test]
+    fn quick_sqlite_repair_targets_official_sidebar_rows_only() {
+        let data_dir = make_temp_dir("codex-session-sidebar-visible-test");
+        let db_path = data_dir.join(STATE_DB_FILE);
+        let connection = Connection::open(&db_path).expect("open sqlite");
+        connection
+            .execute(
+                "CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    rollout_path TEXT,
+                    model_provider TEXT,
+                    has_user_event INTEGER,
+                    first_user_message TEXT,
+                    thread_source TEXT,
+                    archived INTEGER,
+                    preview TEXT,
+                    source TEXT
+                )",
+                [],
+            )
+            .expect("create threads table");
+        connection
+            .execute(
+                "INSERT INTO threads (
+                    id, rollout_path, model_provider, has_user_event,
+                    first_user_message, thread_source, archived, preview, source
+                 ) VALUES
+                 ('visible-old', 'sessions/visible.jsonl', 'old', 1, 'visible', 'user', 0, 'visible', 'vscode'),
+                 ('empty-preview', 'sessions/preview.jsonl', 'relay', 1, 'preview fallback', 'user', 0, '', 'vscode'),
+                 ('archived-old', 'archived_sessions/archived.jsonl', 'old', 1, 'archived', 'user', 1, 'archived', 'vscode'),
+                 ('missing-rollout', '', 'old', 1, 'missing', 'user', 0, 'missing', 'vscode'),
+                 ('subagent-old', 'sessions/subagent.jsonl', 'old', 1, 'subagent', NULL, 0, 'subagent', '{\"subagent\":{\"other\":\"guardian\"}}')",
+                [],
+            )
+            .expect("insert rows");
+        drop(connection);
+
+        let options = repair_options(CodexSessionVisibilityRepairMode::Quick);
+        let selection = RepairTargetSelection::default();
+        let scan = count_sqlite_rows_to_update_for_options(&data_dir, "relay", options, &selection)
+            .expect("scan sqlite");
+        assert_eq!(scan.rows_to_update, 2);
+
+        let updated_rows =
+            update_sqlite_provider_for_options(&data_dir, "relay", options, &selection)
+                .expect("update sqlite");
+        assert_eq!(updated_rows, 2);
+
+        let connection = Connection::open(&db_path).expect("reopen sqlite");
+        let visible_provider = connection
+            .query_row(
+                "SELECT model_provider FROM threads WHERE id = 'visible-old'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("read visible provider");
+        let repaired_preview = connection
+            .query_row(
+                "SELECT preview FROM threads WHERE id = 'empty-preview'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("read repaired preview");
+        assert_eq!(visible_provider, "relay");
+        assert_eq!(repaired_preview, "preview fallback");
+        for hidden_id in ["archived-old", "missing-rollout", "subagent-old"] {
+            let provider = connection
+                .query_row(
+                    "SELECT model_provider FROM threads WHERE id = ?1",
+                    [hidden_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("read hidden provider");
+            assert_eq!(provider, "old");
+        }
+
+        fs::remove_dir_all(&data_dir).expect("cleanup temp dir");
+    }
+
+    #[test]
     fn sqlite_repair_keeps_provider_only_schema_working() {
         let data_dir = make_temp_dir("codex-session-provider-only-sqlite-test");
         let db_path = data_dir.join(STATE_DB_FILE);
@@ -4582,7 +5967,7 @@ mod tests {
     }
 
     #[test]
-    fn deep_mode_repairs_official_state_db_and_referenced_rollout_all_session_meta() {
+    fn deep_mode_repairs_all_session_databases_and_rollout_metadata() {
         let data_dir = make_temp_dir("codex-session-deep-compat-official-state-test");
         let sqlite_dir = data_dir.join(SQLITE_DIR_NAME);
         fs::create_dir_all(&sqlite_dir).expect("create sqlite dir");
@@ -4631,21 +6016,25 @@ mod tests {
 
         let options = repair_options(CodexSessionVisibilityRepairMode::Deep);
         assert_eq!(options.mode, CodexSessionVisibilityRepairMode::Deep);
-        assert_eq!(options.sqlite_scope, SqliteRepairScope::OfficialStateDbs);
-        assert!(!options.repair_rollout);
-        assert!(options.repair_referenced_rollouts);
+        assert_eq!(options.sqlite_scope, SqliteRepairScope::AllSessionDbs);
+        assert!(options.repair_rollout);
+        assert!(!options.repair_referenced_rollouts);
         assert!(options.rewrite_all_session_meta);
+        assert!(options.collect_rollout_thread_facts);
+        assert!(options.repair_local_thread_catalog);
+        assert!(options.normalize_global_state);
         assert!(!options.repair_session_index);
-        assert!(!options.rebuild_metadata);
+        assert!(options.rebuild_metadata);
+        assert!(options.require_stopped_instances);
 
         let selection = RepairTargetSelection::default();
         let rollout_changes =
-            collect_referenced_rollout_provider_changes(&data_dir, "relay", options, &selection)
-                .expect("collect deep referenced rollout changes");
+            collect_rollout_provider_changes(&data_dir, "relay", options, &selection)
+                .expect("collect deep rollout changes");
         assert_eq!(rollout_changes.len(), 1);
         let scan = count_sqlite_rows_to_update_for_options(&data_dir, "relay", options, &selection)
             .expect("scan compatibility sqlite");
-        assert_eq!(scan.rows_to_update, 1);
+        assert_eq!(scan.rows_to_update, 2);
 
         let repaired = repair_single_instance(
             &data_dir,
@@ -4658,7 +6047,7 @@ mod tests {
             &selection,
         )
         .expect("compatibility repair");
-        assert_eq!(repaired.updated_sqlite_rows, 1);
+        assert_eq!(repaired.updated_sqlite_rows, 2);
 
         let connection = Connection::open(&official_db_path).expect("reopen official sqlite");
         let official_provider = connection
@@ -4678,7 +6067,7 @@ mod tests {
                 |row| row.get::<usize, String>(0),
             )
             .expect("read unrelated provider");
-        assert_eq!(unrelated_provider, "old");
+        assert_eq!(unrelated_provider, "relay");
 
         let referenced_content =
             fs::read_to_string(&referenced_rollout).expect("read deep repaired rollout");
@@ -4726,6 +6115,7 @@ mod tests {
             &[],
             true,
             false,
+            false,
             "default",
             "relay",
             repair_options(CodexSessionVisibilityRepairMode::Quick),
@@ -4762,6 +6152,174 @@ mod tests {
             )
             .expect("read restored provider");
         assert_eq!(provider, "old");
+
+        fs::remove_dir_all(&data_dir).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn deep_repair_rebuilds_local_catalog_and_reports_encrypted_history() {
+        let data_dir = make_temp_dir("codex-session-deep-catalog-test");
+        let sqlite_dir = data_dir.join(SQLITE_DIR_NAME);
+        fs::create_dir_all(&sqlite_dir).expect("create sqlite dir");
+        let state_db = sqlite_dir.join(OFFICIAL_STATE_DB_FILE);
+        let connection = Connection::open(&state_db).expect("open state db");
+        connection
+            .execute_batch(
+                "CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    rollout_path TEXT,
+                    created_at INTEGER,
+                    updated_at INTEGER,
+                    title TEXT,
+                    cwd TEXT,
+                    source TEXT,
+                    model_provider TEXT,
+                    git_branch TEXT,
+                    thread_source TEXT,
+                    has_user_event INTEGER,
+                    first_user_message TEXT
+                );
+                CREATE TABLE thread_spawn_edges (child_thread_id TEXT);",
+            )
+            .expect("create state schema");
+        connection
+            .execute(
+                "INSERT INTO threads VALUES ('user-1', '', 10, 20, 'User chat', 'C:\\\\repo', 'cli', 'old', 'main', 'user', 0, 'hello')",
+                [],
+            )
+            .expect("insert user thread");
+        connection
+            .execute(
+                "INSERT INTO threads VALUES ('child-1', '', 11, 21, 'Child', 'C:\\\\repo', '{\"subagent\":{}}', 'old', NULL, 'subagent', 0, '')",
+                [],
+            )
+            .expect("insert child thread");
+        connection
+            .execute("INSERT INTO thread_spawn_edges VALUES ('child-1')", [])
+            .expect("insert spawn edge");
+        drop(connection);
+
+        let catalog_db = sqlite_dir.join(PREFERRED_SQLITE_DB_FILE);
+        let connection = Connection::open(&catalog_db).expect("open catalog db");
+        connection
+            .execute_batch(
+                "CREATE TABLE local_thread_catalog_hosts (host_id TEXT PRIMARY KEY, host_kind TEXT);
+                 INSERT INTO local_thread_catalog_hosts VALUES ('local', 'local');
+                 CREATE TABLE local_thread_catalog (
+                    host_id TEXT NOT NULL,
+                    thread_id TEXT NOT NULL,
+                    display_title TEXT NOT NULL,
+                    source_created_at REAL NOT NULL,
+                    source_updated_at REAL NOT NULL,
+                    cwd TEXT,
+                    source_kind TEXT NOT NULL,
+                    source_detail TEXT,
+                    model_provider TEXT,
+                    git_branch TEXT,
+                    observation_sequence INTEGER NOT NULL,
+                    missing_candidate INTEGER NOT NULL DEFAULT 0,
+                    thread_source TEXT,
+                    source_recency_at REAL NOT NULL DEFAULT 0,
+                    pending_observed_title INTEGER NOT NULL DEFAULT 0,
+                    project_id TEXT,
+                    PRIMARY KEY (host_id, thread_id)
+                 );
+                 CREATE TABLE local_thread_catalog_metadata (id INTEGER PRIMARY KEY, catalog_revision INTEGER NOT NULL DEFAULT 0);
+                 INSERT INTO local_thread_catalog_metadata VALUES (1, 0);
+                 CREATE TABLE local_thread_catalog_sync_state (
+                    host_id TEXT PRIMARY KEY,
+                    watermark_updated_at REAL,
+                    initial_build_complete INTEGER NOT NULL DEFAULT 0,
+                    observation_sequence INTEGER NOT NULL DEFAULT 0,
+                    last_full_reconciled_at INTEGER
+                 );
+                 INSERT INTO local_thread_catalog_sync_state VALUES ('local', 0, 0, 0, 0);
+                 INSERT INTO local_thread_catalog (
+                    host_id, thread_id, display_title, source_created_at, source_updated_at,
+                    cwd, source_kind, model_provider, observation_sequence, thread_source
+                 ) VALUES ('local', 'child-1', 'Child', 11, 21, 'C:\\repo', 'subagent', 'old', 1, 'subagent');",
+            )
+            .expect("create catalog schema");
+        drop(connection);
+
+        let rollout_dir = data_dir.join("sessions").join("2026").join("08").join("24");
+        fs::create_dir_all(&rollout_dir).expect("create rollout dir");
+        fs::write(
+            rollout_dir.join("rollout-user-1.jsonl"),
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"user-1\",\"model_provider\":\"old\",\"cwd\":\"C:\\\\\\\\repo\",\"source\":\"cli\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"user_message\",\"encrypted_content\":\"secret\"}}\n"
+            ),
+        )
+        .expect("write user rollout");
+        fs::write(
+            rollout_dir.join("rollout-child-1.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"child-1\",\"model_provider\":\"old\",\"source\":{\"subagent\":{}}}}\n",
+        )
+        .expect("write child rollout");
+        fs::write(
+            data_dir.join(GLOBAL_STATE_FILE),
+            "{\"project-order\":[\"\\\\\\\\?\\\\C:\\\\repo\\\\\",\"C:\\\\repo\"]}",
+        )
+        .expect("write global state");
+
+        let selection = RepairTargetSelection::default();
+        let facts = collect_rollout_thread_facts(&data_dir, &selection).expect("collect facts");
+        assert!(facts.user_event_thread_ids.contains("user-1"));
+        assert!(facts.subagent_thread_ids.contains("child-1"));
+        assert_eq!(facts.encrypted_content_counts.get("old"), Some(&1));
+
+        let preview =
+            repair_local_thread_catalog_for_options(&data_dir, "relay", &selection, &facts, true)
+                .expect("preview catalog repair");
+        assert_eq!(preview.inserted_rows, 1);
+        assert_eq!(preview.removed_rows, 1);
+
+        let repaired =
+            repair_local_thread_catalog_for_options(&data_dir, "relay", &selection, &facts, false)
+                .expect("repair catalog");
+        assert_eq!(repaired.inserted_rows, 1);
+        assert_eq!(repaired.removed_rows, 1);
+        let connection = Connection::open(&catalog_db).expect("reopen catalog db");
+        let user_provider = connection
+            .query_row(
+                "SELECT model_provider FROM local_thread_catalog WHERE thread_id = 'user-1'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("read repaired catalog row");
+        assert_eq!(user_provider, "relay");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM local_thread_catalog WHERE thread_id = 'child-1'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count child catalog row"),
+            0
+        );
+
+        assert_eq!(
+            normalize_global_state(&data_dir, true).expect("preview state"),
+            1
+        );
+        assert_eq!(
+            normalize_global_state(&data_dir, false).expect("repair state"),
+            1
+        );
+        assert!(
+            build_encrypted_content_warning(&facts.encrypted_content_counts, "relay").is_some()
+        );
+
+        let changes = collect_rollout_provider_changes(
+            &data_dir,
+            "relay",
+            repair_options(CodexSessionVisibilityRepairMode::Deep),
+            &selection,
+        )
+        .expect("collect rollout changes");
+        assert_eq!(changes.len(), 1);
 
         fs::remove_dir_all(&data_dir).expect("cleanup temp dir");
     }

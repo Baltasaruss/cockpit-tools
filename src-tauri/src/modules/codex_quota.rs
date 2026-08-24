@@ -1539,9 +1539,21 @@ async fn refresh_account_quota_once(
     account_id: &str,
     options: RefreshQuotaOptions,
 ) -> Result<CodexQuota, String> {
-    let mut account = match codex_account::prepare_account_for_injection(account_id).await {
+    let mut account = match codex_account::prepare_account_for_quota_query(account_id).await {
         Ok(account) => account,
         Err(error) => {
+            if codex_account::is_refresh_ownership_deferred_error(&error) {
+                logger::log_warn(&format!(
+                    "Codex 额度查询暂缓 Token 轮换，保留已有额度: account_id={}, reason={}",
+                    account_id, error
+                ));
+                if let Some(existing_quota) =
+                    codex_account::load_account(account_id).and_then(|account| account.quota)
+                {
+                    return Ok(existing_quota);
+                }
+                return Err("暂未获取到最新额度，请稍后重试".to_string());
+            }
             if let Some(mut stored_account) = codex_account::load_account(account_id) {
                 write_quota_error(&mut stored_account, error.clone());
                 if let Err(save_error) = codex_account::save_account(&stored_account) {

@@ -36,6 +36,7 @@ export type InstanceStoreState = {
     launchMode?: InstanceLaunchMode;
     appSpeed?: CodexAppSpeed;
     autoSyncThreads?: boolean;
+    deferBindAccountApplication?: boolean;
   }) => Promise<InstanceProfile>;
   deleteInstance: (instanceId: string) => Promise<void>;
   startInstance: (instanceId: string) => Promise<InstanceProfile>;
@@ -68,6 +69,7 @@ type InstanceService = {
     launchMode?: InstanceLaunchMode;
     appSpeed?: CodexAppSpeed;
     autoSyncThreads?: boolean;
+    deferBindAccountApplication?: boolean;
   }) => Promise<InstanceProfile>;
   deleteInstance: (instanceId: string) => Promise<void>;
   startInstance: (instanceId: string) => Promise<InstanceProfile>;
@@ -114,9 +116,7 @@ export function createInstanceStore(
       const showInitialLoading =
         !hasLoadedInstances && get().instances.length === 0;
       set(
-        showInitialLoading
-          ? { loading: true, error: null }
-          : { error: null },
+        showInitialLoading ? { loading: true, error: null } : { error: null },
       );
       try {
         const instances = await service.listInstances();
@@ -159,7 +159,18 @@ export function createInstanceStore(
 
     updateInstance: async (payload) => {
       const instance = await service.updateInstance(payload);
-      await get().fetchInstances();
+      if (payload.deferBindAccountApplication) {
+        set((state) => ({
+          instances: state.instances.some((item) => item.id === instance.id)
+            ? state.instances.map((item) =>
+                item.id === instance.id ? instance : item,
+              )
+            : [...state.instances, instance],
+        }));
+        persistInstancesCache(get().instances);
+      } else {
+        await get().fetchInstances();
+      }
       return instance;
     },
 
@@ -170,17 +181,22 @@ export function createInstanceStore(
 
     startInstance: async (instanceId) => {
       const flowStartedAt = performance.now();
-      console.info("[Instance Start][Store] startInstance started", { instanceId });
+      console.info("[Instance Start][Store] startInstance started", {
+        instanceId,
+      });
       const instance = await service.startInstance(instanceId);
       console.info("[Instance Start][Store] service.startInstance finished", {
         instanceId,
         elapsedMs: Math.round(performance.now() - flowStartedAt),
       });
       await get().fetchInstances();
-      console.info("[Instance Start][Store] fetchInstances after start finished", {
-        instanceId,
-        elapsedMs: Math.round(performance.now() - flowStartedAt),
-      });
+      console.info(
+        "[Instance Start][Store] fetchInstances after start finished",
+        {
+          instanceId,
+          elapsedMs: Math.round(performance.now() - flowStartedAt),
+        },
+      );
       return instance;
     },
 

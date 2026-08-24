@@ -569,6 +569,13 @@ fn resolve_instance_base_dir(instance_id: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(instance.user_data_dir))
 }
 
+fn should_apply_instance_binding_immediately(
+    binding_changed: bool,
+    defer_bind_account_application: Option<bool>,
+) -> bool {
+    binding_changed && defer_bind_account_application != Some(true)
+}
+
 fn resolve_instance_launch_context(instance_id: &str) -> Result<CodexLaunchContext, String> {
     if instance_id == DEFAULT_INSTANCE_ID {
         let default_settings = modules::codex_instance::load_default_settings()?;
@@ -779,6 +786,21 @@ mod tests {
         CodexInstanceStartGuard::acquire("guard-test-a")
             .expect("the guard should be released when the start finishes");
         drop(other);
+    }
+
+    #[test]
+    fn deferred_instance_binding_skips_runtime_credential_application() {
+        assert!(!should_apply_instance_binding_immediately(true, Some(true)));
+        assert!(!should_apply_instance_binding_immediately(
+            false,
+            Some(false)
+        ));
+    }
+
+    #[test]
+    fn regular_instance_update_keeps_immediate_binding_compatibility() {
+        assert!(should_apply_instance_binding_immediately(true, None));
+        assert!(should_apply_instance_binding_immediately(true, Some(false)));
     }
 
     #[test]
@@ -1524,17 +1546,23 @@ pub async fn codex_repair_session_visibility_across_instances(
 ) -> Result<modules::codex_session_visibility::CodexSessionVisibilityRepairSummary, String> {
     let mode =
         mode.unwrap_or(modules::codex_session_visibility::CodexSessionVisibilityRepairMode::Quick);
-    let resolved_target_provider = match target_instance_id
-        .as_deref()
-        .map(str::trim)
+    let resolved_target_provider = match target_provider
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
-        Some(instance_id) => Some(
-            modules::codex_session_visibility::resolve_session_visibility_target_provider_from_instance_id(
-                instance_id,
-            )?,
-        ),
-        None => target_provider,
+        Some(provider) => Some(provider),
+        None => match target_instance_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(instance_id) => Some(
+                modules::codex_session_visibility::resolve_session_visibility_target_provider_from_instance_id(
+                    instance_id,
+                )?,
+            ),
+            None => None,
+        },
     };
     let progress_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1819,8 +1847,12 @@ pub async fn codex_update_instance(
     launch_mode: Option<InstanceLaunchMode>,
     app_speed: Option<CodexAppSpeed>,
     auto_sync_threads: Option<bool>,
+    defer_bind_account_application: Option<bool>,
 ) -> Result<CodexInstanceProfileView, String> {
-    let should_apply_bind_account = bind_account_id.is_some() || follow_local_account.is_some();
+    let should_apply_bind_account = should_apply_instance_binding_immediately(
+        bind_account_id.is_some() || follow_local_account.is_some(),
+        defer_bind_account_application,
+    );
     if instance_id == DEFAULT_INSTANCE_ID {
         let default_dir = modules::codex_instance::get_default_codex_home()?;
         let mut updated = modules::codex_instance::update_default_settings(
@@ -1859,7 +1891,7 @@ pub async fn codex_update_instance(
         .as_ref()
         .and_then(|next| next.as_ref())
         .is_some();
-    if wants_bind {
+    if wants_bind && defer_bind_account_application != Some(true) {
         let store = modules::codex_instance::load_instance_store()?;
         if let Some(target) = store.instances.iter().find(|item| item.id == instance_id) {
             if !is_profile_initialized(&target.user_data_dir) {
@@ -1871,7 +1903,10 @@ pub async fn codex_update_instance(
         }
     }
 
-    let should_apply_instance_bind_account = bind_account_id.is_some();
+    let should_apply_instance_bind_account = should_apply_instance_binding_immediately(
+        bind_account_id.is_some(),
+        defer_bind_account_application,
+    );
     let selected_app_speed = app_speed.clone();
     let instance =
         modules::codex_instance::update_instance(modules::codex_instance::UpdateInstanceParams {
@@ -2646,8 +2681,33 @@ async fn codex_start_instance_internal(
 
 pub(crate) async fn codex_start_default_with_prepared_profile(
     app: AppHandle,
+    emit_launch_progress: bool,
 ) -> Result<CodexInstanceProfileView, String> {
-    codex_start_instance_internal(app, DEFAULT_INSTANCE_ID.to_string(), true, false, false).await
+    let launch_target = emit_launch_progress
+        .then(|| resolve_codex_instance_start_target(DEFAULT_INSTANCE_ID))
+        .transpose()?;
+    let result = codex_start_instance_internal(
+        app.clone(),
+        DEFAULT_INSTANCE_ID.to_string(),
+        true,
+        false,
+        emit_launch_progress,
+    )
+    .await;
+    if let (Some(target), Err(error)) = (&launch_target, &result) {
+        if !error.starts_with(CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX) {
+            emit_codex_instance_launch_progress(
+                &app,
+                true,
+                target,
+                serde_json::json!({
+                    "type": "error",
+                    "error": error,
+                }),
+            );
+        }
+    }
+    result
 }
 
 #[tauri::command]

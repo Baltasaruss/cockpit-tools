@@ -5113,7 +5113,7 @@ mod imp {
                         .map(|_| ())
                 }
                 PlatformId::Codex => {
-                    { commands::codex::switch_codex_account(app, account_id, None, None) }
+                    { commands::codex::switch_codex_account(app, account_id, None, None, None) }
                         .await
                         .map(|_| ())
                 }

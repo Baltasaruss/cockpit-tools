@@ -198,8 +198,6 @@ export interface CodexLocalAccessStatsWindow {
 
 export interface CodexLocalAccessAccountWindowQuery {
   accountId: string;
-  officialAccountId: string;
-  accountEmail: string;
   windowKey: string;
   startAt: number;
   endAt: number;

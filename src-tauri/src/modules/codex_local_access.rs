@@ -9074,75 +9074,30 @@ fn normalize_request_log_time_bound(value: i64) -> i64 {
     }
 }
 
-fn backfill_legacy_official_account_ids(
-    conn: &Connection,
-    queries: &[CodexLocalAccessAccountWindowQuery],
-) -> Result<usize, String> {
-    let accounts = codex_account::list_accounts_checked().unwrap_or_default();
-    let mut official_ids_by_email = HashMap::<String, HashSet<String>>::new();
-    for account in accounts {
-        let email = account.email.trim().to_ascii_lowercase();
-        let official_account_id = account.account_id.as_deref().unwrap_or_default().trim();
-        if email.is_empty() || official_account_id.is_empty() {
-            continue;
-        }
-        official_ids_by_email
-            .entry(email)
-            .or_default()
-            .insert(official_account_id.to_string());
-    }
-
-    let mut updated = 0usize;
-    let mut migrated_emails = HashSet::new();
-    for query in queries {
-        let local_account_id = query.account_id.trim();
-        let official_account_id = query.official_account_id.trim();
-        let email = query.account_email.trim();
-        if local_account_id.is_empty() || official_account_id.is_empty() {
-            continue;
-        }
-        updated = updated.saturating_add(
-            conn.execute(
-                "UPDATE request_logs
-                 SET official_account_id = ?1
-                 WHERE official_account_id = '' AND account_id = ?2",
-                params![official_account_id, local_account_id],
-            )
-            .map_err(|e| format!("回填 API 服务当前账号官方 ID 失败: {}", e))?,
-        );
-
-        let normalized_email = email.to_ascii_lowercase();
-        if normalized_email.is_empty() || !migrated_emails.insert(normalized_email.clone()) {
-            continue;
-        }
-        let is_unambiguous = official_ids_by_email
-            .get(&normalized_email)
-            .is_some_and(|ids| ids.len() == 1 && ids.contains(official_account_id));
-        if !is_unambiguous {
-            continue;
-        }
-        updated = updated.saturating_add(
-            conn.execute(
-                "UPDATE request_logs
-                 SET official_account_id = ?1
-                 WHERE official_account_id = '' AND lower(email) = ?2",
-                params![official_account_id, normalized_email],
-            )
-            .map_err(|e| format!("迁移 API 服务历史账号官方 ID 失败: {}", e))?,
-        );
-    }
-    Ok(updated)
-}
-
 struct AccountWindowStatSpec {
     account_id: String,
-    official_account_id: String,
     window_key: String,
     start_at: i64,
     end_at: i64,
 }
 
+/// API 服务请求日志的 `account_id` 是本地 Codex 账号 ID。
+/// Team/Workspace 的官方 `account_id` 可能被多个成员共享，不能作为本地账号统计键。
+fn account_window_stat_identity_matches(row_account_id: &str, requested_account_id: &str) -> bool {
+    let row_account_id = row_account_id.trim();
+    let requested_account_id = requested_account_id.trim();
+    !row_account_id.is_empty() && row_account_id == requested_account_id
+}
+
 fn query_local_access_account_window_stats_blocking(
+    queries: Vec<CodexLocalAccessAccountWindowQuery>,
+) -> Result<Vec<CodexLocalAccessAccountWindowStats>, String> {
+    let conn = open_local_access_logs_db()?;
+    query_local_access_account_window_stats_from_conn(&conn, queries)
+}
+
+fn query_local_access_account_window_stats_from_conn(
+    conn: &Connection,
     queries: Vec<CodexLocalAccessAccountWindowQuery>,
 ) -> Result<Vec<CodexLocalAccessAccountWindowStats>, String> {
     if queries.is_empty() {
@@ -9153,7 +9108,6 @@ fn query_local_access_account_window_stats_blocking(
     let mut min_start = i64::MAX;
     let mut max_end = 0i64;
     let mut local_account_ids = HashSet::new();
-    let mut official_account_ids = HashSet::new();
     for query in &queries {
         let account_id = query.account_id.trim();
         let window_key = query.window_key.trim();
@@ -9164,15 +9118,9 @@ fn query_local_access_account_window_stats_blocking(
         }
         min_start = min_start.min(start_at);
         max_end = max_end.max(end_at);
-        let official_account_id = query.official_account_id.trim().to_string();
-        if official_account_id.is_empty() {
-            local_account_ids.insert(account_id.to_string());
-        } else {
-            official_account_ids.insert(official_account_id.clone());
-        }
+        local_account_ids.insert(account_id.to_string());
         specs.push(AccountWindowStatSpec {
             account_id: account_id.to_string(),
-            official_account_id,
             window_key: window_key.to_string(),
             start_at,
             end_at,
@@ -9182,43 +9130,18 @@ fn query_local_access_account_window_stats_blocking(
         return Ok(Vec::new());
     }
 
-    let (_write_guard, conn) = open_local_access_logs_db_for_write()?;
-    let migrated = backfill_legacy_official_account_ids(&conn, &queries)?;
-    if migrated > 0 {
-        logger::log_codex_api_info(&format!(
-            "API 服务历史统计已迁移到官方 Codex 账号 ID: rows={}",
-            migrated
-        ));
-    }
-    let mut identity_clauses = Vec::new();
-    if !official_account_ids.is_empty() {
-        identity_clauses.push(format!(
-            "official_account_id IN ({})",
-            official_account_ids
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    if !local_account_ids.is_empty() {
-        identity_clauses.push(format!(
-            "(official_account_id = '' AND account_id IN ({}))",
-            local_account_ids
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
+    let placeholders = local_account_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
-        "SELECT account_id, official_account_id, timestamp,
+        "SELECT account_id, timestamp,
                 input_tokens, output_tokens, total_tokens,
                 cached_tokens, estimated_cost_usd
          FROM request_logs
          WHERE timestamp >= ? AND timestamp <= ?
-           AND ({})",
-        identity_clauses.join(" OR ")
+           AND account_id IN ({placeholders})"
     );
     let mut statement = conn
         .prepare(sql.as_str())
@@ -9227,9 +9150,6 @@ fn query_local_access_account_window_stats_blocking(
         rusqlite::types::Value::Integer(min_start),
         rusqlite::types::Value::Integer(max_end),
     ];
-    for official_account_id in &official_account_ids {
-        params.push(rusqlite::types::Value::Text(official_account_id.clone()));
-    }
     for account_id in &local_account_ids {
         params.push(rusqlite::types::Value::Text(account_id.clone()));
     }
@@ -9250,35 +9170,24 @@ fn query_local_access_account_window_stats_blocking(
         .query_map(rusqlite::params_from_iter(params.iter()), |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?.max(0) as u64,
                 row.get::<_, i64>(3)?.max(0) as u64,
                 row.get::<_, i64>(4)?.max(0) as u64,
                 row.get::<_, i64>(5)?.max(0) as u64,
-                row.get::<_, i64>(6)?.max(0) as u64,
-                row.get::<_, f64>(7).unwrap_or(0.0),
+                row.get::<_, f64>(6).unwrap_or(0.0),
             ))
         })
         .map_err(|e| format!("查询 API 服务账号窗口用量失败: {}", e))?;
 
     for row in rows {
-        let (
-            row_account_id,
-            row_official_account_id,
-            timestamp,
-            input,
-            output,
-            total,
-            cached,
-            cost,
-        ) = row.map_err(|e| format!("解析 API 服务账号窗口用量失败: {}", e))?;
+        let (row_account_id, timestamp, input, output, total, cached, cost) =
+            row.map_err(|e| format!("解析 API 服务账号窗口用量失败: {}", e))?;
         for spec in &specs {
-            let identity_matches = if spec.official_account_id.is_empty() {
-                row_official_account_id.is_empty() && spec.account_id == row_account_id
-            } else {
-                spec.official_account_id == row_official_account_id
-            };
-            if !identity_matches || timestamp < spec.start_at || timestamp > spec.end_at {
+            if !account_window_stat_identity_matches(&row_account_id, &spec.account_id)
+                || timestamp < spec.start_at
+                || timestamp > spec.end_at
+            {
                 continue;
             }
             if let Some(entry) = totals.get_mut(&(spec.account_id.clone(), spec.window_key.clone()))
@@ -27828,6 +27737,103 @@ mod tests {
     }
 
     #[test]
+    fn account_window_stats_match_local_account_id_not_shared_team_id() {
+        // Multiple members can share one official Team/Workspace account_id.
+        // Request logs must remain isolated by the local account record ID.
+        assert!(super::account_window_stat_identity_matches(
+            "codex-member-a",
+            "codex-member-a"
+        ));
+        assert!(super::account_window_stat_identity_matches(
+            "codex-member-b",
+            "codex-member-b"
+        ));
+        assert!(!super::account_window_stat_identity_matches(
+            "codex-member-a",
+            "codex-member-b"
+        ));
+        assert!(!super::account_window_stat_identity_matches(
+            "codex-member-a",
+            ""
+        ));
+    }
+
+    #[test]
+    fn account_window_stats_isolate_local_accounts_with_shared_team_id() {
+        let dir = make_temp_dir("codex-local-access-window-identity");
+        let db_path = dir.join("request_logs.sqlite");
+        let conn = open_local_access_logs_db_once(&db_path, true).expect("open logs db");
+        let mut events = Vec::new();
+        for (request_id, account_id, input_tokens) in [
+            ("req-member-a", "local-member-a", 11),
+            ("req-member-b", "local-member-b", 22),
+        ] {
+            let usage = UsageCapture {
+                input_tokens,
+                output_tokens: 1,
+                total_tokens: input_tokens + 1,
+                cached_tokens: 0,
+                reasoning_tokens: 0,
+                token_breakdown: None,
+            };
+            let event = append_usage_event(
+                &mut events,
+                1_700_000_000_000,
+                Some(request_id),
+                Some(account_id),
+                Some("shared-team@example.com"),
+                Some("key-1"),
+                Some("shared-team"),
+                None,
+                Some("gpt-5.4"),
+                Some(CodexLocalAccessGatewayMode::Sidecar),
+                CodexLocalAccessRequestKind::Text,
+                None,
+                None,
+                true,
+                Some(200),
+                None,
+                None,
+                1,
+                Some(&usage),
+                None,
+                1,
+                0.0,
+            );
+            insert_local_access_usage_event(&conn, &event).expect("insert request log");
+        }
+
+        let rows = super::query_local_access_account_window_stats_from_conn(
+            &conn,
+            vec![
+                CodexLocalAccessAccountWindowQuery {
+                    account_id: "local-member-a".to_string(),
+                    window_key: "primary".to_string(),
+                    start_at: 1_699_999_999_000,
+                    end_at: 1_700_000_001_000,
+                },
+                CodexLocalAccessAccountWindowQuery {
+                    account_id: "local-member-b".to_string(),
+                    window_key: "primary".to_string(),
+                    start_at: 1_699_999_999_000,
+                    end_at: 1_700_000_001_000,
+                },
+            ],
+        )
+        .expect("query account window stats");
+
+        let stats = rows
+            .into_iter()
+            .map(|row| (row.account_id, row.input_tokens))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(stats.get("local-member-a"), Some(&11));
+        assert_eq!(stats.get("local-member-b"), Some(&22));
+
+        drop(conn);
+        fs::remove_dir_all(dir).expect("cleanup logs db");
+    }
+
+    #[test]
     fn port_in_reserved_ranges_detects_membership() {
         assert!(super::port_in_reserved_ranges(1450, &[(1400, 1500)]));
         assert!(!super::port_in_reserved_ranges(1399, &[(1400, 1500)]));
@@ -27966,12 +27972,12 @@ mod tests {
         CodexQuotaErrorInfo, CodexTokens,
     };
     use crate::models::codex_local_access::{
-        CodexLocalAccessAccountModelRule, CodexLocalAccessApiKey,
-        CodexLocalAccessClientBaseUrlHost, CodexLocalAccessCustomRoutingRule,
-        CodexLocalAccessImageGenerationMode, CodexLocalAccessProviderGateway,
-        CodexLocalAccessQuotaReserve, CodexLocalAccessRequestKind, CodexLocalAccessRoutingStrategy,
-        CodexLocalAccessStats, CodexLocalAccessStatsWindow, CodexLocalAccessTimeouts,
-        CodexLocalAccessUsageEvent, CodexTokenBreakdown,
+        CodexLocalAccessAccountModelRule, CodexLocalAccessAccountWindowQuery,
+        CodexLocalAccessApiKey, CodexLocalAccessClientBaseUrlHost,
+        CodexLocalAccessCustomRoutingRule, CodexLocalAccessImageGenerationMode,
+        CodexLocalAccessProviderGateway, CodexLocalAccessQuotaReserve, CodexLocalAccessRequestKind,
+        CodexLocalAccessRoutingStrategy, CodexLocalAccessStats, CodexLocalAccessStatsWindow,
+        CodexLocalAccessTimeouts, CodexLocalAccessUsageEvent, CodexTokenBreakdown,
     };
     use crate::models::{
         DefaultInstanceSettings, InstanceLaunchMode, InstanceProfile, InstanceStore,

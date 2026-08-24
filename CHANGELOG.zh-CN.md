@@ -7,6 +7,29 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [1.3.29] - 2026-08-24
+
+### 新增
+
+- **Codex 新增统一启动预览**：从账号总览、多开实例或 API Service 启动 OAuth 账号、API Key 与本地服务时，可先在同一弹框查看账号、额度与用量、目标实例等状态，切换实例和运行速度，并直接管理可见模型、默认模型及按模型的推理强度、上下文与压缩配置，修复会话可见性及使用常用账号操作；账号启动时可明确选择“切换”或“切换并启动”，只有确认后才会修改客户端状态。
+- **Codex 历史会话支持完整 Provider 迁移与目录修复**：可全量同步 `sessions` 与 `archived_sessions` 中的 Provider 元数据，回写所有会话 SQLite 库中的 Provider、用户事件、工作区路径和本地会话目录，补齐缺失目录、移除子 Agent 误索引、规范化全局工作区状态，并提示可能无法跨 Provider 续聊的加密历史；支持预览、指定会话和多实例范围，写入前会创建可回滚备份并要求退出目标实例。
+- **Codex 账号新增设备代码授权**：可随时在浏览器 OAuth 与设备授权之间切换；需要启用设备代码时可直接打开 Codex 安全设置，输入验证码后由 Cockpit 自动完成登录和账号保存，且不占用本地 `1455` 回调端口；浏览器与设备授权也会申请 Codex Connector 所需的读取和调用权限。
+- **Codex API Service 新增 Live 与 Realtime API**：支持创建 WebRTC 通话、连接 Sideband 与 Realtime WebSocket、生成 Client Secret、创建 Session 与 Transcription Session、处理 Realtime Translation，以及执行 Hangup、Accept、Reject、Refer 通话控制。
+- **Codex API Service 新增扩展请求与对话能力**：支持 HTTP/SSE 与 Responses WebSocket 传输、跨回合 Reasoning Replay、Multi-Agent V2 任务和扩展后的 Codex 模型目录。
+
+### 变更
+
+- **Codex 快速会话修复改为按官方侧边栏规则精准处理**：仅检查目标实例的官方 `state_5.sqlite` 和被引用 rollout，按当前 Provider、活动状态、预览内容、rollout 路径及根会话来源筛选，自动补齐可见会话的预览字段，避免扫描或改写归档、子 Agent 和无关历史文件。
+- **Codex 会话修复中的 Provider 候选读取更快**：读取目标 Provider 仅检查实例 `config.toml` 和官方 `state_5.sqlite`，打开修复弹框时不再扫描 `sessions` 与 `archived_sessions` 下的 rollout 文件。
+
+### 修复
+
+- **修复正式 Release 缺少 Linux 安装包的问题**：修复 Linux 目标下 Codex 桌面端进程识别代码编译失败的问题，恢复 x86_64 与 aarch64 的 AppImage、deb 和 rpm 构建发布。
+- **修复 API Key 绑定 OAuth 后单独启动 OAuth 账号可能提示授权过期的问题**：组合实例会持续识别实际 OAuth 凭据归属，并在启动前接回官方客户端轮换后的最新 Token；即使随后解绑、改绑或在正式版、开发版与多开实例之间切换，也会避免再次使用旧 `refresh_token` 导致 `refresh_token_reused`，同时保留原 API Key Provider 配置。
+- **修复同一 Team/Workspace 成员之间 API Service 用量重复显示的问题**：账号窗口统计现在统一使用 Cockpit 本地账号 ID 归属，因此多个本地账号即使共享上游 `account_id`，请求数和 Token 用量也会分别统计。
+- **修复异常 Codex API Key 账号显示生成的 `api-key-xxxx` 标识而不显示自定义标题的问题**：账号健康弹框现在优先显示手动设置的账号名称，仅在未设置自定义名称时回退到生成的标识。
+- **修复官方 ChatGPT/Codex 客户端运行时刷新额度被 RT 保护误判为账号错误的问题**：额度查询现在只要求有效的 `access_token`，不会因 `id_token` 临期或主动保活周期轮换 `refresh_token`；官方客户端持有 RT 时仍可正常获取最新额度，确需等待新 AT 时会保留上次额度，不再显示内部 RT 所有权提示或将账号标记为配额异常。
+
 ## [1.3.28] - 2026-08-23
 
 ### 修复
