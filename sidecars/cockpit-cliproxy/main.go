@@ -4401,6 +4401,7 @@ func (s *relayServer) router() *gin.Engine {
 	router.GET("/v1/models", s.handleModels)
 	router.GET(cockpitQuotaPath, s.handleCockpitQuota)
 	router.POST("/v1/cockpit/auth/reset", s.handleResetAuthState)
+	router.POST("/v1/cockpit/accounts/reset-scheduler", s.handleResetSchedulerState)
 	router.POST("/v1/live", s.handleCodexLive)
 	router.GET("/v1/live/:call_id", s.handleCodexLiveSideband)
 	router.POST("/v1/realtime/calls", s.handleCodexLive)
@@ -4819,6 +4820,104 @@ func (s *relayServer) handleResetAuthState(c *gin.Context) {
 		"status":     "ok",
 		"reset":      len(resetAccountIDs),
 		"accountIds": resetAccountIDs,
+	})
+}
+
+// handleResetSchedulerState resets the runtime scheduler state for accounts in
+// the current API key scope. It resolves auth-manager entries through manifest
+// identity data so both OAuth accounts and API-key accounts without authId are
+// handled by the same endpoint.
+func (s *relayServer) handleResetSchedulerState(c *gin.Context) {
+	spec, ok := s.requireAPIKey(c)
+	if !ok {
+		return
+	}
+	if s.manifest == nil {
+		writeAPIError(c, http.StatusServiceUnavailable, "account manifest unavailable", "service_unavailable")
+		return
+	}
+
+	var req resetAuthStateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeAPIError(c, http.StatusBadRequest, "invalid request body", "invalid_request")
+		return
+	}
+
+	accountIDs := normalizeStringList(req.AccountIDs)
+	if len(accountIDs) == 0 {
+		writeAPIError(c, http.StatusBadRequest, "accountIds is required", "invalid_request")
+		return
+	}
+
+	allowed := make(map[string]struct{}, len(spec.AccountIDs))
+	for _, accountID := range spec.AccountIDs {
+		if accountID = strings.TrimSpace(accountID); accountID != "" {
+			allowed[accountID] = struct{}{}
+		}
+	}
+
+	selected := make([]string, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		account := s.manifest.accountByID[accountID]
+		if account == nil {
+			continue
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[accountID]; !ok {
+				continue
+			}
+		}
+		selected = append(selected, accountID)
+	}
+	if len(selected) == 0 {
+		writeAPIError(c, http.StatusNotFound, "no matching accounts found", "account_not_found")
+		return
+	}
+
+	selectedSet := make(map[string]struct{}, len(selected))
+	for _, accountID := range selected {
+		selectedSet[accountID] = struct{}{}
+	}
+	authIDs := make(map[string]struct{})
+	if s.authManager != nil {
+		for _, auth := range s.authManager.List() {
+			account := accountForAuthInManifest(s.manifest, auth)
+			if account == nil {
+				continue
+			}
+			if _, ok := selectedSet[account.ID]; ok && strings.TrimSpace(auth.ID) != "" {
+				authIDs[auth.ID] = struct{}{}
+			}
+		}
+	}
+	for _, accountID := range selected {
+		if authID := strings.TrimSpace(s.manifest.accountByID[accountID].AuthID); authID != "" {
+			authIDs[authID] = struct{}{}
+		}
+	}
+	if len(authIDs) > 0 && s.authManager == nil {
+		writeAPIError(c, http.StatusServiceUnavailable, "auth manager unavailable", "service_unavailable")
+		return
+	}
+
+	resetAuthCount := 0
+	for authID := range authIDs {
+		updated, err := s.authManager.ResetAuthState(c.Request.Context(), authID)
+		if err != nil {
+			writeAPIError(c, http.StatusBadGateway, err.Error(), "scheduler_reset_failed")
+			return
+		}
+		if updated != nil {
+			resetAuthCount++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "ok",
+		"reset":          resetAuthCount,
+		"accountIds":     selected,
+		"authReset":      resetAuthCount,
+		"schedulerReset": len(selected),
 	})
 }
 

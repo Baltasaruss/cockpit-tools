@@ -2519,7 +2519,7 @@
         "recoverSuccess": "Rétablissement demandé pour {{count}} compte(s)",
         "dialog": {
           "title": "Comptes en erreur",
-          "description": "Ces états proviennent du planificateur OAuth Sidecar. Le rétablissement efface la pause et réessaie le compte.",
+          "description": "Ces états proviennent du planificateur Sidecar. Le rétablissement efface la pause et réessaie le compte.",
           "noIssues": "Aucun compte en erreur",
           "missing": "Compte manquant",
           "cooldown": "En pause",

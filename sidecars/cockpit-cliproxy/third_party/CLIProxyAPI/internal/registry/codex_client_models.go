@@ -52,6 +52,27 @@ func CodexClientModelBaseInstructions(modelID string) string {
 	return ""
 }
 
+// CodexClientModelUsesResponsesLite reports whether the active Codex client
+// catalog routes the model through the Responses Lite protocol.
+func CodexClientModelUsesResponsesLite(modelID string) bool {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return false
+	}
+	var payload codexClientModelsPayload
+	if json.Unmarshal(GetCodexClientModelsJSON(), &payload) != nil {
+		return false
+	}
+	for _, model := range payload.Models {
+		if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(model["slug"])), modelID) {
+			continue
+		}
+		value, _ := model["use_responses_lite"].(bool)
+		return value
+	}
+	return false
+}
+
 // GetCodexClientModelsRevision returns the current revision of the Codex client model catalog.
 func GetCodexClientModelsRevision() uint64 {
 	codexClientCatalogStore.mu.RLock()

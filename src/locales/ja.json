@@ -2519,7 +2519,7 @@
         "recoverSuccess": "{{count}} 件のアカウントの復旧を要求しました",
         "dialog": {
           "title": "異常アカウント",
-          "description": "この状態は Sidecar OAuth スケジューラから取得しています。復旧すると冷却を解除して再試行します。",
+          "description": "この状態は Sidecar スケジューラから取得しています。復旧すると冷却を解除して再試行します。",
           "noIssues": "異常アカウントはありません",
           "missing": "アカウント欠落",
           "cooldown": "冷却中",

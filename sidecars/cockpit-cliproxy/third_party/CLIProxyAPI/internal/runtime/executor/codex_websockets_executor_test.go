@@ -214,16 +214,19 @@ func TestCodexWebsocketsExecuteResponsesLiteDoesNotInjectImageGenerationTool(t *
 	auth := &cliproxyauth.Auth{
 		Provider: "codex",
 		Attributes: map[string]string{
-			"api_key":   "sk-test",
 			"base_url":  server.URL,
 			"plan_type": "pro",
 		},
+		Metadata: map[string]any{"access_token": "oauth-token"},
 	}
 	req := cliproxyexecutor.Request{
 		Model:   "gpt-5.6-sol",
-		Payload: []byte(`{"model":"gpt-5.6-sol","input":[{"type":"additional_tools","role":"developer","tools":[{"type":"custom","name":"exec"}]},{"role":"user","content":"hello"}],"parallel_tool_calls":true,"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}}`),
+		Payload: []byte(`{"model":"gpt-5.6-sol","input":[{"type":"additional_tools","role":"developer","tools":[{"type":"custom","name":"exec"},{"type":"web_search"}]},{"role":"user","content":"hello","namespace":"stale"}],"parallel_tool_calls":true,"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}}`),
 	}
-	opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("codex")}
+	opts := cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FromString("codex"),
+		Headers:      http.Header{codexResponsesLiteHeaderName: []string{"true"}},
+	}
 
 	if _, err := exec.Execute(context.Background(), auth, req, opts); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -236,6 +239,15 @@ func TestCodexWebsocketsExecuteResponsesLiteDoesNotInjectImageGenerationTool(t *
 		}
 		if got := gjson.GetBytes(payload, "input.0.type").String(); got != "additional_tools" {
 			t.Fatalf("input.0.type = %q, want additional_tools; payload=%s", got, payload)
+		}
+		if got := gjson.GetBytes(payload, "input.0.tools.#").Int(); got != 1 {
+			t.Fatalf("responses-lite additional tools count = %d, want 1: %s", got, payload)
+		}
+		if got := gjson.GetBytes(payload, "input.0.tools.0.name").String(); got != "exec" {
+			t.Fatalf("responses-lite custom tool = %q, want exec: %s", got, payload)
+		}
+		if gjson.GetBytes(payload, "input.1.namespace").Exists() {
+			t.Fatalf("non-call input namespace was not removed: %s", payload)
 		}
 		if got := gjson.GetBytes(payload, "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite").String(); got != "true" {
 			t.Fatalf("responses-lite metadata = %q, want true; payload=%s", got, payload)

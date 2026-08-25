@@ -8,11 +8,75 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+const (
+	DisableImageGenerationHeader = "X-Agtools-Disable-Image-Generation"
+	CodexResponsesLiteHeader     = "X-OpenAI-Internal-Codex-Responses-Lite"
+)
+
+// IsCodexResponsesLiteRequest retains the legacy compatibility gate used by
+// payload rules and non-Codex callers. Header presence is authoritative;
+// catalog models are Lite even when the header is absent.
+func IsCodexResponsesLiteRequest(headers http.Header, modelIDs ...string) bool {
+	for name := range headers {
+		if strings.EqualFold(strings.TrimSpace(name), CodexResponsesLiteHeader) {
+			return true
+		}
+	}
+	for _, modelID := range modelIDs {
+		if registry.CodexClientModelUsesResponsesLite(modelID) {
+			return true
+		}
+	}
+	return false
+}
+
+func EffectiveDisableImageGenerationMode(cfg *config.Config, headers http.Header) config.DisableImageGenerationMode {
+	mode := config.DisableImageGenerationOff
+	if cfg != nil {
+		mode = cfg.DisableImageGeneration
+	}
+	headerMode := disableImageGenerationModeFromHeader(headers)
+	if mode == config.DisableImageGenerationAll || headerMode == config.DisableImageGenerationAll {
+		return config.DisableImageGenerationAll
+	}
+	if mode == config.DisableImageGenerationChat || headerMode == config.DisableImageGenerationChat {
+		return config.DisableImageGenerationChat
+	}
+	return mode
+}
+
+func ShouldInjectImageGenerationTool(cfg *config.Config, requestPath string, headers http.Header) bool {
+	return ShouldInjectImageGenerationToolForModel(cfg, "", requestPath, headers)
+}
+
+func ShouldInjectImageGenerationToolForModel(cfg *config.Config, model, requestPath string, headers http.Header) bool {
+	if IsCodexResponsesLiteRequest(headers, model) {
+		return false
+	}
+	mode := EffectiveDisableImageGenerationMode(cfg, headers)
+	return mode == config.DisableImageGenerationOff || (mode == config.DisableImageGenerationChat && isImagesEndpointRequestPath(requestPath))
+}
+
+func disableImageGenerationModeFromHeader(headers http.Header) config.DisableImageGenerationMode {
+	if headers == nil {
+		return config.DisableImageGenerationOff
+	}
+	switch strings.ToLower(strings.TrimSpace(headers.Get(DisableImageGenerationHeader))) {
+	case "true", "1", "on", "yes", "all", "disabled":
+		return config.DisableImageGenerationAll
+	case "chat", "images_only", "images-only":
+		return config.DisableImageGenerationChat
+	default:
+		return config.DisableImageGenerationOff
+	}
+}
 
 // ApplyPayloadConfigWithRoot behaves like applyPayloadConfig but treats all parameter
 // paths as relative to the provided root path and restricts matches to the given
@@ -33,7 +97,7 @@ func ApplyPayloadConfigWithRequest(cfg *config.Config, model, protocol, fromProt
 // ApplyPayloadConfigWithRequestTracked applies payload config and reports whether
 // an applied rule targeted trackedPath or one of its descendants.
 func ApplyPayloadConfigWithRequestTracked(cfg *config.Config, model, protocol, fromProtocol, root string, payload, original []byte, requestedModel string, requestPath string, headers http.Header, trackedPath string) ([]byte, bool) {
-	if cfg == nil || len(payload) == 0 {
+	if len(payload) == 0 {
 		return payload, false
 	}
 	out := payload
@@ -42,14 +106,21 @@ func ApplyPayloadConfigWithRequestTracked(cfg *config.Config, model, protocol, f
 
 	// Apply disable-image-generation filtering before payload rules so config payload
 	// overrides can explicitly re-enable image_generation when desired.
-	if shouldStripImageGeneration(cfg.DisableImageGeneration, requestPath) {
+	mode := config.DisableImageGenerationOff
+	if cfg != nil {
+		mode = cfg.DisableImageGeneration
+	}
+	if shouldStripImageGeneration(mode, requestPath) {
 		out = removeToolTypeFromPayloadWithRoot(out, root, "image_generation")
 		out = removeToolChoiceFromPayloadWithRoot(out, root, "image_generation")
 	}
 
-	rules := cfg.Payload
+	var rules config.PayloadConfig
+	if cfg != nil {
+		rules = cfg.Payload
+	}
 	hasPayloadRules := len(rules.Default) != 0 || len(rules.DefaultRaw) != 0 || len(rules.Override) != 0 || len(rules.OverrideRaw) != 0 || len(rules.Filter) != 0
-	if hasPayloadRules {
+	if cfg != nil && hasPayloadRules {
 		model = strings.TrimSpace(model)
 		requestedModel = strings.TrimSpace(requestedModel)
 		if model != "" || requestedModel != "" {
@@ -188,7 +259,149 @@ func ApplyPayloadConfigWithRequestTracked(cfg *config.Config, model, protocol, f
 			}
 		}
 	}
-	return out, trackedPathTouched
+	return applyFinalPayloadGuards(out, cfg, root, model, requestedModel, requestPath, headers), trackedPathTouched
+}
+
+func applyFinalPayloadGuards(payload []byte, cfg *config.Config, root, model, requestedModel, requestPath string, headers http.Header) []byte {
+	out := payload
+	if IsCodexResponsesLiteRequest(headers, model, requestedModel) {
+		catalogLite := registry.CodexClientModelUsesResponsesLite(model) || registry.CodexClientModelUsesResponsesLite(requestedModel)
+		if catalogLite || !payloadDeclaresImageGenerationToolsWithRoot(out, root) {
+			out = filterResponsesLiteToolsFromPayloadWithRoot(out, root)
+		}
+	}
+	return out
+}
+
+func payloadDeclaresImageGenerationToolsWithRoot(payload []byte, root string) bool {
+	for _, objectPath := range payloadObjectPaths(payload, root) {
+		tools := gjson.GetBytes(payload, appendPayloadPathPart(objectPath, "tools"))
+		for _, tool := range tools.Array() {
+			if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "image_generation") ||
+				strings.EqualFold(strings.TrimSpace(tool.Get("name").String()), "image_gen.imagegen") ||
+				strings.EqualFold(strings.TrimSpace(tool.Get("namespace").String()), "image_gen") ||
+				strings.EqualFold(strings.TrimSpace(tool.Get("name").String()), "image_gen") {
+				return true
+			}
+		}
+		choice := gjson.GetBytes(payload, appendPayloadPathPart(objectPath, "tool_choice"))
+		if strings.EqualFold(strings.TrimSpace(choice.String()), "image_generation") || strings.EqualFold(strings.TrimSpace(choice.Get("type").String()), "image_generation") {
+			return true
+		}
+	}
+	return false
+}
+
+func payloadObjectPaths(payload []byte, root string) []string {
+	base := strings.TrimSpace(root)
+	paths := []string{base}
+	inputPath := appendPayloadPathPart(base, "input")
+	for index, item := range gjson.GetBytes(payload, inputPath).Array() {
+		if strings.EqualFold(strings.TrimSpace(item.Get("type").String()), "additional_tools") {
+			paths = append(paths, appendPayloadPathPart(inputPath, strconv.Itoa(index)))
+		}
+	}
+	responsePath := appendPayloadPathPart(base, "response")
+	if gjson.GetBytes(payload, responsePath).IsObject() {
+		paths = append(paths, responsePath)
+	}
+	return paths
+}
+
+func filterResponsesLiteToolsFromPayloadWithRoot(payload []byte, root string) []byte {
+	out := payload
+	for _, objectPath := range payloadObjectPaths(out, root) {
+		toolsPath := appendPayloadPathPart(objectPath, "tools")
+		tools := gjson.GetBytes(out, toolsPath)
+		if tools.IsArray() {
+			filtered := make([][]byte, 0, len(tools.Array()))
+			for _, tool := range tools.Array() {
+				if responsesLiteToolAllowed(tool) {
+					filtered = append(filtered, []byte(tool.Raw))
+				}
+			}
+			if len(filtered) == 0 {
+				out, _ = sjson.DeleteBytes(out, toolsPath)
+			} else {
+				out, _ = sjson.SetRawBytes(out, toolsPath, joinPayloadJSONArray(filtered))
+			}
+		}
+		out = filterResponsesLiteToolChoice(out, appendPayloadPathPart(objectPath, "tool_choice"))
+	}
+	for _, objectPath := range payloadObjectPaths(out, root) {
+		if !strings.Contains(objectPath, ".input.") && !strings.HasPrefix(objectPath, "input.") {
+			continue
+		}
+		if !gjson.GetBytes(out, appendPayloadPathPart(objectPath, "tools")).IsArray() {
+			out, _ = sjson.DeleteBytes(out, objectPath)
+		}
+	}
+	return out
+}
+
+func responsesLiteToolAllowed(tool gjson.Result) bool {
+	switch strings.ToLower(strings.TrimSpace(tool.Get("type").String())) {
+	case "function", "custom", "namespace":
+		return true
+	case "tool_search":
+		return strings.EqualFold(strings.TrimSpace(tool.Get("execution").String()), "client")
+	default:
+		return false
+	}
+}
+
+func filterResponsesLiteToolChoice(payload []byte, path string) []byte {
+	choice := gjson.GetBytes(payload, path)
+	if !choice.Exists() {
+		return payload
+	}
+	if choice.Type == gjson.String {
+		if choice.String() == "auto" || choice.String() == "none" || choice.String() == "required" {
+			return payload
+		}
+		payload, _ = sjson.DeleteBytes(payload, path)
+		return payload
+	}
+	if strings.EqualFold(strings.TrimSpace(choice.Get("type").String()), "allowed_tools") {
+		has := false
+		for _, p := range []string{"tools", "allowed_tools", "allowed_tools.tools"} {
+			toolPath := path + "." + p
+			tools := gjson.GetBytes(payload, toolPath)
+			if tools.IsArray() {
+				filtered := make([][]byte, 0, len(tools.Array()))
+				for _, tool := range tools.Array() {
+					if responsesLiteToolAllowed(tool) {
+						filtered = append(filtered, []byte(tool.Raw))
+					}
+				}
+				if len(filtered) > 0 {
+					payload, _ = sjson.SetRawBytes(payload, toolPath, joinPayloadJSONArray(filtered))
+					has = true
+				} else {
+					payload, _ = sjson.DeleteBytes(payload, toolPath)
+				}
+			}
+		}
+		if has {
+			return payload
+		}
+	}
+	payload, _ = sjson.DeleteBytes(payload, path)
+	return payload
+}
+
+func joinPayloadJSONArray(items [][]byte) []byte {
+	if len(items) == 0 {
+		return []byte("[]")
+	}
+	out := []byte("[")
+	for index, item := range items {
+		if index > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, item...)
+	}
+	return append(out, ']')
 }
 
 func isImagesEndpointRequestPath(path string) bool {
@@ -410,6 +623,8 @@ func normalizePayloadFromProtocol(protocol string) string {
 	switch protocol {
 	case "openai-response", "openai-responses", "response":
 		return "responses"
+	case "gemini-cli":
+		return "gemini"
 	default:
 		return protocol
 	}

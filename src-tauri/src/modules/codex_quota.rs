@@ -1693,6 +1693,62 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<CodexQuota, Strin
     result
 }
 
+/// OAuth 刚完成时使用授权回调返回并已落库的凭据查询配额。
+///
+/// 此时旧官方运行态可能仍持有同一账号的旧 auth.json，因此不能走常规额度准备逻辑，
+/// 否则 live authority 同步会把刚授权的新 Token 覆盖回旧 Token。
+pub async fn refresh_freshly_authorized_account_quota(
+    account_id: &str,
+    expected_token_generation: u64,
+) -> Result<CodexQuota, String> {
+    let account = codex_account::load_account(account_id)
+        .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+    if account.token_generation != expected_token_generation {
+        return Err("授权完成后的账号凭据已发生变化，已跳过本次配额刷新".to_string());
+    }
+    if crate::modules::codex_oauth::is_token_expired(&account.tokens.access_token) {
+        return Err("授权返回的 access_token 已过期，无法刷新配额".to_string());
+    }
+
+    let result = match fetch_quota(&account).await {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(mut latest) = codex_account::load_account(account_id) {
+                if latest.token_generation == expected_token_generation {
+                    write_quota_error(&mut latest, error.clone());
+                    if let Err(save_error) = codex_account::save_account(&latest) {
+                        logger::log_warn(&format!(
+                            "写入 OAuth 授权后配额错误失败: account_id={}, error={}",
+                            account_id, save_error
+                        ));
+                    }
+                }
+            }
+            return Err(error);
+        }
+    };
+
+    let mut latest = codex_account::load_account(account_id)
+        .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+    if latest.token_generation != expected_token_generation {
+        return Err("配额请求期间账号凭据已发生变化，已丢弃旧请求结果".to_string());
+    }
+    if result.plan_type.is_some() {
+        sync_subscription_from_token(&mut latest, result.plan_type.clone(), None);
+    }
+    normalize_subscription_retry_state(&mut latest);
+    latest.quota = Some(result.quota.clone());
+    latest.quota_error = None;
+    latest.usage_updated_at = Some(now_timestamp());
+    codex_account::save_account(&latest)?;
+
+    crate::modules::codex_local_access::reevaluate_bound_oauth_quota_reserve_after_refresh(
+        account_id, true,
+    )
+    .await;
+    Ok(result.quota)
+}
+
 pub async fn refresh_account_quota_with_options(
     account_id: &str,
     options: RefreshQuotaOptions,

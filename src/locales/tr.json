@@ -2519,7 +2519,7 @@
         "recoverSuccess": "{{count}} hesap için kurtarma istendi",
         "dialog": {
           "title": "Sorunlu Hesaplar",
-          "description": "Bu durumlar Sidecar OAuth zamanlayıcısından gelir. Kurtarma beklemeyi temizler ve hesabı yeniden dener.",
+          "description": "Bu durumlar Sidecar zamanlayıcısından gelir. Kurtarma beklemeyi temizler ve hesabı yeniden dener.",
           "noIssues": "Sorunlu hesap yok",
           "missing": "Hesap eksik",
           "cooldown": "Beklemede",

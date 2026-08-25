@@ -275,7 +275,7 @@ export function CodexAccountPoolHealthModal({
             <p>
               {t(
                 "codex.localAccess.accountPoolHealth.dialog.description",
-                "以下状态来自 Sidecar OAuth 调度器。恢复操作会清除调度冷却并重新尝试账号。",
+                "以下状态来自 Sidecar 账号调度器。恢复操作会清除调度冷却并重新尝试账号。",
               )}
             </p>
           </div>

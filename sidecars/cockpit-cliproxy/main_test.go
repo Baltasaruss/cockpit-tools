@@ -3324,6 +3324,83 @@ func TestRelayServerResetAuthStateClearsSelectedAccountCooldown(t *testing.T) {
 	}
 }
 
+func TestRelayServerResetSchedulerStateAcceptsAPIKeyAccountWithoutAuthID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:         "api-auth-1",
+		Provider:   "codex",
+		Attributes: map[string]string{"api_key": "upstream-key"},
+		ModelStates: map[string]*coreauth.ModelState{
+			"gpt-5.5": {
+				Status:         coreauth.StatusError,
+				Unavailable:    true,
+				NextRetryAfter: time.Now().Add(30 * time.Minute),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("register API-key auth: %v", err)
+	}
+	spec := &apiKeySpec{
+		ID:         "key_1",
+		Key:        "client-key",
+		Enabled:    true,
+		AccountIDs: []string{"api-account-1"},
+	}
+	account := &accountSpec{
+		ID:             "api-account-1",
+		AuthKind:       "api_key",
+		UpstreamAPIKey: "upstream-key",
+	}
+	m := &manifest{
+		APIKeys:       []apiKeySpec{*spec},
+		Accounts:      []accountSpec{*account},
+		apiKeyByValue: map[string]*apiKeySpec{"client-key": spec},
+		accountByID:   map[string]*accountSpec{"api-account-1": account},
+		accountByAPIKey: map[string]*accountSpec{
+			"upstream-key": account,
+		},
+	}
+	router := (&relayServer{
+		runtime:     &fakeRuntime{},
+		cfg:         &config.Config{},
+		manifest:    m,
+		authManager: manager,
+		policy:      &requestPolicy{manifest: m},
+	}).router()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/cockpit/accounts/reset-scheduler",
+		strings.NewReader(`{"accountIds":["api-account-1"]}`),
+	)
+	req.Header.Set("Authorization", "Bearer client-key")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Reset      int      `json:"reset"`
+		AccountIDs []string `json:"accountIds"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
+	}
+	if payload.Reset != 1 {
+		t.Fatalf("API-key auth scheduler state was not reset: %#v", payload)
+	}
+	if !reflect.DeepEqual(payload.AccountIDs, []string{"api-account-1"}) {
+		t.Fatalf("unexpected reset account ids: %#v", payload.AccountIDs)
+	}
+	updated, ok := manager.GetByID("api-auth-1")
+	if !ok || updated == nil || len(updated.ModelStates) != 0 || updated.Unavailable {
+		t.Fatalf("API-key auth state was not reset: %#v", updated)
+	}
+}
+
 func TestRelayServerFramesStreamingChatCompletionThroughRuntime(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	stream := make(chan cliproxyexecutor.StreamChunk, 2)

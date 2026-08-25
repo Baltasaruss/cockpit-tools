@@ -17,7 +17,6 @@ import { emitAccountsChanged, emitCurrentAccountChanged } from '../utils/account
 
 const APP_PROFILE = (import.meta.env.VITE_COCKPIT_TOOLS_PROFILE || '').trim();
 const STORAGE_PROFILE_SUFFIX = APP_PROFILE && APP_PROFILE !== 'prod' ? `.${APP_PROFILE}` : '';
-const SHOULD_PRESERVE_CACHE_ON_EMPTY_LIST = !STORAGE_PROFILE_SUFFIX;
 const CODEX_ACCOUNTS_CACHE_KEY = `agtools.codex.accounts.cache${STORAGE_PROFILE_SUFFIX}`;
 const CODEX_CURRENT_ACCOUNT_CACHE_KEY = `agtools.codex.accounts.current${STORAGE_PROFILE_SUFFIX}`;
 const CODEX_PROFILE_SYNC_IN_FLIGHT = new Set<string>();
@@ -172,22 +171,12 @@ export const useCodexAccountStore = create<CodexAccountState>((set, get) => ({
   error: null,
 
   fetchAccounts: async (options?: FetchCodexAccountsOptions) => {
-    const allowEmpty = options?.allowEmpty === true;
+    void options;
     const requestId = ++fetchCodexAccountsSeq;
     set({ loading: true, error: null });
     try {
       const accounts = await codexService.listCodexAccounts();
       if (requestId !== fetchCodexAccountsSeq) {
-        return;
-      }
-      if (
-        SHOULD_PRESERVE_CACHE_ON_EMPTY_LIST &&
-        accounts.length === 0 &&
-        get().accounts.length > 0 &&
-        !allowEmpty
-      ) {
-        console.warn('[CodexAccountStore] 忽略异常空账号列表，保留本地缓存账号');
-        set({ accountsLoaded: true, loading: false });
         return;
       }
       set({ accounts, accountsLoaded: true, loading: false });
@@ -202,21 +191,11 @@ export const useCodexAccountStore = create<CodexAccountState>((set, get) => ({
   },
 
   fetchCurrentAccount: async (options?: FetchCodexCurrentAccountOptions) => {
-    const allowEmpty = options?.allowEmpty === true;
+    void options;
     const requestId = ++fetchCodexCurrentAccountSeq;
     try {
       const currentAccount = await codexService.getCurrentCodexAccount();
       if (requestId !== fetchCodexCurrentAccountSeq) {
-        return;
-      }
-      if (
-        SHOULD_PRESERVE_CACHE_ON_EMPTY_LIST &&
-        !currentAccount &&
-        get().currentAccount &&
-        get().accounts.length > 0 &&
-        !allowEmpty
-      ) {
-        console.warn('[CodexAccountStore] 忽略异常空当前账号，保留本地缓存当前账号');
         return;
       }
       set({ currentAccount });

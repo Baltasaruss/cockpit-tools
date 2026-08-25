@@ -23,6 +23,8 @@ static CODEX_TOKEN_REFRESH_LOCKS: std::sync::LazyLock<
 > = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static CODEX_ACCOUNT_SWITCH_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+static CODEX_ACCOUNT_MUTATION_LOCK: std::sync::LazyLock<Mutex<()>> =
+    std::sync::LazyLock::new(|| Mutex::new(()));
 static CODEX_AUTO_SWITCH_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static CODEX_BATCH_IMPORT_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CODEX_BATCH_IMPORT_SESSIONS: std::sync::LazyLock<
@@ -39,6 +41,7 @@ const API_KEY_EMAIL_PREFIX: &str = "api-key";
 const API_KEY_AUTH_MODE: &str = "apikey";
 const CODEX_AUTH_TYPE: &str = "codex";
 const CODEX_ACCOUNT_GROUPS_FILE: &str = "codex_account_groups.json";
+const CODEX_ACCOUNT_TOMBSTONES_DIR: &str = "codex_account_tombstones";
 const CODEX_CONFIG_FILE_NAME: &str = "config.toml";
 const CODEX_CONFIG_CLI_AUTH_CREDENTIALS_STORE_KEY: &str = "cli_auth_credentials_store";
 const CODEX_CONFIG_OPENAI_BASE_URL_KEY: &str = "openai_base_url";
@@ -4178,6 +4181,85 @@ fn get_accounts_dir() -> PathBuf {
     accounts_dir
 }
 
+fn account_tombstone_path(account_id: &str) -> PathBuf {
+    let data_dir = account::get_data_dir().unwrap_or_else(|_| {
+        dirs::home_dir()
+            .expect("无法获取用户目录")
+            .join(".antigravity_cockpit")
+    });
+    data_dir
+        .join(CODEX_ACCOUNT_TOMBSTONES_DIR)
+        .join(format!("{}.json", account_id))
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct CodexAccountTombstone {
+    deleted: bool,
+    generation: u64,
+    #[serde(default)]
+    credential_hash: String,
+}
+
+fn account_credential_hash(account: &CodexAccount) -> String {
+    let value = serde_json::json!({
+        "auth_mode": &account.auth_mode,
+        "tokens": &account.tokens,
+        "openai_api_key": &account.openai_api_key,
+        "agent_identity": &account.agent_identity,
+    });
+    URL_SAFE_NO_PAD.encode(Sha256::digest(value.to_string().as_bytes()))
+}
+
+fn read_account_tombstone(account_id: &str) -> Option<CodexAccountTombstone> {
+    let path = account_tombstone_path(account_id);
+    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+}
+
+fn account_is_tombstoned(account_id: &str) -> bool {
+    read_account_tombstone(account_id).is_some_and(|tombstone| tombstone.deleted)
+}
+
+fn validate_loaded_account_tombstone(account: &CodexAccount) -> Result<bool, String> {
+    let Some(tombstone) = read_account_tombstone(&account.id) else {
+        return Ok(true);
+    };
+    if tombstone.deleted {
+        return Ok(false);
+    }
+
+    let credential_hash = account_credential_hash(account);
+    if account.token_generation < tombstone.generation
+        || (account.token_generation == tombstone.generation
+            && !tombstone.credential_hash.is_empty()
+            && credential_hash != tombstone.credential_hash)
+    {
+        return Err(format!(
+            "账号详情中的凭据快照已过期，拒绝加载: account_id={}",
+            account.id
+        ));
+    }
+
+    Ok(true)
+}
+
+fn write_account_tombstone(
+    account_id: &str,
+    deleted: bool,
+    generation: u64,
+    credential_hash: String,
+) -> Result<(), String> {
+    let path = account_tombstone_path(account_id);
+    let content = CodexAccountTombstone {
+        deleted,
+        generation,
+        credential_hash,
+    };
+    let serialized = serde_json::to_string(&content)
+        .map_err(|error| format!("序列化账号删除标记失败: {}", error))?;
+    crate::modules::atomic_write::write_string_atomic(&path, &serialized)
+        .map_err(|error| format!("写入账号删除标记失败: {}", error))
+}
+
 /// 解析 JWT Token 的 payload
 pub fn decode_jwt_payload(token: &str) -> Result<CodexJwtPayload, String> {
     let parts: Vec<&str> = token.split('.').collect();
@@ -5350,7 +5432,9 @@ fn collect_account_detail_file_ids() -> Result<HashSet<String>, String> {
             continue;
         }
         if let Some(stem) = path.file_stem().and_then(|name| name.to_str()) {
-            ids.insert(stem.to_string());
+            if !account_is_tombstoned(stem) {
+                ids.insert(stem.to_string());
+            }
         }
     }
 
@@ -6090,6 +6174,9 @@ fn load_account_with_summary(
     account_id: &str,
     summary: Option<&CodexAccountSummary>,
 ) -> Result<Option<CodexAccount>, String> {
+    if account_is_tombstoned(account_id) {
+        return Ok(None);
+    }
     let path = get_accounts_dir().join(format!("{}.json", account_id));
     if !path.exists() {
         return Ok(None);
@@ -6112,6 +6199,9 @@ fn load_account_with_summary(
         let migrated_wire_api = migrate_apikey_fun_wire_api(&mut account);
         let migrated_deepseek = enforce_deepseek_responses_account(&mut account);
         let migrated_websocket = normalize_api_key_websocket_capability(&mut account);
+        if !validate_loaded_account_tombstone(&account)? {
+            return Ok(None);
+        }
         if needs_rotation
             || migrated_wire_api
             || migrated_deepseek
@@ -6143,6 +6233,9 @@ fn load_account_with_summary(
     let _ = migrate_apikey_fun_wire_api(&mut account);
     let _ = enforce_deepseek_responses_account(&mut account);
     let _ = clear_bound_oauth_local_gateway_flag(&mut account);
+    if !validate_loaded_account_tombstone(&account)? {
+        return Ok(None);
+    }
 
     let account_for_rewrite = account.clone();
     crate::modules::deferred_account_rewrite::schedule_account_rewrite_if_unchanged(
@@ -6163,14 +6256,80 @@ fn load_account_with_summary(
 
 /// 保存单个账号详情
 pub fn save_account(account: &CodexAccount) -> Result<(), String> {
+    let _guard = CODEX_ACCOUNT_MUTATION_LOCK
+        .lock()
+        .map_err(|_| "Codex 账号写入锁已损坏".to_string())?;
+    save_account_with_tombstone_guard(account)
+}
+
+fn save_account_with_tombstone_guard(account: &CodexAccount) -> Result<(), String> {
+    let mut next_tombstone = None;
+    if let Some(tombstone) = read_account_tombstone(&account.id) {
+        let credential_hash = account_credential_hash(account);
+        if tombstone.deleted
+            || account.token_generation < tombstone.generation
+            || (account.token_generation == tombstone.generation
+                && credential_hash != tombstone.credential_hash)
+        {
+            return Err(format!(
+                "账号已删除或凭据快照已过期，拒绝后台写回: account_id={}",
+                account.id
+            ));
+        }
+        if account.token_generation > tombstone.generation {
+            next_tombstone = Some(credential_hash);
+        }
+    }
+    save_account_unchecked(account)?;
+    if let Some(credential_hash) = next_tombstone {
+        write_account_tombstone(
+            &account.id,
+            false,
+            account.token_generation,
+            credential_hash,
+        )?;
+    }
+    Ok(())
+}
+
+fn save_account_unchecked(account: &CodexAccount) -> Result<(), String> {
     let path = get_accounts_dir().join(format!("{}.json", &account.id));
     let content = crate::modules::secure_account_storage::serialize_account_file("codex", account)?;
     write_string_atomic(&path, &content).map_err(|e| format!("写入账号详情失败: {}", e))?;
     Ok(())
 }
 
+fn save_account_from_user_action(account: &mut CodexAccount) -> Result<(), String> {
+    let _guard = CODEX_ACCOUNT_MUTATION_LOCK
+        .lock()
+        .map_err(|_| "Codex 账号写入锁已损坏".to_string())?;
+    let tombstone = read_account_tombstone(&account.id);
+    if let Some(tombstone) = tombstone.as_ref() {
+        account.token_generation = account
+            .token_generation
+            .max(tombstone.generation.saturating_add(1));
+    }
+    save_account_unchecked(account)?;
+    if tombstone.is_some() {
+        write_account_tombstone(
+            &account.id,
+            false,
+            account.token_generation,
+            account_credential_hash(account),
+        )?;
+    }
+    Ok(())
+}
+
 /// 删除单个账号
 pub fn delete_account_file(account_id: &str) -> Result<(), String> {
+    let _guard = CODEX_ACCOUNT_MUTATION_LOCK
+        .lock()
+        .map_err(|_| "Codex 账号写入锁已损坏".to_string())?;
+    delete_account_file_unlocked(account_id)
+}
+
+fn delete_account_file_unlocked(account_id: &str) -> Result<(), String> {
     let path = get_accounts_dir().join(format!("{}.json", account_id));
     if path.exists() {
         crate::modules::atomic_write::remove_file_locked(&path)
@@ -6516,7 +6675,7 @@ pub fn upsert_agent_identity_account(identity: CodexAgentIdentity) -> Result<Cod
     account.reauth_reason = None;
     account.authorization_status = None;
     account.update_last_used();
-    save_account(&account)?;
+    save_account_from_user_action(&mut account)?;
 
     if let Some(summary) = index.accounts.iter_mut().find(|item| item.id == account.id) {
         summary.email = account.email.clone();
@@ -6628,7 +6787,7 @@ pub fn upsert_api_key_account(
             &account.api_model_mappings,
         );
     }
-    save_account(&account)?;
+    save_account_from_user_action(&mut account)?;
 
     if let Some(summary) = index.accounts.iter_mut().find(|item| item.id == account.id) {
         summary.email = account.email.clone();
@@ -6757,7 +6916,7 @@ fn upsert_account_with_hints_and_reauth_target(
         })
         .unwrap_or_else(|| generated_id.clone());
 
-    let account = if let Some(mut acc) = load_account(&existing_id) {
+    let mut account = if let Some(mut acc) = load_account(&existing_id) {
         // 更新现有账号
         tokens = retain_existing_refresh_token_if_missing(tokens, Some(&acc));
         acc.tokens = tokens;
@@ -6833,8 +6992,8 @@ fn upsert_account_with_hints_and_reauth_target(
         }
     }
 
-    // 保存账号详情
-    save_account(&account)?;
+    // 显式导入/授权可以重新创建用户刚刚删除过的同一账号。
+    save_account_from_user_action(&mut account)?;
 
     // 更新索引中的摘要信息
     if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account.id) {
@@ -6895,8 +7054,26 @@ pub fn remove_accounts(account_ids: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    let _guard = CODEX_ACCOUNT_MUTATION_LOCK
+        .lock()
+        .map_err(|_| "Codex 账号写入锁已损坏".to_string())?;
+
     let mut index = load_account_index();
     let accounts_dir = get_accounts_dir();
+    for account_id in &remove_ids {
+        let account_generation = load_account(account_id)
+            .map(|account| account.token_generation)
+            .unwrap_or(0);
+        let previous_generation = read_account_tombstone(account_id)
+            .map(|tombstone| tombstone.generation)
+            .unwrap_or(0);
+        write_account_tombstone(
+            account_id,
+            true,
+            account_generation.max(previous_generation),
+            String::new(),
+        )?;
+    }
     let mut missing_detail_ids = HashSet::new();
     index.accounts.retain(|account| {
         if remove_ids.contains(&account.id) {
@@ -6931,7 +7108,7 @@ pub fn remove_accounts(account_ids: &[String]) -> Result<(), String> {
     save_account_index(&index)?;
 
     for account_id in remove_ids {
-        delete_account_file(&account_id)?;
+        delete_account_file_unlocked(&account_id)?;
     }
     Ok(())
 }
@@ -9739,21 +9916,17 @@ pub async fn prepare_account_for_injection_from_auth_dir_with_login_guard_fallba
 
 /// 实例启动专用凭据准备。
 ///
-/// 每次用户点击启动都重新读取权威凭据并调用官方账号检查；只有 access_token
-/// 已失效或官方检查返回 401 时才会尝试 refresh_token。
+/// 启动只按原有本地凭据刷新与投影流程处理。官方 accounts/check 仅用于
+/// 用户主动切号的可用性判断，不能把启动失败误判为需要重新授权。
 pub async fn prepare_account_for_instance_launch_from_auth_dir(
     account_id: &str,
     auth_dir: Option<&Path>,
 ) -> Result<CodexAccount, String> {
-    let account = prepare_account_for_instance_launch_preflight(account_id).await?;
-    if let Some(auth_dir) = auth_dir {
-        project_preflighted_account_for_instance_launch(account_id, auth_dir).await?;
-    }
-    Ok(account)
+    prepare_account_for_injection_from_auth_dir_impl(account_id, auth_dir, false, true).await
 }
 
-/// 实例关闭旧运行态前的凭据预检。这里只刷新必要的 access_token 并调用
-/// 官方 accounts/check，不写目标 profile。
+/// 实例关闭旧运行态前的凭据预检。这里只刷新必要的 access_token，不写目标 profile；
+/// 官方 accounts/check 不属于启动流程。
 pub async fn prepare_account_for_instance_launch_preflight(
     account_id: &str,
 ) -> Result<CodexAccount, String> {
@@ -9762,7 +9935,7 @@ pub async fn prepare_account_for_instance_launch_preflight(
 
 pub async fn prepare_account_for_instance_launch_preflight_with_options(
     account_id: &str,
-    skip_official_account_check: bool,
+    _skip_official_account_check: bool,
 ) -> Result<CodexAccount, String> {
     let account = load_account(account_id).ok_or_else(|| format!("账号不存在: {}", account_id))?;
     if account.is_agent_identity_auth() {
@@ -9773,14 +9946,8 @@ pub async fn prepare_account_for_instance_launch_preflight_with_options(
     }
     if account.is_api_key_auth() {
         if normalize_optional_ref(account.bound_oauth_account_id.as_deref()).is_some() {
-            refresh_bound_oauth_account_for_api_key(
-                &account,
-                "prepare",
-                true,
-                true,
-                skip_official_account_check,
-            )
-            .await?;
+            refresh_bound_oauth_account_for_api_key(&account, "prepare", false, true, false)
+                .await?;
         }
         return Ok(account);
     }
@@ -9788,15 +9955,7 @@ pub async fn prepare_account_for_instance_launch_preflight_with_options(
     let lock = codex_token_lock_for(account_id);
     let _guard = lock.lock().await;
     let _file_guard = acquire_codex_token_refresh_file_lock(account_id, "prepare").await?;
-    let account =
-        refresh_managed_account_locked(account_id, false, "prepare", None, true, true).await?;
-    validate_managed_account_for_client_locked(
-        account,
-        "prepare",
-        true,
-        skip_official_account_check,
-    )
-    .await
+    refresh_managed_account_locked(account_id, false, "prepare", None, false, true).await
 }
 
 /// 预检通过后，把账号库中的最新凭据投影到实例目录。该步骤不再发起网络请求，
@@ -10217,8 +10376,8 @@ where
 /// OAuth 重新授权成功后的受控切号。
 ///
 /// 本次授权已经返回并保存了新的 Token，因此不能再从仍在运行的旧客户端同步凭据，
-/// 也不能立即再次轮换 refresh_token。这里只校验 OAuth 完成时观察到的 token
-/// generation、access_token 有效期和官方账号检查结果，通过后再停止旧运行态。
+/// 也不能立即再次轮换 refresh_token。先校验 OAuth 完成时观察到的 token
+/// generation 和 access_token 有效期，再对新凭据执行官方账号检查，通过后再停止旧运行态。
 pub async fn switch_account_managed_after_reauth_with_before_commit<F, Fut>(
     account_id: &str,
     expected_token_generation: u64,
@@ -11472,7 +11631,7 @@ fn upsert_account_from_access_token_with_hints(
     };
     apply_account_note_update_if_present(&mut account, note_update);
 
-    save_account(&account)?;
+    save_account_from_user_action(&mut account)?;
 
     if let Some(summary) = index.accounts.iter_mut().find(|item| item.id == account.id) {
         summary.email = account.email.clone();
@@ -14800,16 +14959,15 @@ mod tests {
         assert_ne!(reauthed.tokens.id_token, old_account.tokens.id_token);
 
         let runtime = tokio::runtime::Runtime::new().expect("create runtime");
-        let prepared = super::prepare_freshly_reauthorized_account_switch_local_locked(
-            &reauthed.id,
-            reauthed.token_generation,
-        )
-        .expect("prepare newly authorized tokens locally");
         let switched = runtime
-            .block_on(super::commit_account_switch_locked(
-                &reauthed.id,
-                super::PreparedCodexAccountSwitch::Account(prepared),
-            ))
+            .block_on(
+                super::switch_account_managed_after_reauth_with_before_commit_options(
+                    &reauthed.id,
+                    reauthed.token_generation,
+                    true,
+                    || async { Ok(()) },
+                ),
+            )
             .expect("commit newly authorized tokens");
 
         assert_eq!(switched.tokens.id_token, reauthed.tokens.id_token);
@@ -14855,6 +15013,31 @@ mod tests {
 
         assert!(error.contains("凭据已发生变化"));
         assert!(!hook_called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn instance_launch_preflight_uses_local_credentials_without_remote_account_check() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let _env = TestEnvGuard::new("codex-instance-launch-local-preflight-test");
+        let account = seed_oauth_account(make_codex_tokens(
+            "launch-local@example.com",
+            "acc-launch-local",
+            "org-launch-local",
+            "launch-local",
+            "rt-launch-local",
+        ));
+
+        let runtime = tokio::runtime::Runtime::new().expect("create runtime");
+        let prepared = runtime
+            .block_on(super::prepare_account_for_instance_launch_preflight(
+                &account.id,
+            ))
+            .expect("instance launch preflight should use local credentials");
+
+        assert_eq!(prepared.tokens.access_token, account.tokens.access_token);
+        assert_eq!(prepared.token_generation, account.token_generation);
     }
 
     #[test]
@@ -16052,6 +16235,71 @@ mod tests {
         assert!(index.current_account_id.is_none());
         let accounts = list_accounts_checked().expect("empty index should be valid");
         assert!(accounts.is_empty());
+    }
+
+    #[test]
+    fn deleted_account_cannot_be_restored_by_stale_background_write() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let _env = TestEnvGuard::new("codex-delete-tombstone-test");
+        let account = upsert_account(make_codex_tokens(
+            "deleted@example.com",
+            "acc-deleted",
+            "org-deleted",
+            "old",
+            "rt-old",
+        ))
+        .expect("seed account through normal authorization path");
+        let stale_snapshot = account.clone();
+
+        super::remove_account(&account.id).expect("remove account");
+        let error = save_account(&stale_snapshot).expect_err("stale write must be rejected");
+        assert!(error.contains("账号已删除或凭据快照已过期"));
+
+        // 即使另一个旧进程绕过当前进程锁写回了详情文件，删除标记也必须让列表忽略它。
+        super::save_account_unchecked(&stale_snapshot).expect("simulate stale external write");
+        assert!(load_account(&account.id).is_none());
+        assert!(list_accounts_checked().expect("list accounts").is_empty());
+
+        let reauthorized = upsert_account(make_codex_tokens(
+            "deleted@example.com",
+            "acc-deleted",
+            "org-deleted",
+            "new",
+            "rt-new",
+        ))
+        .expect("explicit authorization may recreate deleted account");
+        assert_ne!(
+            reauthorized.tokens.access_token,
+            stale_snapshot.tokens.access_token
+        );
+        assert_eq!(reauthorized.id, stale_snapshot.id);
+        assert!(reauthorized.token_generation > stale_snapshot.token_generation);
+
+        let error = save_account(&stale_snapshot)
+            .expect_err("old snapshot must remain rejected after reauthorization");
+        assert!(error.contains("账号已删除或凭据快照已过期"));
+        let loaded = load_account(&reauthorized.id).expect("load reauthorized account");
+        assert_eq!(loaded.tokens.access_token, reauthorized.tokens.access_token);
+
+        // 旧进程即使绕过新版本保护，在重新授权后覆盖详情文件，也不能再让旧 Token 被加载。
+        super::save_account_unchecked(&stale_snapshot)
+            .expect("simulate stale external write after reauthorization");
+        let stale_load = super::load_account_with_summary(&reauthorized.id, None);
+        assert!(
+            stale_load.is_err(),
+            "stale load should fail: result={:?}, tombstone={:?}",
+            stale_load
+                .as_ref()
+                .ok()
+                .and_then(|account| account.as_ref())
+                .map(|account| account.token_generation),
+            super::read_account_tombstone(&reauthorized.id),
+        );
+        let error = list_accounts_checked()
+            .expect_err("stale external credentials must not be listed after reauthorization");
+        assert!(error.contains("凭据快照已过期"));
     }
 
     #[test]
@@ -21187,7 +21435,7 @@ pub fn create_pending_oauth_account(
             apply_account_note_update(&mut account, update);
             account.email = email.clone();
             account.last_used = chrono::Utc::now().timestamp();
-            save_account(&account)?;
+            save_account_from_user_action(&mut account)?;
             if let Some(item) = index.accounts.iter_mut().find(|item| item.id == account.id) {
                 item.email = account.email.clone();
                 item.plan_type = account.plan_type.clone();
@@ -21235,7 +21483,7 @@ pub fn create_pending_oauth_account(
     index.accounts.retain(|item| item.id != account_id);
     index.accounts.push(account_summary_from_account(&account));
 
-    save_account(&account)?;
+    save_account_from_user_action(&mut account)?;
     save_account_index(&index)?;
     logger::log_info(&format!(
         "Codex 待授权 OAuth 账号已保存: account_id={}, email={}",

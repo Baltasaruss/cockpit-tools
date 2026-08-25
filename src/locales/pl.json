@@ -2519,7 +2519,7 @@
         "recoverSuccess": "Zażądano przywrócenia {{count}} kont(a)",
         "dialog": {
           "title": "Konta z problemami",
-          "description": "Te stany pochodzą z harmonogramu OAuth Sidecar. Przywrócenie usuwa pauzę i ponawia próbę.",
+          "description": "Te stany pochodzą z harmonogramu Sidecar. Przywrócenie usuwa pauzę i ponawia próbę.",
           "noIssues": "Brak kont z problemami",
           "missing": "Brak konta",
           "cooldown": "Wstrzymane",

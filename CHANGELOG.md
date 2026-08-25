@@ -7,6 +7,18 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.31] - 2026-08-25
+
+### Fixed
+
+- **Fixed deleted Codex accounts reappearing and reauthorization continuing with stale credentials**: deletion now remains authoritative even when an older quota or profile task finishes later, successful empty account lists clear the local UI cache, and newly authorized credentials cannot be overwritten by an older account snapshot or the previous live `auth.json`. Deleting and authorizing the same account again now keeps the new Token and no longer causes a stale-credential 401 during the following switch.
+- **Fixed the official account check affecting Codex instance startup**: `accounts/check` now runs only for actual account switches, including the automatic continuation after OAuth reauthorization; starting an existing instance keeps the previous local credential preparation behavior and is no longer turned into a 401 reauthorization failure by this check.
+- **Fixed image generation being unavailable in the new Codex API Service version**: conflict handling is restored when the official `image_gen` tool and hosted `image_generation` tool are both present, including top-level tools, nested `additional_tools`, historical `response` metadata, and `tool_choice`. HTTP, streaming, and Responses WebSocket requests now select the correct image capability instead of sending both tool systems and being rejected upstream.
+- **Fixed the API Service experimental model catalog preemptively blocking image generation**: when the selected accounts have OAuth image-generation capacity, the gateway restores `gpt-image-2` visibility even if the experimental model catalog omits it, then continues normal account routing; the model remains hidden when capacity is unavailable or explicit model filters exclude it.
+- **Fixed non-image tool compatibility for Codex Responses Lite and WebSocket requests**: Lite catalog detection and recursive filtering are restored for `function`, `custom`, client-side `tool_search`, namespaces, and `allowed_tools`, while unsupported `web_search`, server-side `tool_search`, empty tool choices, and invalid input namespaces are removed. HTTP and WebSocket requests now behave consistently, preserving collaboration and other supported tools after the proxy refactor.
+- **Fixed Payload rules not matching Gemini CLI sources**: the `gemini-cli` source protocol is normalized to `gemini` again, so existing Gemini-scoped default, override, and filter rules continue to apply.
+- **Fixed Cursor API usage being hidden in the floating card**: the floating card now shows Cursor's three primary quota bars—Total Usage, Auto + Composer, and API Usage—without changing the two-bar limit for other platforms.
+
 ## [1.3.30] - 2026-08-25
 
 ### Changed

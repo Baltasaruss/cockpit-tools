@@ -2519,7 +2519,7 @@
         "recoverSuccess": "Wiederherstellung für {{count}} Konto/Konten angefordert",
         "dialog": {
           "title": "Problemkonten",
-          "description": "Diese Zustände stammen vom Sidecar-OAuth-Planer. Die Wiederherstellung löscht Wartezeiten und versucht das Konto erneut.",
+          "description": "Diese Zustände stammen vom Sidecar-Planer. Die Wiederherstellung löscht Wartezeiten und versucht das Konto erneut.",
           "noIssues": "Keine Problemkonten",
           "missing": "Konto fehlt",
           "cooldown": "In Wartezeit",

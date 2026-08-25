@@ -2519,7 +2519,7 @@
         "recoverSuccess": "Recuperación solicitada para {{count}} cuenta(s)",
         "dialog": {
           "title": "Cuentas con problemas",
-          "description": "Estos estados provienen del programador OAuth de Sidecar. La recuperación borra la espera y reintenta la cuenta.",
+          "description": "Estos estados provienen del programador de Sidecar. La recuperación borra la espera y reintenta la cuenta.",
           "noIssues": "No hay cuentas con problemas",
           "missing": "Cuenta ausente",
           "cooldown": "En espera",

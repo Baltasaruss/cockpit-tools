@@ -7,6 +7,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [1.3.31] - 2026-08-25
+
+### 修复
+
+- **修复 Codex 账号删除后重新出现、重新授权仍使用旧凭据的问题**：删除结果不再被稍后完成的旧额度或资料任务写回覆盖，后端成功返回空账号列表时会同步清理前端本地缓存；新授权凭据也不会再被旧账号快照或原运行态的 `auth.json` 覆盖。删除后重新授权同一账号会稳定保留新 Token，后续切号不再因旧凭据返回 401。
+- **修复官方账号检查影响 Codex 实例启动的问题**：`accounts/check` 现在只在实际切号时调用，包括 OAuth 重新授权完成后的自动继续切号；已有实例启动保持原来的本地凭据准备逻辑，不再因该检查的 401 被误判为需要重新授权。
+- **修复新版 Codex API Service 无法生图的问题**：恢复官方 `image_gen` 与托管 `image_generation` 同时出现时的冲突处理，并覆盖顶层工具、嵌套 `additional_tools`、历史 `response` 和 `tool_choice`；HTTP、流式请求与 Responses WebSocket 现在都能正确选择生图能力，不再因重复发送两套工具而被上游拒绝。
+- **修复 API Service 实验模型目录导致生图模型被提前拦截的问题**：当选定账号存在可用的 OAuth 生图能力时，即使实验模型目录未列出 `gpt-image-2`，网关也会恢复其可见性并继续执行账号路由；账号能力不足或显式模型过滤时仍会按原规则隐藏。
+- **修复 Codex Responses Lite 与 WebSocket 的非生图工具兼容问题**：恢复 Lite 模型目录判定及 `function`、`custom`、客户端 `tool_search`、namespace 和 `allowed_tools` 的递归过滤，移除不受支持的 `web_search`、服务端 `tool_search`、空工具选择和无效 input namespace；HTTP 与 WebSocket 请求保持一致，协作工具和其他受支持工具不再因代理重构出现异常。
+- **修复 Gemini CLI 来源的 Payload 规则无法匹配的问题**：重新将 `gemini-cli` 来源协议归一为 `gemini`，已有按 Gemini 来源配置的默认、覆盖和过滤规则会继续正常生效。
+- **修复 Cursor 悬浮卡不显示 API Usage 的问题**：悬浮卡现在会完整显示 Cursor 的 Total Usage、Auto + Composer 和 API Usage 三条主要配额，其他平台原有的两条展示上限保持不变。
+
 ## [1.3.30] - 2026-08-25
 
 ### 变更

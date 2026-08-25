@@ -2519,7 +2519,7 @@
         "recoverSuccess": "Obnova vyžádána pro {{count}} účtů",
         "dialog": {
           "title": "Problémové účty",
-          "description": "Tyto stavy pocházejí z plánovače OAuth Sidecar. Obnova zruší čekání a účet zkusí znovu.",
+          "description": "Tyto stavy pocházejí z plánovače Sidecar. Obnova zruší čekání a účet zkusí znovu.",
           "noIssues": "Žádné problémové účty",
           "missing": "Účet chybí",
           "cooldown": "Čeká",

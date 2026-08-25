@@ -1109,6 +1109,17 @@ pub async fn switch_codex_account(
             return Err(formatted_error);
         }
     };
+    if is_reauth_handoff {
+        let quota_account_id = account.id.clone();
+        tokio::spawn(async move {
+            if let Err(error) = codex_quota::refresh_account_quota(&quota_account_id).await {
+                logger::log_warn(&format!(
+                    "重新授权切号完成后刷新配额失败: account_id={}, error={}",
+                    quota_account_id, error
+                ));
+            }
+        });
+    }
     logger::log_info(&format!(
         "[Codex Switch][Backend] switch_account_managed finished: account_id={}, elapsed_ms={}, total_ms={}",
         account_id,
@@ -1267,10 +1278,7 @@ pub async fn switch_codex_account(
             serde_json::json!({
                 "error": launch_error,
                 "canRetry": launch_error.is_some(),
-                "canSkipOfficialCheck": launch_error
-                    .as_deref()
-                    .map(codex_account::official_account_check_error_can_skip)
-                    .unwrap_or(false),
+                "canSkipOfficialCheck": false,
             }),
         );
         logger::log_info(&format!(
@@ -1770,8 +1778,18 @@ async fn save_codex_oauth_tokens(
         codex_account::upsert_account(tokens)?
     };
 
-    if let Err(e) = codex_quota::refresh_account_quota(&account.id).await {
-        logger::log_error(&format!("刷新配额失败: {}", e));
+    // 旧官方客户端可能仍持有同一账号的旧 auth.json。普通新增授权使用刚落库的
+    // 凭据直接查询配额，避免 live authority 把新 Token 覆盖回旧 Token；重新授权
+    // 则等自动切号提交完成后再按正常流程刷新。
+    if reauth_account_id.is_none() {
+        if let Err(e) = codex_quota::refresh_freshly_authorized_account_quota(
+            &account.id,
+            account.token_generation,
+        )
+        .await
+        {
+            logger::log_error(&format!("刷新配额失败: {}", e));
+        }
     }
 
     let loaded =

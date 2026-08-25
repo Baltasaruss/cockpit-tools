@@ -2519,7 +2519,7 @@
         "recoverSuccess": "已提交 {{count}} 個帳號的恢復操作",
         "dialog": {
           "title": "異常帳號",
-          "description": "以下狀態來自 Sidecar OAuth 調度器。恢復操作會清除調度冷卻並重新嘗試帳號。",
+          "description": "以下狀態來自 Sidecar 帳號調度器。恢復操作會清除調度冷卻並重新嘗試帳號。",
           "noIssues": "目前沒有異常帳號",
           "missing": "帳號缺失",
           "cooldown": "冷卻中",

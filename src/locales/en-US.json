@@ -2728,7 +2728,7 @@
         "recoverSuccess": "Recovery requested for {{count}} account(s)",
         "dialog": {
           "title": "Problem Accounts",
-          "description": "These states come from the Sidecar OAuth scheduler. Recovery clears scheduler cooldowns and retries the account.",
+          "description": "These states come from the Sidecar scheduler. Recovery clears scheduler cooldowns and retries the account.",
           "noIssues": "No problem accounts",
           "missing": "Missing account",
           "cooldown": "Cooling down",

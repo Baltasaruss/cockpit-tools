@@ -2569,7 +2569,7 @@
         "recoverSuccess": "Pemulihan diminta untuk {{count}} akun",
         "dialog": {
           "title": "Akun Bermasalah",
-          "description": "Status ini berasal dari penjadwal OAuth Sidecar. Pemulihan menghapus jeda dan mencoba kembali akun.",
+          "description": "Status ini berasal dari penjadwal Sidecar. Pemulihan menghapus jeda dan mencoba kembali akun.",
           "noIssues": "Tidak ada akun bermasalah",
           "missing": "Akun hilang",
           "cooldown": "Dalam jeda",

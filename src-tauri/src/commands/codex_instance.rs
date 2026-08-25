@@ -1984,7 +1984,7 @@ async fn codex_start_instance_internal(
     instance_id: String,
     skip_default_bind_account_injection: bool,
     transfer_conflicting_account: bool,
-    skip_official_account_check: bool,
+    _skip_official_account_check: bool,
     emit_launch_progress: bool,
 ) -> Result<CodexInstanceProfileView, String> {
     let _start_guard = CodexInstanceStartGuard::acquire(&instance_id)?;
@@ -1997,7 +1997,6 @@ async fn codex_start_instance_internal(
             "type": "start",
             "progress": 2,
             "transferConflictingAccount": transfer_conflicting_account,
-            "skipOfficialAccountCheck": skip_official_account_check,
         }),
     );
     emit_codex_instance_launch_step(
@@ -2088,11 +2087,7 @@ async fn codex_start_instance_internal(
         None => None,
     };
     if let Some(account_id) = oauth_account_id.as_deref() {
-        modules::codex_account::prepare_account_for_instance_launch_preflight_with_options(
-            account_id,
-            skip_official_account_check,
-        )
-        .await?;
+        modules::codex_account::prepare_account_for_instance_launch_preflight(account_id).await?;
         let checked_account = modules::codex_account::load_account(account_id)
             .ok_or_else(|| format!("账号不存在: {}", account_id))?;
         emit_codex_instance_launch_step(
@@ -2120,8 +2115,7 @@ async fn codex_start_instance_internal(
                 "tokenGenerationBefore": oauth_token_generation_before,
                 "tokenGenerationChanged": checked_account.token_generation
                     > oauth_token_generation_before,
-                "remoteValidated": !skip_official_account_check,
-                "remoteCheckSkipped": skip_official_account_check,
+                "localCredentialsValidated": true,
             }),
         );
     }
@@ -2762,8 +2756,6 @@ pub(crate) async fn codex_start_default_with_prepared_profile(
     .await;
     if let (Some(target), Err(error)) = (&launch_target, &result) {
         if !error.starts_with(CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX) {
-            let can_skip_official_check =
-                modules::codex_account::official_account_check_error_can_skip(error);
             emit_codex_instance_launch_progress(
                 &app,
                 true,
@@ -2772,7 +2764,7 @@ pub(crate) async fn codex_start_default_with_prepared_profile(
                     "type": "error",
                     "error": error,
                     "canRetry": true,
-                    "canSkipOfficialCheck": can_skip_official_check,
+                    "canSkipOfficialCheck": false,
                 }),
             );
         }
@@ -2817,7 +2809,7 @@ pub async fn codex_start_instance(
                     "type": "error",
                     "error": error_for_ui,
                     "canRetry": true,
-                    "canSkipOfficialCheck": modules::codex_account::official_account_check_error_can_skip(error),
+                    "canSkipOfficialCheck": false,
                     "transferConflictingAccount": transfer_conflicting_account.unwrap_or(false),
                 }),
             );

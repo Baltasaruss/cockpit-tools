@@ -2281,6 +2281,23 @@ fn api_service_supported_codex_model_ids() -> Vec<String> {
     api_service_experimental_model_catalog().unwrap_or_else(supported_codex_model_ids)
 }
 
+fn apply_codex_image_model_visibility(
+    mut model_ids: Vec<String>,
+    image_allowed: bool,
+) -> Vec<String> {
+    if image_allowed
+        && !model_ids
+            .iter()
+            .any(|model| model.eq_ignore_ascii_case(CODEX_IMAGE_MODEL_ID))
+    {
+        model_ids.push(CODEX_IMAGE_MODEL_ID.to_string());
+    }
+    model_ids
+        .into_iter()
+        .filter(|model| image_allowed || !model.eq_ignore_ascii_case(CODEX_IMAGE_MODEL_ID))
+        .collect()
+}
+
 pub(crate) fn refresh_api_service_experimental_model_ids() {
     let mut profile_dirs = vec![codex_account::get_codex_home()];
     if let Ok(store) = crate::modules::codex_instance::load_instance_store() {
@@ -2438,10 +2455,8 @@ fn base_codex_model_ids_for_collection(
 ) -> Vec<String> {
     let image_allowed =
         selected_accounts_have_image_generation_capacity(collection, health_by_account_id);
-    let mut model_ids = api_service_supported_codex_model_ids()
-        .into_iter()
-        .filter(|model| model != CODEX_IMAGE_MODEL_ID || image_allowed)
-        .collect::<Vec<_>>();
+    let mut model_ids =
+        apply_codex_image_model_visibility(api_service_supported_codex_model_ids(), image_allowed);
     let mut seen = model_ids
         .iter()
         .map(|model| model.to_ascii_lowercase())
@@ -2680,10 +2695,8 @@ fn visible_codex_model_ids_for_api_key_with_optional_accounts(
         accounts,
         health_by_account_id,
     );
-    let base = api_service_supported_codex_model_ids()
-        .into_iter()
-        .filter(|model| model != CODEX_IMAGE_MODEL_ID || image_allowed)
-        .collect();
+    let base =
+        apply_codex_image_model_visibility(api_service_supported_codex_model_ids(), image_allowed);
     let mut visible = apply_model_filters(
         apply_model_aliases_to_ids(base, &collection.model_aliases),
         &[],
@@ -3139,12 +3152,12 @@ fn tool_conflicts_with_hosted_image_generation(tool: &Value) -> bool {
         return true;
     }
 
-    let namespace = tool
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    namespace.eq_ignore_ascii_case("image_gen")
+    let image_namespace = ["name", "namespace"].iter().any(|key| {
+        tool.get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|namespace| namespace.trim().eq_ignore_ascii_case("image_gen"))
+    });
+    image_namespace
         && tool
             .get("tools")
             .and_then(Value::as_array)
@@ -3163,14 +3176,34 @@ fn tool_conflicts_with_hosted_image_generation(tool: &Value) -> bool {
 }
 
 fn has_hosted_image_generation_tool_conflict(object: &Map<String, Value>) -> bool {
-    object
+    let local_conflict = object
         .get("tools")
         .and_then(Value::as_array)
         .is_some_and(|tools| {
             tools
                 .iter()
                 .any(tool_conflicts_with_hosted_image_generation)
-        })
+        });
+    if local_conflict {
+        return true;
+    }
+
+    let input_conflict = object
+        .get("input")
+        .and_then(Value::as_array)
+        .is_some_and(|input| {
+            input.iter().any(|item| {
+                item.as_object().is_some_and(|item_object| {
+                    item_object.get("type").and_then(Value::as_str) == Some("additional_tools")
+                        && has_hosted_image_generation_tool_conflict(item_object)
+                })
+            })
+        });
+    input_conflict
+        || object
+            .get("response")
+            .and_then(Value::as_object)
+            .is_some_and(has_hosted_image_generation_tool_conflict)
 }
 
 fn ensure_image_generation_tool_in_object(object: &mut Map<String, Value>) -> bool {
@@ -13219,7 +13252,7 @@ pub async fn recover_local_access_accounts(
 
     let client = build_localhost_http_client(Duration::from_secs(10), "账号调度恢复")?;
     let url = format!(
-        "http://{}:{}/v1/cockpit/auth/reset",
+        "http://{}:{}/v1/cockpit/accounts/reset-scheduler",
         CODEX_LOCAL_ACCESS_DEFAULT_CLIENT_URL_HOST, port
     );
     let response = client
@@ -13248,7 +13281,7 @@ pub async fn recover_local_access_accounts(
         .filter(|account_id| !account_id.is_empty())
         .collect::<Vec<_>>();
     if reset_account_ids.is_empty() {
-        return Err("Sidecar 未恢复任何账号调度状态".to_string());
+        return Err("Sidecar 未确认任何账号调度状态".to_string());
     }
 
     let mut runtime = gateway_runtime().lock().await;
@@ -24334,7 +24367,7 @@ fn build_account_scoped_upstream_body<'a>(
     }
 
     if has_hosted_image_generation_tool_conflict(body_obj) {
-        if !remove_hosted_image_generation_tool_from_object(body_obj) {
+        if !remove_hosted_image_generation_capabilities_from_object(body_obj) {
             return Ok(Cow::Borrowed(body));
         }
         return serde_json::to_vec(&body_value)
@@ -27880,7 +27913,8 @@ mod tests {
         add_api_key_token_usage, align_codex_prompt_cache, api_key_inherits_account_pool,
         api_key_priority_account_ids, api_key_token_limit_exceeded,
         append_eligible_local_access_account_ids, append_usage_event,
-        apply_account_usage_priority_ids, apply_codex_official_headers, apply_routing_strategy,
+        apply_account_usage_priority_ids, apply_codex_image_model_visibility,
+        apply_codex_official_headers, apply_routing_strategy,
         backup_current_profile_model_before_provider_gateway, bound_oauth_quota_refresh_failures,
         bound_oauth_quota_reserve_blocks_account, bridge_websocket_streams,
         build_account_scoped_upstream_body, build_base_url_with_host,
@@ -33150,6 +33184,17 @@ data: {"type":"response.completed","response":{"id":"resp_123","usage":{"input_t
     }
 
     #[test]
+    fn experimental_model_catalog_keeps_image_model_visible_when_capacity_allows_it() {
+        let catalog = vec!["gpt-5.6-sol".to_string(), "custom-model".to_string()];
+        let visible = apply_codex_image_model_visibility(catalog.clone(), true);
+        assert!(visible.iter().any(|model| model == CODEX_IMAGE_MODEL_ID));
+        assert_eq!(visible.len(), catalog.len() + 1);
+
+        let hidden = apply_codex_image_model_visibility(visible, false);
+        assert!(!hidden.iter().any(|model| model == CODEX_IMAGE_MODEL_ID));
+    }
+
+    #[test]
     fn provider_gateway_models_are_visible_for_gateway_api_key() {
         let collection = test_local_access_collection(vec!["account-1".to_string()]);
         let api_key = ResolvedLocalApiKey {
@@ -34140,6 +34185,53 @@ data: {"type":"response.completed","response":{"id":"resp_123","usage":{"input_t
                 tool.get("type").and_then(Value::as_str) == Some("namespace")
                     && tool.get("name").and_then(Value::as_str) == Some("image_gen")
             })));
+    }
+
+    #[test]
+    fn oauth_responses_removes_nested_hosted_tool_for_nested_image_gen_namespace() {
+        let account = test_account_with_plan("plus");
+        let body = br#"{
+            "model":"gpt-5.6-sol",
+            "input":[
+                {
+                    "type":"additional_tools",
+                    "tools":[
+                        {
+                            "type":"namespace",
+                            "namespace":"image_gen",
+                            "tools":[{"type":"function","name":"imagegen","parameters":{}}]
+                        }
+                    ]
+                }
+            ],
+            "response":{
+                "tool_choice":{"type":"image_generation"},
+                "tools":[{"type":"image_generation","output_format":"png"}]
+            }
+        }"#;
+
+        let mapped_body = build_account_scoped_upstream_body(
+            "/responses",
+            body,
+            &account,
+            CodexLocalAccessImageGenerationMode::Enabled,
+            CodexLocalAccessRequestKind::Text,
+        )
+        .expect("oauth body should build");
+        let parsed: Value =
+            serde_json::from_slice(mapped_body.as_ref()).expect("body should remain json");
+
+        assert_eq!(
+            parsed
+                .pointer("/input/0/tools/0/namespace")
+                .and_then(Value::as_str),
+            Some("image_gen")
+        );
+        assert!(parsed.pointer("/response/tool_choice").is_none());
+        assert!(parsed
+            .pointer("/response/tools")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty));
     }
 
     #[test]

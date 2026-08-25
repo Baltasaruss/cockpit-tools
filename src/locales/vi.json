@@ -2519,7 +2519,7 @@
         "recoverSuccess": "Đã yêu cầu khôi phục {{count}} tài khoản",
         "dialog": {
           "title": "Tài khoản lỗi",
-          "description": "Các trạng thái này đến từ bộ lập lịch OAuth Sidecar. Khôi phục sẽ xóa thời gian chờ và thử lại tài khoản.",
+          "description": "Các trạng thái này đến từ bộ lập lịch Sidecar. Khôi phục sẽ xóa thời gian chờ và thử lại tài khoản.",
           "noIssues": "Không có tài khoản lỗi",
           "missing": "Thiếu tài khoản",
           "cooldown": "Đang chờ",

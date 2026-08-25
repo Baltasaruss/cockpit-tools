@@ -234,6 +234,17 @@ func TestApplyPayloadConfigWithRequest_FromProtocolGateUsesSourceProtocol(t *tes
 	}
 }
 
+func TestApplyPayloadConfigWithRequest_NormalizesGeminiCLIFromProtocol(t *testing.T) {
+	cfg := &config.Config{Payload: config.PayloadConfig{Override: []config.PayloadRule{{
+		Models: []config.PayloadModelRule{{Name: "gemini-*", Protocol: "gemini", FromProtocol: "gemini"}},
+		Params: map[string]any{"metadata.source": "gemini"},
+	}}}}
+	out := ApplyPayloadConfigWithRequest(cfg, "gemini-3.1-flash", "gemini", "gemini-cli", "", []byte(`{"model":"gemini-3.1-flash"}`), nil, "", "", nil)
+	if got := gjson.GetBytes(out, "metadata.source").String(); got != "gemini" {
+		t.Fatalf("metadata.source = %q, want gemini; payload=%s", got, out)
+	}
+}
+
 func TestApplyPayloadConfigWithRequest_PayloadConditionsNarrowRule(t *testing.T) {
 	cfg := &config.Config{
 		Payload: config.PayloadConfig{

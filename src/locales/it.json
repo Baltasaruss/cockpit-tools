@@ -2519,7 +2519,7 @@
         "recoverSuccess": "Ripristino richiesto per {{count}} account",
         "dialog": {
           "title": "Account con problemi",
-          "description": "Questi stati provengono dallo scheduler OAuth Sidecar. Il ripristino cancella la pausa e riprova l’account.",
+          "description": "Questi stati provengono dallo scheduler Sidecar. Il ripristino cancella la pausa e riprova l’account.",
           "noIssues": "Nessun account con problemi",
           "missing": "Account mancante",
           "cooldown": "In pausa",
