@@ -1205,6 +1205,17 @@ pub async fn inject_account_to_profile_for_launch(
     .map(|_| ())
 }
 
+/// 启动前已完成 access_token 刷新和官方在线检查时使用，只投影最新凭据，
+/// 不再重复调用远端接口或使用 refresh_token。
+pub async fn project_preflighted_account_to_profile_for_launch(
+    profile_dir: &Path,
+    account_id: &str,
+) -> Result<(), String> {
+    modules::codex_account::project_preflighted_account_for_instance_launch(account_id, profile_dir)
+        .await
+        .map(|_| ())
+}
+
 pub async fn inject_account_to_profile_with_login_guard_fallback(
     profile_dir: &Path,
     account_id: &str,

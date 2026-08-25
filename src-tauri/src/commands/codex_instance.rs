@@ -481,6 +481,35 @@ async fn inject_bound_account_to_profile(
     }
 }
 
+async fn inject_preflighted_bound_account_to_profile(
+    profile_dir: &Path,
+    bind_account_id: &str,
+) -> Result<(), String> {
+    if modules::codex_instance::is_api_service_bind_account_id(bind_account_id) {
+        modules::codex_local_access::prepare_local_access_for_bound_profile_dir(profile_dir)
+            .await?;
+        return Ok(());
+    }
+
+    if let Some(provider_gateway_account_id) =
+        modules::codex_instance::parse_provider_gateway_bind_account_id(bind_account_id)
+    {
+        modules::codex_local_access::activate_provider_gateway_for_dir(
+            profile_dir,
+            &provider_gateway_account_id,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    modules::codex_local_access::cleanup_provider_gateway_profile_model_overrides(profile_dir)?;
+    modules::codex_instance::project_preflighted_account_to_profile_for_launch(
+        profile_dir,
+        bind_account_id,
+    )
+    .await
+}
+
 async fn ensure_provider_gateway_for_bind_account(
     profile_dir: &Path,
     bind_account_id: Option<&str>,
@@ -1955,6 +1984,7 @@ async fn codex_start_instance_internal(
     instance_id: String,
     skip_default_bind_account_injection: bool,
     transfer_conflicting_account: bool,
+    skip_official_account_check: bool,
     emit_launch_progress: bool,
 ) -> Result<CodexInstanceProfileView, String> {
     let _start_guard = CodexInstanceStartGuard::acquire(&instance_id)?;
@@ -1963,7 +1993,12 @@ async fn codex_start_instance_internal(
         &app,
         emit_launch_progress,
         &launch_target,
-        serde_json::json!({ "type": "start", "progress": 2 }),
+        serde_json::json!({
+            "type": "start",
+            "progress": 2,
+            "transferConflictingAccount": transfer_conflicting_account,
+            "skipOfficialAccountCheck": skip_official_account_check,
+        }),
     );
     emit_codex_instance_launch_step(
         &app,
@@ -2006,16 +2041,8 @@ async fn codex_start_instance_internal(
     let oauth_access_token_refresh_due = oauth_account.as_ref().is_some_and(|account| {
         modules::codex_oauth::is_token_expired(&account.tokens.access_token)
     });
-    let oauth_id_token_refresh_due = oauth_account.as_ref().is_some_and(|account| {
-        modules::codex_oauth::is_id_token_refresh_due(&account.tokens.id_token)
-    });
-    let oauth_known_refresh_failure = oauth_account
-        .as_ref()
-        .is_some_and(|account| account.requires_reauth);
-    // A prior reauth marker is only historical input. Each explicit launch must
-    // revalidate the current refresh_token and report this run's result.
-    let oauth_refresh_required =
-        oauth_access_token_refresh_due || oauth_id_token_refresh_due || oauth_known_refresh_failure;
+    // 最新官方客户端只以 access_token 作为登录门禁；id_token 仅保留为账号资料。
+    let oauth_refresh_required = oauth_access_token_refresh_due;
     let oauth_token_generation_before = oauth_account
         .as_ref()
         .map(|account| account.token_generation)
@@ -2030,10 +2057,8 @@ async fn codex_start_instance_internal(
         "checkAccount",
         if oauth_account.is_none() {
             "skipped"
-        } else if oauth_refresh_required {
-            "warning"
         } else {
-            "completed"
+            "running"
         },
         20,
         serde_json::json!({
@@ -2048,10 +2073,11 @@ async fn codex_start_instance_internal(
                 modules::codex_oauth::jwt_token_expiration_timestamp(&account.tokens.id_token)
             }),
             "accessTokenRefreshDue": oauth_access_token_refresh_due,
-            "idTokenRefreshDue": oauth_id_token_refresh_due,
+            "idTokenRefreshDue": false,
             "refreshRequired": oauth_refresh_required,
             "hasRefreshToken": oauth_has_refresh_token,
             "tokenGenerationBefore": oauth_token_generation_before,
+            "remoteCheckPending": oauth_account.is_some(),
         }),
     );
     let _runtime_account_lease = match oauth_account_id.as_deref() {
@@ -2061,6 +2087,44 @@ async fn codex_start_instance_internal(
         ),
         None => None,
     };
+    if let Some(account_id) = oauth_account_id.as_deref() {
+        modules::codex_account::prepare_account_for_instance_launch_preflight_with_options(
+            account_id,
+            skip_official_account_check,
+        )
+        .await?;
+        let checked_account = modules::codex_account::load_account(account_id)
+            .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+        emit_codex_instance_launch_step(
+            &app,
+            emit_launch_progress,
+            &launch_target,
+            "checkAccount",
+            "completed",
+            20,
+            serde_json::json!({
+                "accountId": checked_account.id,
+                "accountEmail": checked_account.email,
+                "accessTokenExpiresAt": modules::codex_oauth::jwt_token_expiration_timestamp(
+                    &checked_account.tokens.access_token,
+                ),
+                "idTokenExpiresAt": modules::codex_oauth::jwt_token_expiration_timestamp(
+                    &checked_account.tokens.id_token,
+                ),
+                "accessTokenRefreshDue": false,
+                "idTokenRefreshDue": false,
+                "refreshRequired": oauth_refresh_required,
+                "hasRefreshToken": modules::codex_account::account_has_refresh_token(
+                    &checked_account,
+                ),
+                "tokenGenerationBefore": oauth_token_generation_before,
+                "tokenGenerationChanged": checked_account.token_generation
+                    > oauth_token_generation_before,
+                "remoteValidated": !skip_official_account_check,
+                "remoteCheckSkipped": skip_official_account_check,
+            }),
+        );
+    }
     emit_codex_instance_launch_step(
         &app,
         emit_launch_progress,
@@ -2213,7 +2277,7 @@ async fn codex_start_instance_internal(
             serde_json::json!({
                 "refreshRequired": oauth_refresh_required,
                 "accessTokenRefreshDue": oauth_access_token_refresh_due,
-                "idTokenRefreshDue": oauth_id_token_refresh_due,
+                "idTokenRefreshDue": false,
                 "hasRefreshToken": oauth_has_refresh_token,
                 "tokenGenerationBefore": oauth_token_generation_before,
             }),
@@ -2225,7 +2289,7 @@ async fn codex_start_instance_internal(
                     account_id
                 ));
             } else {
-                inject_bound_account_to_profile(&default_dir, account_id, true).await?;
+                inject_preflighted_bound_account_to_profile(&default_dir, account_id).await?;
             }
         } else {
             modules::codex_local_access::cleanup_provider_gateway_profile_model_overrides(
@@ -2482,13 +2546,13 @@ async fn codex_start_instance_internal(
         serde_json::json!({
             "refreshRequired": oauth_refresh_required,
             "accessTokenRefreshDue": oauth_access_token_refresh_due,
-            "idTokenRefreshDue": oauth_id_token_refresh_due,
+            "idTokenRefreshDue": false,
             "hasRefreshToken": oauth_has_refresh_token,
             "tokenGenerationBefore": oauth_token_generation_before,
         }),
     );
     if let Some(ref account_id) = instance.bind_account_id {
-        inject_bound_account_to_profile(instance_dir, account_id, true).await?;
+        inject_preflighted_bound_account_to_profile(instance_dir, account_id).await?;
     } else {
         modules::codex_local_access::cleanup_provider_gateway_profile_model_overrides(
             instance_dir,
@@ -2681,6 +2745,7 @@ async fn codex_start_instance_internal(
 
 pub(crate) async fn codex_start_default_with_prepared_profile(
     app: AppHandle,
+    skip_official_account_check: bool,
     emit_launch_progress: bool,
 ) -> Result<CodexInstanceProfileView, String> {
     let launch_target = emit_launch_progress
@@ -2691,11 +2756,14 @@ pub(crate) async fn codex_start_default_with_prepared_profile(
         DEFAULT_INSTANCE_ID.to_string(),
         true,
         false,
+        skip_official_account_check,
         emit_launch_progress,
     )
     .await;
     if let (Some(target), Err(error)) = (&launch_target, &result) {
         if !error.starts_with(CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX) {
+            let can_skip_official_check =
+                modules::codex_account::official_account_check_error_can_skip(error);
             emit_codex_instance_launch_progress(
                 &app,
                 true,
@@ -2703,6 +2771,8 @@ pub(crate) async fn codex_start_default_with_prepared_profile(
                 serde_json::json!({
                     "type": "error",
                     "error": error,
+                    "canRetry": true,
+                    "canSkipOfficialCheck": can_skip_official_check,
                 }),
             );
         }
@@ -2715,6 +2785,7 @@ pub async fn codex_start_instance(
     app: AppHandle,
     instance_id: String,
     transfer_conflicting_account: Option<bool>,
+    skip_official_account_check: Option<bool>,
 ) -> Result<CodexInstanceProfileView, String> {
     let launch_target = resolve_codex_instance_start_target(&instance_id)?;
     let result = codex_start_instance_internal(
@@ -2722,6 +2793,7 @@ pub async fn codex_start_instance(
         instance_id,
         false,
         transfer_conflicting_account.unwrap_or(false),
+        skip_official_account_check.unwrap_or(false),
         true,
     )
     .await;
@@ -2744,6 +2816,9 @@ pub async fn codex_start_instance(
                 serde_json::json!({
                     "type": "error",
                     "error": error_for_ui,
+                    "canRetry": true,
+                    "canSkipOfficialCheck": modules::codex_account::official_account_check_error_can_skip(error),
+                    "transferConflictingAccount": transfer_conflicting_account.unwrap_or(false),
                 }),
             );
         }

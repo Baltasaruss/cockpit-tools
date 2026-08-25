@@ -1122,9 +1122,8 @@ fn account_has_refresh_token(account: &CodexAccount) -> bool {
 }
 
 fn managed_account_tokens_need_refresh(account: &CodexAccount) -> bool {
+    // app-server 使用 access_token 作为请求登录态；id_token 仅用于账号资料元数据。
     codex_oauth::is_token_expired(&account.tokens.access_token)
-        || (account_has_refresh_token(account)
-            && codex_oauth::is_id_token_refresh_due(&account.tokens.id_token))
 }
 
 fn clear_stale_missing_refresh_token_reauth(account: &mut CodexAccount) -> Result<(), String> {
@@ -2763,7 +2762,7 @@ async fn refresh_managed_account_locked(
             account.id, err
         ));
     }
-    if account.requires_reauth {
+    if account.requires_reauth && codex_oauth::is_token_expired(&account.tokens.access_token) {
         return Err(account
             .reauth_reason
             .clone()

@@ -5764,12 +5764,8 @@ export function CodexAccountsPage() {
         ) {
           return true;
         }
-        setMessage({
-          text: t("codex.switchFailed", {
-            error: formatCodexAuthFailureMessage(error),
-          }),
-          tone: "error",
-        });
+        // 切号失败由进度弹框展示当前步骤、原始原因和重试操作，
+        // 避免在弹框后方重复渲染页面级红色错误。
       }
       return true;
     },

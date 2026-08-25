@@ -34,7 +34,10 @@ export const listInstances = service.listInstances;
 export const deleteInstance = service.deleteInstance;
 export async function startInstance(
   instanceId: string,
-  options?: { transferConflictingAccount?: boolean },
+  options?: {
+    transferConflictingAccount?: boolean;
+    skipOfficialAccountCheck?: boolean;
+  },
 ): Promise<InstanceProfile> {
   const startedAt = performance.now();
   console.info("[Codex Start][Service] invoke codex_start_instance started", {
@@ -45,6 +48,8 @@ export async function startInstance(
       instanceId,
       transferConflictingAccount:
         options?.transferConflictingAccount === true ? true : null,
+      skipOfficialAccountCheck:
+        options?.skipOfficialAccountCheck === true ? true : null,
     });
   } finally {
     console.info(

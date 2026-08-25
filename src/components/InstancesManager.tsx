@@ -1525,6 +1525,9 @@ export function InstancesManager<TAccount extends AccountLike>({
         ) {
           return "failed";
         }
+        if (isCodexApp) {
+          return "failed";
+        }
         setMessage({ text: String(e), tone: "error" });
         return "failed";
       } finally {

@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, Circle, Minus, RefreshCw, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Circle,
+  Minus,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { useCodexAccountStore } from "../stores/useCodexAccountStore";
@@ -10,18 +17,19 @@ import type { CodexSwitchAuthFailure } from "../utils/codexSwitchAuthFailure";
 import { parseWindowsOperationError } from "../utils/windowsOperationError";
 import "./CodexSwitchProgressModal.css";
 
-type SwitchStage = "preparing" | "credentials" | "writing" | "starting" | "completed";
+type SwitchStage =
+  "preparing" | "credentials" | "writing" | "starting" | "completed";
 type SwitchStatus = "running" | "completed" | "error";
 type SwitchStepId =
   | "credentials"
   | "accessToken"
-  | "idToken"
   | "stopRuntime"
   | "refreshTokens"
   | "writeCredentials"
   | "syncSettings"
   | "startClient";
-type SwitchStepStatus = "pending" | "running" | "completed" | "warning" | "skipped" | "error";
+type SwitchStepStatus =
+  "pending" | "running" | "completed" | "warning" | "skipped" | "error";
 type SwitchStepDetails = Record<string, unknown>;
 
 interface SwitchProgressPayload {
@@ -35,6 +43,9 @@ interface SwitchProgressPayload {
   stepStatus?: SwitchStepStatus;
   details?: SwitchStepDetails;
   launchAfterSwitch?: boolean;
+  canRetry?: boolean;
+  canSkipOfficialCheck?: boolean;
+  skipOfficialAccountCheck?: boolean;
 }
 
 interface SwitchStepState {
@@ -51,13 +62,14 @@ interface SwitchProgressState {
   error?: string;
   authFailure?: CodexSwitchAuthFailure | null;
   launchAfterSwitch?: boolean;
+  canRetry?: boolean;
+  canSkipOfficialCheck?: boolean;
 }
 
 const EVENT_NAME = "codex-switch-progress";
 const STEP_IDS: SwitchStepId[] = [
   "credentials",
   "accessToken",
-  "idToken",
   "refreshTokens",
   "stopRuntime",
   "writeCredentials",
@@ -65,7 +77,10 @@ const STEP_IDS: SwitchStepId[] = [
   "startClient",
 ];
 
-function createProgressState(accountId: string, launchAfterSwitch?: boolean): SwitchProgressState {
+function createProgressState(
+  accountId: string,
+  launchAfterSwitch?: boolean,
+): SwitchProgressState {
   return {
     accountId,
     progress: 4,
@@ -93,6 +108,8 @@ export function CodexSwitchProgressModal() {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<SwitchProgressState | null>(null);
   const [actionBusy, setActionBusy] = useState<"api" | null>(null);
+  const [retryBusy, setRetryBusy] = useState<"retry" | "skip" | null>(null);
+  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const accounts = useCodexAccountStore((store) => store.accounts);
 
@@ -102,21 +119,31 @@ export function CodexSwitchProgressModal() {
       if (!detail?.accountId || typeof detail.accountId !== "string") return;
       const accountId = detail.accountId;
       const isEmptyBackendError =
-        detail.type === "error" && !detail.error && detail.authFailure === undefined;
+        detail.type === "error" &&
+        !detail.error &&
+        detail.authFailure === undefined;
       if (!isEmptyBackendError) {
         setActionBusy(null);
         setActionError(null);
+        setRetryBusy(null);
+        setSkipConfirmOpen(false);
       }
 
       setState((previous) => {
         if (detail.type === "start") {
           return createProgressState(accountId, detail.launchAfterSwitch);
         }
-        const base = previous?.accountId === accountId ? previous : createProgressState(accountId);
+        const base =
+          previous?.accountId === accountId
+            ? previous
+            : createProgressState(accountId);
         if (detail.type === "error") {
-          const errorText = detail.error || base.error || t("common.failed", "失败");
+          const errorText =
+            detail.error || base.error || t("common.failed", "失败");
           const steps = base.steps.map((step) => ({ ...step }));
-          let targetIndex = steps.findIndex((step) => step.status === "running");
+          let targetIndex = steps.findIndex(
+            (step) => step.status === "running",
+          );
           if (targetIndex < 0) {
             targetIndex = steps.findIndex((step) => step.status === "error");
           }
@@ -140,11 +167,32 @@ export function CodexSwitchProgressModal() {
             steps,
             status: "error",
             error: errorText,
-            authFailure: detail.authFailure === undefined ? base.authFailure : detail.authFailure,
+            authFailure:
+              detail.authFailure === undefined
+                ? base.authFailure
+                : detail.authFailure,
+            canRetry:
+              detail.canRetry ??
+              (detail.details?.canRetry === true ? true : undefined) ??
+              base.canRetry,
+            canSkipOfficialCheck:
+              detail.canSkipOfficialCheck ??
+              (detail.details?.canSkipOfficialCheck === true
+                ? true
+                : undefined) ??
+              base.canSkipOfficialCheck,
           };
         }
         if (detail.type === "complete" || detail.stage === "completed") {
-          return { ...base, accountId, progress: 100, status: "completed" };
+          const hasStepError = base.steps.some(
+            (step) => step.status === "error",
+          );
+          return {
+            ...base,
+            accountId,
+            progress: 100,
+            status: hasStepError ? "error" : "completed",
+          };
         }
         const steps = detail.step
           ? base.steps.map((step) =>
@@ -157,13 +205,18 @@ export function CodexSwitchProgressModal() {
                 : step,
             )
           : base.steps;
+        const stepError =
+          detail.stepStatus === "error" &&
+          typeof detail.details?.error === "string"
+            ? detail.details.error
+            : undefined;
         return {
           ...base,
           accountId,
           steps,
           progress: normalizeProgress(detail.progress, base.progress),
           status: "running",
-          error: undefined,
+          error: stepError || undefined,
           authFailure: undefined,
         };
       });
@@ -174,7 +227,9 @@ export function CodexSwitchProgressModal() {
     let unlisten: (() => void) | undefined;
     void listen<SwitchProgressPayload>("codex:switch-progress", (event) => {
       if (!disposed) {
-        window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: event.payload }));
+        window.dispatchEvent(
+          new CustomEvent(EVENT_NAME, { detail: event.payload }),
+        );
       }
     }).then((cleanup) => {
       if (disposed) cleanup();
@@ -183,7 +238,10 @@ export function CodexSwitchProgressModal() {
 
     return () => {
       disposed = true;
-      window.removeEventListener(EVENT_NAME, handleWindowEvent as EventListener);
+      window.removeEventListener(
+        EVENT_NAME,
+        handleWindowEvent as EventListener,
+      );
       unlisten?.();
     };
   }, [t]);
@@ -205,9 +263,12 @@ export function CodexSwitchProgressModal() {
   if (!state) return null;
 
   const account = accounts.find((item) => item.id === state.accountId);
-  const accountLabel = account?.account_name || account?.email || state.accountId;
+  const accountLabel =
+    account?.account_name || account?.email || state.accountId;
   const isError = state.status === "error";
-  const windowsOperationError = isError ? parseWindowsOperationError(state.error) : null;
+  const windowsOperationError = isError
+    ? parseWindowsOperationError(state.error)
+    : null;
   const authFailure = isError ? state.authFailure : null;
   const isApiOnlyAuthFailure = authFailure?.apiOnlyAvailable === true;
   const authReason = authFailure
@@ -221,9 +282,15 @@ export function CodexSwitchProgressModal() {
             ? t("codex.switchAuth.idTokenUnavailable")
             : t("codex.authError.invalidGrant")
     : "";
-  const authTechnicalReason = authFailure ? conciseCodexCredentialFailure(authFailure.message) : "";
+  const authTechnicalReason = authFailure
+    ? conciseCodexCredentialFailure(authFailure.message)
+    : "";
 
-  const formatExpiry = (expiresAt: number | null, present: boolean | null, opaque = false) => {
+  const formatExpiry = (
+    expiresAt: number | null,
+    present: boolean | null,
+    opaque = false,
+  ) => {
     if (present === false) return t("codex.switchProgress.detail.missing");
     if (expiresAt === null) {
       return opaque
@@ -264,18 +331,22 @@ export function CodexSwitchProgressModal() {
           return [t("codex.switchProgress.detail.nonOAuthAccount")];
         }
         const available = [
-          optionalBoolean(details.hasAccessToken) === true ? "access_token" : null,
-          optionalBoolean(details.hasIdToken) === true ? "id_token" : null,
-          optionalBoolean(details.hasRefreshToken) === true ? "refresh_token" : null,
+          optionalBoolean(details.hasAccessToken) === true
+            ? "access_token"
+            : null,
+          optionalBoolean(details.hasRefreshToken) === true
+            ? "refresh_token"
+            : null,
         ].filter(Boolean);
         return [
           t("codex.switchProgress.detail.credentialsFound", {
-            tokens: available.length ? available.join(" · ") : t("common.none", "暂无"),
+            tokens: available.length
+              ? available.join(" · ")
+              : t("common.none", "暂无"),
           }),
         ];
       }
       case "accessToken":
-      case "idToken":
         if (status === "skipped") {
           return [t("codex.switchProgress.detail.notApplicable")];
         }
@@ -285,9 +356,15 @@ export function CodexSwitchProgressModal() {
             optionalBoolean(details.present),
             details.opaque === true,
           ),
-          details.refreshDue === true
-            ? t("codex.switchProgress.detail.refreshNeeded")
-            : t("codex.switchProgress.detail.tokenValid"),
+          details.remoteCheckPending === true
+            ? t("instances.accountLease.detail.checkingAccount")
+            : details.remoteCheckSkipped === true
+              ? t("codex.switchProgress.detail.officialCheckSkipped")
+              : details.remoteValidated === true
+                ? t("codex.switchProgress.detail.officialCheckPassed")
+                : details.refreshDue === true
+                  ? t("codex.switchProgress.detail.refreshNeeded")
+                  : t("codex.switchProgress.detail.tokenValid"),
         ];
       case "stopRuntime":
         return [
@@ -298,7 +375,8 @@ export function CodexSwitchProgressModal() {
               : t("codex.switchProgress.detail.waiting"),
         ];
       case "refreshTokens": {
-        if (status === "pending") return [t("codex.switchProgress.detail.waiting")];
+        if (status === "pending")
+          return [t("codex.switchProgress.detail.waiting")];
         if (status === "running") {
           return [t("codex.switchProgress.detail.refreshingTokens")];
         }
@@ -306,10 +384,14 @@ export function CodexSwitchProgressModal() {
           return [t("codex.switchProgress.detail.refreshSkipped")];
         }
         if (status === "error") {
-          const failure = conciseCodexCredentialFailure(details.error || state.error);
+          const failure = conciseCodexCredentialFailure(
+            details.error || state.error,
+          );
           return [
             t("codex.switchProgress.detail.refreshFailed"),
-            ...(failure ? [`${t("codex.switchAuth.reasonLabel")}：${failure}`] : []),
+            ...(failure
+              ? [`${t("codex.switchAuth.reasonLabel")}：${failure}`]
+              : []),
           ];
         }
         const lines = [
@@ -318,11 +400,9 @@ export function CodexSwitchProgressModal() {
             : t("codex.switchProgress.detail.refreshCompleted"),
         ];
         const accessExpiry = optionalTimestamp(details.accessTokenExpiresAt);
-        const idExpiry = optionalTimestamp(details.idTokenExpiresAt);
         if (accessExpiry !== null) {
           lines.push(`access_token：${formatExpiry(accessExpiry, true)}`);
         }
-        if (idExpiry !== null) lines.push(`id_token：${formatExpiry(idExpiry, true)}`);
         return lines;
       }
       case "writeCredentials":
@@ -376,7 +456,9 @@ export function CodexSwitchProgressModal() {
   const handleReauthorize = () => {
     const accountId = state.accountId;
     setState(null);
-    window.dispatchEvent(new CustomEvent("app-request-navigate", { detail: "codex" }));
+    window.dispatchEvent(
+      new CustomEvent("app-request-navigate", { detail: "codex" }),
+    );
     requestCodexOpenAddAccount({
       tab: "oauth",
       targetAccountId: accountId,
@@ -390,11 +472,14 @@ export function CodexSwitchProgressModal() {
     setActionBusy("api");
     setActionError(null);
     try {
-      const result = await codexLocalAccessService.appendCodexLocalAccessAccounts([
-        state.accountId,
-      ]);
+      const result =
+        await codexLocalAccessService.appendCodexLocalAccessAccounts([
+          state.accountId,
+        ]);
       if (!result.syncedAccountIds.includes(state.accountId)) {
-        const skipped = result.skippedAccounts.find((item) => item.accountId === state.accountId);
+        const skipped = result.skippedAccounts.find(
+          (item) => item.accountId === state.accountId,
+        );
         throw new Error(skipped?.reason || "not_available");
       }
       setState(null);
@@ -411,6 +496,23 @@ export function CodexSwitchProgressModal() {
       );
     } finally {
       setActionBusy(null);
+    }
+  };
+
+  const retrySwitch = async (skipOfficialAccountCheck = false) => {
+    if (retryBusy) return;
+    setRetryBusy(skipOfficialAccountCheck ? "skip" : "retry");
+    setActionError(null);
+    setSkipConfirmOpen(false);
+    try {
+      await useCodexAccountStore.getState().switchAccount(state.accountId, {
+        launchAfterSwitch: state.launchAfterSwitch,
+        skipOfficialAccountCheck,
+      });
+    } catch (error) {
+      setActionError(String(error).replace(/^Error:\s*/, ""));
+    } finally {
+      setRetryBusy(null);
     }
   };
 
@@ -484,19 +586,39 @@ export function CodexSwitchProgressModal() {
           <div className="codex-switch-step-list">
             {state.steps.map((step) => {
               const detailLines = stepDetailLines(step);
+              const failure =
+                step.status === "error"
+                  ? conciseCodexCredentialFailure(
+                      step.details.error || state.error,
+                    )
+                  : null;
+              const renderedDetailLines =
+                failure && !detailLines.some((line) => line.includes(failure))
+                  ? [
+                      ...detailLines,
+                      `${t("codex.switchAuth.reasonLabel")}：${failure}`,
+                    ]
+                  : detailLines;
               return (
-                <div key={step.id} className={`codex-switch-step ${step.status}`}>
+                <div
+                  key={step.id}
+                  className={`codex-switch-step ${step.status}`}
+                >
                   <div className="codex-switch-step-rail" aria-hidden="true">
-                    <span className="codex-switch-step-icon">{renderStepIcon(step)}</span>
+                    <span className="codex-switch-step-icon">
+                      {renderStepIcon(step)}
+                    </span>
                   </div>
                   <div className="codex-switch-step-content">
                     <div className="codex-switch-step-title-row">
                       <strong>{stepLabel(step.id)}</strong>
-                      <span>{t(`codex.switchProgress.status.${step.status}`)}</span>
+                      <span>
+                        {t(`codex.switchProgress.status.${step.status}`)}
+                      </span>
                     </div>
                     {step.status !== "pending" && (
                       <div className="codex-switch-step-details">
-                        {detailLines.map((line, index) => (
+                        {renderedDetailLines.map((line, index) => (
                           <span key={`${step.id}-${index}`}>{line}</span>
                         ))}
                       </div>
@@ -523,13 +645,16 @@ export function CodexSwitchProgressModal() {
                   </small>
                 )}
               </div>
-              {authFailure.apiOnlyAvailable && authFailure.accessTokenExpiresAt && (
-                <div className="codex-switch-auth-expiry">
-                  {t("codex.switchAuth.accessTokenExpiry", {
-                    time: new Date(authFailure.accessTokenExpiresAt * 1000).toLocaleString(),
-                  })}
-                </div>
-              )}
+              {authFailure.apiOnlyAvailable &&
+                authFailure.accessTokenExpiresAt && (
+                  <div className="codex-switch-auth-expiry">
+                    {t("codex.switchAuth.accessTokenExpiry", {
+                      time: new Date(
+                        authFailure.accessTokenExpiresAt * 1000,
+                      ).toLocaleString(),
+                    })}
+                  </div>
+                )}
               {actionError && (
                 <div className="codex-switch-progress-error" role="alert">
                   {actionError}
@@ -579,9 +704,68 @@ export function CodexSwitchProgressModal() {
 
         {isError && !authFailure && (
           <div className="codex-switch-progress-footer">
-            <button type="button" className="btn btn-secondary" onClick={() => setState(null)}>
-              {t("common.close", "关闭")}
-            </button>
+            {skipConfirmOpen ? (
+              <div className="codex-switch-skip-confirm" role="alertdialog">
+                <strong>
+                  {t("codex.switchProgress.skipOfficialCheckTitle")}
+                </strong>
+                <p>{t("codex.switchProgress.skipOfficialCheckDescription")}</p>
+                <div className="codex-switch-skip-confirm-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setSkipConfirmOpen(false)}
+                    disabled={retryBusy !== null}
+                  >
+                    {t("common.back", "返回")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void retrySwitch(true)}
+                    disabled={retryBusy !== null}
+                  >
+                    {retryBusy === "skip"
+                      ? t("common.loading", "加载中...")
+                      : t("codex.switchProgress.skipOfficialCheckConfirm")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setState(null)}
+                  disabled={retryBusy !== null}
+                >
+                  {t("common.close", "关闭")}
+                </button>
+                {state.canSkipOfficialCheck && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setSkipConfirmOpen(true)}
+                    disabled={retryBusy !== null}
+                  >
+                    {t("codex.switchProgress.skipOfficialCheck")}
+                  </button>
+                )}
+                {state.canRetry !== false && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void retrySwitch()}
+                    disabled={retryBusy !== null}
+                  >
+                    {retryBusy === "retry" && (
+                      <RefreshCw size={14} className="loading-spinner" />
+                    )}
+                    {t("common.retry", "重试")}
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>

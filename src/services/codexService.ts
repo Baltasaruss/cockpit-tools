@@ -105,7 +105,11 @@ export async function refreshCodexAccountProfile(accountId: string): Promise<Cod
 /** 切换 Codex 账号 */
 export async function switchCodexAccount(
   accountId: string,
-  options?: { reauthTokenGeneration?: number; launchAfterSwitch?: boolean },
+  options?: {
+    reauthTokenGeneration?: number;
+    launchAfterSwitch?: boolean;
+    skipOfficialAccountCheck?: boolean;
+  },
 ): Promise<CodexAccount> {
   const startedAt = performance.now();
   console.info('[Codex Switch][Service] invoke switch_codex_account started', {
@@ -120,6 +124,7 @@ export async function switchCodexAccount(
           stage: 'preparing',
           progress: 4,
           launchAfterSwitch: options?.launchAfterSwitch,
+          skipOfficialAccountCheck: options?.skipOfficialAccountCheck,
         },
       }),
     );
@@ -130,6 +135,7 @@ export async function switchCodexAccount(
         typeof options?.reauthTokenGeneration === 'number' ? options.reauthTokenGeneration : null,
       launchAfterSwitch:
         typeof options?.launchAfterSwitch === 'boolean' ? options.launchAfterSwitch : null,
+      skipOfficialAccountCheck: options?.skipOfficialAccountCheck === true ? true : null,
     });
     window.dispatchEvent(
       new CustomEvent('codex-switch-progress', {

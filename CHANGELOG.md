@@ -7,6 +7,13 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.30] - 2026-08-25
+
+### Changed
+
+- **Codex account switching and multi-instance launch checks now follow the official client**: client availability is based on a usable `access_token` and the official account-check result; refresh is attempted only when the access token is invalid or the official check explicitly returns unauthorized. The `id_token` is no longer a switch or launch gate, preventing an expired identity metadata token from incorrectly blocking an account.
+- **Account-usage conflicts can now be dismissed directly**: when an OAuth account is already running in another instance, the conflict dialog provides both a Close action and a top-right close button; dismissing it only closes the prompt and never stops, focuses, or transfers an instance.
+
 ## [1.3.29] - 2026-08-24
 
 ### Added
