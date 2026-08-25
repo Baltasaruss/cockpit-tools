@@ -5099,6 +5099,11 @@
       "desc": "Manage Cursor accounts by importing from local Cursor installation, pasting a JWT token, or signing in via OAuth.",
       "reason": "Permission scope: read and write Cursor local auth storage (state.vscdb) for account import and token injection (account switching).",
       "storage": "Network scope: when refreshing quota, the JWT is sent to cursor.com official APIs to fetch usage, user info, and subscription data. No data is sent to any third-party server."
+    },
+    "filters": {
+      "quotaFailed": "Quota query failed ({{count}})",
+      "cleanQuotaFailedAction": "Delete quota-failed accounts ({{count}})",
+      "cleanQuotaFailedConfirm": "Delete all {{count}} account(s) with quota query failures?"
     }
   },
   "breakout": {
