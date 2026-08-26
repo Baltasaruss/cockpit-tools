@@ -4811,7 +4811,19 @@ pub async fn prepare_account_for_quota_query(account_id: &str) -> Result<CodexAc
         save_account(&account)?;
     }
 
-    if !codex_oauth::is_token_expired(&account.tokens.access_token) {
+    let access_token_expired = codex_oauth::is_token_expired(&account.tokens.access_token);
+    crate::modules::codex_auth_diagnostic::log_event(
+        "quota_prepare_token_decision",
+        serde_json::json!({
+            "account_id": account.id,
+            "token_generation": account.token_generation,
+            "access_token_expired": access_token_expired,
+            "id_token_expired": codex_oauth::is_id_token_expired(&account.tokens.id_token),
+            "requires_reauth": account.requires_reauth,
+            "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+        }),
+    );
+    if !access_token_expired {
         return Ok(account);
     }
 
@@ -6877,6 +6889,17 @@ fn upsert_account_with_hints_and_reauth_target(
     subscription_active_until_hint: Option<String>,
     reauth_target_account_id: Option<&str>,
 ) -> Result<CodexAccount, String> {
+    crate::modules::codex_auth_diagnostic::log_event(
+        if reauth_target_account_id.is_some() {
+            "reauth_upsert_start"
+        } else {
+            "oauth_account_upsert_start"
+        },
+        serde_json::json!({
+            "reauth_target_account_id": reauth_target_account_id,
+            "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&tokens),
+        }),
+    );
     let (
         email,
         user_id,
@@ -7018,6 +7041,23 @@ fn upsert_account_with_hints_and_reauth_target(
         "Codex 账号已保存: email={}, account_id={:?}, organization_id={:?}",
         email, account_id, organization_id
     ));
+
+    crate::modules::codex_auth_diagnostic::log_event(
+        if has_reauth_target {
+            "reauth_upsert_saved"
+        } else {
+            "oauth_account_upsert_saved"
+        },
+        serde_json::json!({
+            "account_id": account.id,
+            "email": account.email,
+            "account_id_claim": account.account_id,
+            "organization_id": account.organization_id,
+            "token_generation": account.token_generation,
+            "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+            "requires_reauth": account.requires_reauth,
+        }),
+    );
 
     Ok(account)
 }
@@ -7461,11 +7501,35 @@ fn local_oauth_snapshot_has_token_delta(
             != normalize_optional_ref(snapshot.tokens.refresh_token.as_deref())
 }
 
+fn authority_snapshot_has_older_access_token(
+    account: &CodexAccount,
+    snapshot: &LocalCodexOAuthSnapshot,
+) -> bool {
+    let Some(account_exp) =
+        codex_oauth::jwt_token_expiration_timestamp(&account.tokens.access_token)
+    else {
+        return false;
+    };
+    let Some(snapshot_exp) =
+        codex_oauth::jwt_token_expiration_timestamp(&snapshot.tokens.access_token)
+    else {
+        return false;
+    };
+    snapshot_exp < account_exp
+}
+
 fn should_accept_authority_snapshot(
     account: &CodexAccount,
     snapshot: &LocalCodexOAuthSnapshot,
 ) -> bool {
     if !local_oauth_snapshot_has_token_delta(account, snapshot) {
+        return false;
+    }
+
+    // `last_refresh` 由官方 auth.json 提供，不能单独证明 Token 链更新了。
+    // 某些旧文件会在凭据未轮换时刷新这个时间戳；如果 snapshot 的 JWT
+    // access_token 明确比账号库里的 Token 更早过期，禁止回写覆盖新凭据。
+    if authority_snapshot_has_older_access_token(account, snapshot) {
         return false;
     }
 
@@ -7487,6 +7551,9 @@ fn should_accept_managed_authority_snapshot(
     snapshot: &LocalCodexOAuthSnapshot,
     base_dir: &Path,
 ) -> bool {
+    if authority_snapshot_has_older_access_token(account, snapshot) {
+        return false;
+    }
     if should_accept_authority_snapshot(account, snapshot) {
         return true;
     }
@@ -7520,14 +7587,43 @@ fn sync_account_from_authority_dir_if_current(
     base_dir: &Path,
 ) -> Result<bool, String> {
     let Some(snapshot) = load_local_oauth_snapshot_from_official_store(base_dir) else {
+        crate::modules::codex_auth_diagnostic::log_event(
+            "authority_snapshot_missing",
+            serde_json::json!({
+                "account_id": account.id,
+                "source_dir": base_dir.display().to_string(),
+            }),
+        );
         return Ok(false);
     };
 
     if !local_oauth_snapshot_matches_account(&snapshot, account) {
+        crate::modules::codex_auth_diagnostic::log_event(
+            "authority_snapshot_account_mismatch",
+            serde_json::json!({
+                "account_id": account.id,
+                "source_dir": base_dir.display().to_string(),
+                "snapshot_account_id": snapshot.account_id,
+                "snapshot_email": snapshot.email,
+                "snapshot_last_refresh_at": snapshot.last_refresh_at,
+                "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&snapshot.tokens),
+            }),
+        );
         return Ok(false);
     }
 
     if !should_accept_managed_authority_snapshot(account, &snapshot, base_dir) {
+        crate::modules::codex_auth_diagnostic::log_event(
+            "authority_snapshot_rejected_as_older",
+            serde_json::json!({
+                "account_id": account.id,
+                "source_dir": base_dir.display().to_string(),
+                "account_token_generation": account.token_generation,
+                "account_token_updated_at": account.token_updated_at,
+                "snapshot_last_refresh_at": snapshot.last_refresh_at,
+                "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&snapshot.tokens),
+            }),
+        );
         persist_managed_projection_credential_owner_best_effort(
             base_dir,
             account,
@@ -7552,6 +7648,16 @@ fn sync_account_from_authority_dir_if_current(
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "-".to_string())
         ));
+        crate::modules::codex_auth_diagnostic::log_event(
+            "authority_snapshot_applied",
+            serde_json::json!({
+                "account_id": account.id,
+                "source_dir": base_dir.display().to_string(),
+                "token_generation": account.token_generation,
+                "last_refresh_at": snapshot.last_refresh_at,
+                "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+            }),
+        );
         return Ok(true);
     }
 
@@ -7633,6 +7739,25 @@ fn sync_current_live_oauth_snapshot_before_switch(
                 "live-snapshot-current",
             );
         }
+        return Ok(false);
+    }
+
+    // 即使是当前官方运行态，也不能把明确更早过期的旧 access_token 写回账号库。
+    // 这会阻止旧 auth.json 在后台空闲刷新/同步时覆盖刚重新授权的 Token。
+    if authority_snapshot_has_older_access_token(account, &snapshot) {
+        crate::modules::codex_auth_diagnostic::log_event(
+            "authority_snapshot_rejected_as_older",
+            serde_json::json!({
+                "account_id": account.id,
+                "source_dir": base_dir.display().to_string(),
+                "reason": "snapshot_access_token_expires_earlier",
+            }),
+        );
+        persist_managed_projection_credential_owner_best_effort(
+            base_dir,
+            account,
+            "live-snapshot-current",
+        );
         return Ok(false);
     }
 
@@ -9285,6 +9410,24 @@ fn write_managed_account_projections(account: &CodexAccount) {
     }
 }
 
+/// OAuth 重新授权后，立即把新凭据同步到所有依赖该 OAuth 账号的投影。
+///
+/// API Key 账号本身仍保留 API Key 配置，但其绑定 OAuth 的 auth.json、managed
+/// projection 和 API Service 运行态必须使用刚授权的凭据，不能等待下一次切号或定时刷新。
+pub async fn sync_bound_oauth_consumers_after_reauth(account_id: &str) -> Result<(), String> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Err("OAuth 账号 ID 为空".to_string());
+    }
+    let account = load_account(account_id)
+        .ok_or_else(|| format!("重新授权后找不到 OAuth 账号: {}", account_id))?;
+
+    write_managed_account_projections(&account);
+    crate::modules::codex_local_access::ensure_local_access_profile_takeovers_from_runtime()
+        .await?;
+    Ok(())
+}
+
 pub fn is_managed_auth_refresh_due(account: &CodexAccount) -> bool {
     if account.is_api_key_auth() || account.requires_reauth || !account_has_refresh_token(account) {
         return false;
@@ -9305,6 +9448,17 @@ async fn perform_managed_token_refresh(
     reason: &str,
     force: bool,
 ) -> Result<CodexAccount, String> {
+    crate::modules::codex_auth_diagnostic::log_event(
+        "managed_token_refresh_start",
+        serde_json::json!({
+            "account_id": account.id,
+            "email": account.email,
+            "reason": reason,
+            "force": force,
+            "token_generation": account.token_generation,
+            "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+        }),
+    );
     let refresh_token = match account
         .tokens
         .refresh_token
@@ -9337,6 +9491,15 @@ async fn perform_managed_token_refresh(
 
     match running_codex_oauth_account_ids() {
         Ok(account_ids) if account_ids.contains(&account.id) => {
+            crate::modules::codex_auth_diagnostic::log_event(
+                "managed_token_refresh_deferred_official_runtime",
+                serde_json::json!({
+                    "account_id": account.id,
+                    "reason": reason,
+                    "force": force,
+                    "access_token_expired": codex_oauth::is_token_expired(&account.tokens.access_token),
+                }),
+            );
             logger::log_warn(&format!(
                 "Codex Token Authority 已让出 refresh_token 所有权给官方运行态: account_id={}, email={}, reason={}, force={}, access_token_expired={}",
                 account.id,
@@ -9355,6 +9518,15 @@ async fn perform_managed_token_refresh(
         }
         Ok(_) => {}
         Err(error) => {
+            crate::modules::codex_auth_diagnostic::log_event(
+                "managed_token_refresh_runtime_detection_failed",
+                serde_json::json!({
+                    "account_id": account.id,
+                    "reason": reason,
+                    "force": force,
+                    "error": error,
+                }),
+            );
             logger::log_warn(&format!(
                 "Codex Token Authority 无法确认官方运行态，已保守阻止 refresh_token 轮换: account_id={}, reason={}, error={}",
                 account.id, reason, error
@@ -9383,6 +9555,16 @@ async fn perform_managed_token_refresh(
             mark_token_chain_updated(&mut account);
             save_account(&account)?;
             write_managed_account_projections(&account);
+            crate::modules::codex_auth_diagnostic::log_event(
+                "managed_token_refresh_saved",
+                serde_json::json!({
+                    "account_id": account.id,
+                    "email": account.email,
+                    "reason": reason,
+                    "token_generation": account.token_generation,
+                    "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+                }),
+            );
             logger::log_info(&format!(
                 "Codex Token Authority 刷新成功: account_id={}, generation={}",
                 account.id, account.token_generation
@@ -9391,6 +9573,17 @@ async fn perform_managed_token_refresh(
         }
         Err(err) => {
             let user_error = format_refresh_error_for_user(&err);
+            crate::modules::codex_auth_diagnostic::log_event(
+                "managed_token_refresh_error",
+                serde_json::json!({
+                    "account_id": account.id,
+                    "email": account.email,
+                    "reason": reason,
+                    "force": force,
+                    "error": user_error,
+                    "refresh_error_kind": format!("{:?}", classify_refresh_error(&err)),
+                }),
+            );
             if is_reauth_required_refresh_error(&err) {
                 let _ = mark_account_requires_reauth(&mut account, &user_error);
                 return Err(user_error);
@@ -10406,6 +10599,14 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
+    crate::modules::codex_auth_diagnostic::log_event(
+        "reauth_switch_start",
+        serde_json::json!({
+            "account_id": account_id,
+            "expected_token_generation": expected_token_generation,
+            "skip_official_account_check": skip_official_account_check,
+        }),
+    );
     let _switch_guard = CODEX_ACCOUNT_SWITCH_LOCK.lock().await;
     let token_lock = codex_token_lock_for(account_id);
     let _token_guard = token_lock.lock().await;
@@ -10417,7 +10618,24 @@ where
     )
     .await?;
     before_commit().await?;
-    commit_account_switch_locked(account_id, prepared).await
+    let result = commit_account_switch_locked(account_id, prepared).await;
+    crate::modules::codex_auth_diagnostic::log_event(
+        "reauth_switch_finished",
+        match &result {
+            Ok(account) => serde_json::json!({
+                "account_id": account.id,
+                "success": true,
+                "token_generation": account.token_generation,
+                "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+            }),
+            Err(error) => serde_json::json!({
+                "account_id": account_id,
+                "success": false,
+                "error": error,
+            }),
+        },
+    );
+    result
 }
 
 /// 保留旧签名兼容现有调用；CDP 登录页守卫下线期间始终按严格刷新处理。
@@ -10488,26 +10706,45 @@ where
     commit_account_switch_locked(account_id, prepared).await
 }
 
-/// 从本地 auth.json 导入账号
+/// 从官方 Codex 本机凭据存储导入账号（auth.json / macOS Keychain）
 pub fn import_from_local() -> Result<CodexAccount, String> {
-    let auth_path = get_auth_json_path();
-    if !auth_path.exists() {
-        return Err("未找到 ~/.codex/auth.json 文件".to_string());
+    let codex_home = get_codex_home();
+    let auth_path = codex_home.join("auth.json");
+    let content = fs::read_to_string(&auth_path).ok();
+    let raw_value = content
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+
+    // API Key / Agent Identity / personal access token 仍按 auth.json 的原有格式处理。
+    // OAuth 则必须走官方统一凭据存储，不能因为 auth.json 存在就绕过 Keychain。
+    if let Some(raw_value) = raw_value.as_ref() {
+        if let Some(identity) = parse_agent_identity_from_value(raw_value)? {
+            return upsert_agent_identity_account(identity);
+        }
     }
 
-    let content =
-        fs::read_to_string(&auth_path).map_err(|e| format!("读取 auth.json 失败: {}", e))?;
+    let auth_file = content
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<CodexAuthFile>(value).ok());
+    let Some(auth_file) = auth_file.as_ref() else {
+        let snapshot = load_local_oauth_snapshot_from_official_store(&codex_home)
+            .ok_or_else(|| format!("未找到可导入的官方 Codex 凭据: {}", codex_home.display()))?;
+        let account = upsert_account_with_import_hints(
+            snapshot.tokens,
+            snapshot.account_id,
+            snapshot.organization_id,
+            snapshot.subscription_active_until,
+        )?;
+        logger::log_info(&format!(
+            "Codex 本机导入已采用官方凭据存储: account_id={}, home={}",
+            account.id,
+            codex_home.display()
+        ));
+        return Ok(account);
+    };
 
-    let raw_value: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析 auth.json 失败: {}", e))?;
-    if let Some(identity) = parse_agent_identity_from_value(&raw_value)? {
-        return upsert_agent_identity_account(identity);
-    }
-
-    let auth_file: CodexAuthFile =
-        serde_json::from_str(&content).map_err(|e| format!("解析 auth.json 失败: {}", e))?;
     let fallback_api_key = extract_api_key_from_auth_file(&auth_file);
-    let config_provider = read_api_provider_from_config_toml(&get_codex_home());
+    let config_provider = read_api_provider_from_config_toml(&codex_home);
     let fallback_provider = infer_api_provider_config(
         extract_api_base_url_from_auth_file(&auth_file)
             .or_else(|| config_provider.base_url.clone())
@@ -10543,7 +10780,24 @@ pub fn import_from_local() -> Result<CodexAccount, String> {
         return upsert_account_from_access_token(personal_access_token, None);
     }
 
-    if let Some(tokens) = auth_file.tokens {
+    if !is_auth_mode_apikey(auth_file.auth_mode.as_deref()) {
+        if let Some(snapshot) = load_local_oauth_snapshot_from_official_store(&codex_home) {
+            let account = upsert_account_with_import_hints(
+                snapshot.tokens,
+                snapshot.account_id,
+                snapshot.organization_id,
+                snapshot.subscription_active_until,
+            )?;
+            logger::log_info(&format!(
+                "Codex 本机导入已采用官方凭据存储: account_id={}, home={}",
+                account.id,
+                codex_home.display()
+            ));
+            return Ok(account);
+        }
+    }
+
+    if let Some(tokens) = auth_file.tokens.clone() {
         return upsert_account_from_auth_tokens(tokens);
     }
 
@@ -10566,7 +10820,10 @@ pub fn import_from_local() -> Result<CodexAccount, String> {
         );
     }
 
-    Err("auth.json 缺少可导入的账号信息".to_string())
+    Err(format!(
+        "未找到可导入的官方 Codex 凭据: {}",
+        auth_path.display()
+    ))
 }
 
 fn import_account_struct(account: CodexAccount) -> Result<CodexAccount, String> {
@@ -17229,6 +17486,50 @@ mod tests {
     }
 
     #[test]
+    fn authority_snapshot_with_newer_marker_but_older_access_token_is_rejected() {
+        let mut account = CodexAccount::new(
+            "codex_test_monotonic".to_string(),
+            "demo@example.com".to_string(),
+            make_codex_tokens(
+                "demo@example.com",
+                "acc-current",
+                "org-current",
+                "current",
+                "rt-current",
+            ),
+        );
+        account.account_id = Some("acc-current".to_string());
+        account.organization_id = Some("org-current".to_string());
+        account.tokens.access_token = make_jwt(serde_json::json!({
+            "exp": 20_000i64,
+            "https://api.openai.com/auth": { "chatgpt_account_id": "acc-current" }
+        }));
+        account.token_updated_at = Some(2_000);
+
+        let mut snapshot_tokens = make_codex_tokens(
+            "demo@example.com",
+            "acc-current",
+            "org-current",
+            "older",
+            "rt-older",
+        );
+        snapshot_tokens.access_token = make_jwt(serde_json::json!({
+            "exp": 10_000i64,
+            "https://api.openai.com/auth": { "chatgpt_account_id": "acc-current" }
+        }));
+        let snapshot = LocalCodexOAuthSnapshot {
+            tokens: snapshot_tokens,
+            email: "demo@example.com".to_string(),
+            subscription_active_until: None,
+            account_id: Some("acc-current".to_string()),
+            organization_id: Some("org-current".to_string()),
+            last_refresh_at: Some(3_000),
+        };
+
+        assert!(!should_accept_authority_snapshot(&account, &snapshot));
+    }
+
+    #[test]
     fn default_auth_store_prefers_auth_json_over_keychain() {
         let base_dir = make_temp_dir("codex-auth-store-file-priority-test");
         let file_tokens = make_codex_tokens(
@@ -21518,9 +21819,14 @@ pub async fn update_api_key_bound_oauth_account(
     }
 
     let bound_id = normalize_optional_ref(bound_oauth_account_id.as_deref());
-    if let Some(bound_id) = bound_id.as_deref() {
-        let _ = validate_api_key_bound_oauth_account(&account, bound_id)?;
-    }
+    let bound_oauth_account = if let Some(bound_id) = bound_id.as_deref() {
+        let bound_account = validate_api_key_bound_oauth_account(&account, bound_id)?;
+        // 绑定动作本身也执行普通 OAuth 的授权检查，避免把已失效的 OAuth
+        // 账号写入 API Key 账号后才在首次使用时暴露错误。
+        Some(ensure_managed_account_fresh(&bound_account.id).await?)
+    } else {
+        None
+    };
     account.bound_oauth_account_id = bound_id.clone();
     // 绑定 OAuth：不走本地网关生图兼容（与改前一致，保证绑定可展示、客户端能力正常）。
     // 纯 API Key 生图仍走 gpt-image-2 + actor header，不依赖此标志。
@@ -21535,14 +21841,9 @@ pub async fn update_api_key_bound_oauth_account(
     if is_current {
         let codex_home = get_codex_home();
         if bound_id.is_some() {
-            let oauth_account = refresh_bound_oauth_account_for_api_key(
-                &account,
-                "bind-oauth",
-                false,
-                false,
-                false,
-            )
-            .await?;
+            let oauth_account = bound_oauth_account
+                .as_ref()
+                .ok_or_else(|| "绑定的 OAuth 账号未准备好".to_string())?;
             write_api_key_account_bundle_with_oauth_to_dir(&codex_home, &account, &oauth_account)?;
             activate_provider_gateway_after_switch_if_needed(&codex_home, &account).await?;
         } else {

@@ -7,6 +7,20 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.32] - 2026-08-26
+
+### Fixed
+
+- **Fixed Codex API Key and API Service OAuth bindings not following OAuth authorization state**: bound OAuth accounts now use the same Token Authority freshness and refresh checks during binding and API Service background refresh. Reauthorization immediately rewrites dependent auth projections and local service takeover profiles, while the UI exposes bound-account authorization errors with a direct reauthorize action.
+- **Fixed stale account state remaining visible after OAuth reauthorization**: the newly saved account snapshot is applied to the local UI immediately, stale asynchronous reads can no longer restore the previous state, and API Service binding state is reloaded in the background.
+- **Fixed stale official auth snapshots rolling back newer local credentials**: snapshots whose JWT `access_token` expires earlier than the stored account token are rejected during regular synchronization, managed projection sync, live synchronization before switching, and runtime transfer. Newer snapshots remain eligible, and the decision is recorded in `codex-auth-diagnostic.log` in local `dev` builds.
+- **Fixed Codex local import selecting an outdated OAuth file when the official credential store is authoritative**: OAuth imports now read the official credential store, including macOS Keychain, while API Key, Agent Identity, and personal access token imports retain their `auth.json` handling.
+
+### Changed
+
+- **Automatic quota refresh now runs one account at a time**: manual batch refresh keeps its existing concurrency, while background refresh uses a serialized request pace to reduce short bursts of rate limiting and connection contention.
+- **Codex authorization diagnostics are limited to local `dev` builds**: the dedicated `codex-auth-diagnostic.log` records structured OAuth, refresh, quota, reauthorization, and snapshot summaries only for development troubleshooting; production builds neither create nor write this file.
+
 ## [1.3.31] - 2026-08-25
 
 ### Fixed

@@ -1198,8 +1198,8 @@ impl Default for UserConfig {
             grok_auto_refresh_minutes: default_grok_auto_refresh(),
             grok_sync_official_auth_on_switch: false,
             grok_opencode_sync_on_switch: default_grok_opencode_sync_on_switch(),
-            grok_opencode_auth_overwrite_on_switch:
-                default_grok_opencode_auth_overwrite_on_switch(),
+            grok_opencode_auth_overwrite_on_switch: default_grok_opencode_auth_overwrite_on_switch(
+            ),
             claude_auto_refresh_minutes: default_claude_auto_refresh(),
             codebuddy_auto_refresh_minutes: default_codebuddy_auto_refresh(),
             codebuddy_cn_auto_refresh_minutes: default_codebuddy_cn_auto_refresh(),

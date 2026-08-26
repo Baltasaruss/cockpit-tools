@@ -923,6 +923,16 @@ pub async fn fetch_quota(account: &CodexAccount) -> Result<FetchQuotaResult, Str
         "Codex 配额请求: {} (account_id: {:?})",
         USAGE_URL, account_id
     ));
+    crate::modules::codex_auth_diagnostic::log_event(
+        "quota_request_start",
+        serde_json::json!({
+            "account_id": account.id,
+            "email": account.email,
+            "account_id_claim": account.account_id,
+            "token_generation": account.token_generation,
+            "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+        }),
+    );
 
     let response = send_codex_api_request(account, Method::GET, USAGE_URL, None).await?;
     let status = response.status;
@@ -941,6 +951,22 @@ pub async fn fetch_quota(account: &CodexAccount) -> Result<FetchQuotaResult, Str
 
     if !status.is_success() {
         let detail_code = extract_detail_code_from_body(&body);
+
+        crate::modules::codex_auth_diagnostic::log_event(
+            "quota_request_failed",
+            serde_json::json!({
+                "account_id": account.id,
+                "email": account.email,
+                "status": status.as_u16(),
+                "detail_code": detail_code.clone(),
+                "request_id": request_id.clone(),
+                "x_request_id": x_request_id.clone(),
+                "cf_ray": cf_ray.clone(),
+                "body_length": body_len,
+                "token_generation": account.token_generation,
+                "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&account.tokens),
+            }),
+        );
 
         logger::log_error(&format!(
             "Codex 配额接口返回非成功状态: url={}, status={}, request-id={}, x-request-id={}, cf-ray={}, detail_code={:?}, body_len={}, body={}",
@@ -1684,7 +1710,19 @@ async fn refresh_account_quota_once(
 }
 
 pub async fn refresh_account_quota(account_id: &str) -> Result<CodexQuota, String> {
+    crate::modules::codex_auth_diagnostic::log_event(
+        "quota_refresh_flow_start",
+        serde_json::json!({"account_id": account_id}),
+    );
     let result = refresh_account_quota_once(account_id, RefreshQuotaOptions::default()).await;
+    crate::modules::codex_auth_diagnostic::log_event(
+        "quota_refresh_flow_finished",
+        serde_json::json!({
+            "account_id": account_id,
+            "success": result.is_ok(),
+            "error": result.as_ref().err(),
+        }),
+    );
     crate::modules::codex_local_access::reevaluate_bound_oauth_quota_reserve_after_refresh(
         account_id,
         result.is_ok(),

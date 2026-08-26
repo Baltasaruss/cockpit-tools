@@ -2704,8 +2704,7 @@ pub fn get_general_config(app: tauri::AppHandle) -> Result<GeneralConfig, String
         grok_auto_refresh_minutes: user_config.grok_auto_refresh_minutes,
         grok_sync_official_auth_on_switch: user_config.grok_sync_official_auth_on_switch,
         grok_opencode_sync_on_switch: user_config.grok_opencode_sync_on_switch,
-        grok_opencode_auth_overwrite_on_switch: user_config
-            .grok_opencode_auth_overwrite_on_switch,
+        grok_opencode_auth_overwrite_on_switch: user_config.grok_opencode_auth_overwrite_on_switch,
         claude_auto_refresh_minutes: user_config.claude_auto_refresh_minutes,
         codebuddy_auto_refresh_minutes: user_config.codebuddy_auto_refresh_minutes,
         codebuddy_cn_auto_refresh_minutes: user_config.codebuddy_cn_auto_refresh_minutes,

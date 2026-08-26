@@ -1796,7 +1796,39 @@ fn sidecar_account_needs_background_refresh(account: &CodexAccount) -> bool {
 }
 
 fn sidecar_background_refresh_account_ids(collection: &CodexLocalAccessCollection) -> Vec<String> {
-    effective_sidecar_account_ids(collection)
+    let mut scoped_account_ids = effective_sidecar_account_ids(collection);
+    let mut seen = scoped_account_ids.iter().cloned().collect::<HashSet<_>>();
+
+    // API Key 账号自身不持有 OAuth refresh_token；如果它绑定了 OAuth，
+    // sidecar 的后台刷新范围也必须包含绑定主体，否则会等到首次请求才发现授权已失效。
+    for account_id in scoped_account_ids.clone() {
+        let Some(account) = codex_account::load_account(&account_id) else {
+            continue;
+        };
+        if !account.is_api_key_auth() {
+            continue;
+        }
+        if let Some(bound_id) = account
+            .bound_oauth_account_id
+            .as_deref()
+            .and_then(|value| normalize_optional_account_ref(Some(value)))
+        {
+            if seen.insert(bound_id.clone()) {
+                scoped_account_ids.push(bound_id);
+            }
+        }
+    }
+    if let Some(bound_id) = collection
+        .bound_oauth_account_id
+        .as_deref()
+        .and_then(|value| normalize_optional_account_ref(Some(value)))
+    {
+        if seen.insert(bound_id.clone()) {
+            scoped_account_ids.push(bound_id);
+        }
+    }
+
+    scoped_account_ids
         .into_iter()
         .filter(|account_id| {
             codex_account::load_account(account_id)
@@ -14197,7 +14229,7 @@ fn local_access_profile_takeovers_need_websocket_sync(
             })
 }
 
-async fn ensure_local_access_profile_takeovers_from_runtime() -> Result<(), String> {
+pub(crate) async fn ensure_local_access_profile_takeovers_from_runtime() -> Result<(), String> {
     let collection = {
         let runtime = gateway_runtime().lock().await;
         runtime
@@ -21941,6 +21973,9 @@ pub async fn update_local_access_bound_oauth_account(
         validate_bound_oauth_quota_reserve(bound_oauth_quota_reserve, has_bound_oauth)?;
     if let Some(bound_id) = normalized_bound_id {
         let bound_account = validate_local_access_bound_oauth_account(&bound_id)?;
+        // API Service 绑定动作与普通 OAuth 使用同一套 Token Authority 检查，
+        // 绑定成功后首次请求不再才暴露过期或远端撤销状态。
+        let bound_account = codex_account::ensure_managed_account_fresh(&bound_account.id).await?;
         collection.bound_oauth_account_id = Some(bound_account.id);
         collection.bound_oauth_quota_reserve = bound_oauth_quota_reserve;
     } else {

@@ -7,6 +7,20 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [1.3.32] - 2026-08-26
+
+### 修复
+
+- **修复 Codex API Key 与 API Service 绑定 OAuth 后未完全遵循 OAuth 授权状态的问题**：绑定时和 API Service 后台刷新时现在使用同一套 Token Authority 新鲜度与刷新检查；重新授权后会立即重写依赖的授权投影和本地服务接管 profile，界面也会显示绑定账号的授权异常并提供直接重新授权入口。
+- **修复 OAuth 重新授权后账号页面仍显示旧状态的问题**：授权回调返回的新账号快照会立即写入本地界面，旧的异步回读不会再把状态恢复成之前的值，API Service 绑定状态也会在后台重新读取。
+- **修复旧官方授权快照回滚较新本地凭据的问题**：当快照 JWT `access_token` 的过期时间早于账号库 Token 时，普通同步、受管投影同步、切号前 live 同步和运行态转移都会拒绝覆盖；更新的快照仍可正常写回，并会在本地 `dev` 环境的 `codex-auth-diagnostic.log` 记录判断结果。
+- **修复 Codex 本机导入优先读取过期 OAuth 文件的问题**：OAuth 导入现在会读取官方凭据存储（包括 macOS Keychain）；API Key、Agent Identity 和 personal access token 仍按原有 `auth.json` 方式导入。
+
+### 变更
+
+- **后台自动刷新额度改为一次处理一个账号**：手动批量刷新继续保持原有并发速度，后台刷新改为串行请求节奏，减少短时间限流和连接争用。
+- **Codex 授权诊断日志仅保留在本地 `dev` 环境**：独立的 `codex-auth-diagnostic.log` 仅用于开发排障，记录结构化 OAuth、刷新、额度、重新授权和快照摘要；正式环境不会创建或写入该文件。
+
 ## [1.3.31] - 2026-08-25
 
 ### 修复

@@ -2872,6 +2872,7 @@ export function CodexAccountsPage() {
     currentAccount,
     fetchAccounts,
     fetchCurrentAccount,
+    applyAccountSnapshot,
     switchAccount,
     refreshQuota,
     refreshSubscriptionInfo,
@@ -4697,8 +4698,16 @@ export function CodexAccountsPage() {
   const completeOauthSuccess = useCallback(
     async (account?: CodexAccount | null) => {
       oauthLog("授权完成并保存成功", { loginId: oauthLoginIdRef.current });
+      if (account) {
+        // OAuth 回调已经返回后端刚保存的账号快照，先立即合并到 UI，
+        // 覆盖旧的 localStorage/store 状态，再执行后台回读和额度刷新。
+        applyAccountSnapshot(account);
+      }
       await fetchAccounts();
       await fetchCurrentAccount();
+      // API Service 的 OAuth 绑定信息也依赖账号授权状态，重新授权后后台回读，
+      // 避免卡片继续展示重新授权前的运行态快照。
+      void reloadLocalAccessState();
       if (!reauthTargetAccountId) {
         await assignCodexAccountsToTargetGroup([account]);
       }
@@ -4815,8 +4824,10 @@ export function CodexAccountsPage() {
     },
     [
       assignCodexAccountsToTargetGroup,
+      applyAccountSnapshot,
       fetchAccounts,
       fetchCurrentAccount,
+      reloadLocalAccessState,
       reauthTargetAccountId,
       reauthRetrySwitchAccountId,
       reauthRetryLaunchAfterSwitch,
@@ -7906,6 +7917,13 @@ export function CodexAccountsPage() {
           )
         : t("codex.api.oauthBinding.unbound", "未绑定");
       const line = `${label}：${value}`;
+      const boundOAuthNeedsReauth = Boolean(boundAccount?.requires_reauth);
+      const boundOAuthIssueText =
+        boundAccount?.reauth_reason?.trim() ||
+        t(
+          "codex.switchAuth.reauthorizeDescription",
+          "当前登录凭据无法自动更新，请重新授权后继续使用。",
+        );
       return (
         <div className="account-sub-line codex-provider-inline-line codex-oauth-binding-line">
           <span
@@ -7914,6 +7932,26 @@ export function CodexAccountsPage() {
           >
             {line}
           </span>
+          {boundOAuthNeedsReauth && (
+            <span
+              className="codex-status-pill quota-error"
+              title={boundOAuthIssueText}
+            >
+              <CircleAlert size={12} />
+              {t("codex.authError.badge", "授权异常")}
+            </span>
+          )}
+          {boundOAuthNeedsReauth && boundAccount && (
+            <button
+              type="button"
+              className="codex-provider-inline-switch codex-oauth-binding-action"
+              onClick={() => openCodexAddModal("oauth", boundAccount)}
+              title={t("common.reauthorize", "重新授权")}
+            >
+              <RefreshCw size={11} />
+              {t("common.reauthorize", "重新授权")}
+            </button>
+          )}
           <button
             type="button"
             className="codex-provider-inline-switch codex-oauth-binding-action"
@@ -7926,7 +7964,13 @@ export function CodexAccountsPage() {
         </div>
       );
     },
-    [maskAccountText, openOAuthBindingModal, resolveBoundOAuthAccount, t],
+    [
+      maskAccountText,
+      openCodexAddModal,
+      openOAuthBindingModal,
+      resolveBoundOAuthAccount,
+      t,
+    ],
   );
 
   const resolveApiProviderDisplayName = useCallback(
@@ -13117,6 +13161,15 @@ export function CodexAccountsPage() {
         )
       : t("codex.api.oauthBinding.unbound", "未绑定");
     const localAccessOAuthBindingLine = `${localAccessOAuthBindingLabel}：${localAccessOAuthBindingValue}`;
+    const localAccessBoundOAuthNeedsReauth = Boolean(
+      boundLocalAccessOAuthAccount?.requires_reauth,
+    );
+    const localAccessBoundOAuthIssueText =
+      boundLocalAccessOAuthAccount?.reauth_reason?.trim() ||
+      t(
+        "codex.switchAuth.reauthorizeDescription",
+        "当前登录凭据无法自动更新，请重新授权后继续使用。",
+      );
     const quotaReserveStatus = localAccessState?.quotaReserveStatus ?? null;
     const quotaReserveWarningLine =
       quotaReserveStatus?.warning &&
@@ -13350,6 +13403,33 @@ export function CodexAccountsPage() {
                 >
                   {localAccessOAuthBindingLine}
                 </span>
+                {localAccessBoundOAuthNeedsReauth && (
+                  <span
+                    className="codex-status-pill quota-error"
+                    title={localAccessBoundOAuthIssueText}
+                  >
+                    <CircleAlert size={12} />
+                    {t("codex.authError.badge", "授权异常")}
+                  </span>
+                )}
+                {localAccessBoundOAuthNeedsReauth &&
+                  boundLocalAccessOAuthAccount && (
+                    <button
+                      type="button"
+                      className="codex-provider-inline-switch codex-oauth-binding-action"
+                      onClick={() =>
+                        openCodexAddModal(
+                          "oauth",
+                          boundLocalAccessOAuthAccount,
+                        )
+                      }
+                      title={t("common.reauthorize", "重新授权")}
+                      disabled={localAccessBusy}
+                    >
+                      <RefreshCw size={11} />
+                      {t("common.reauthorize", "重新授权")}
+                    </button>
+                  )}
                 <button
                   type="button"
                   className="codex-provider-inline-switch codex-oauth-binding-action"

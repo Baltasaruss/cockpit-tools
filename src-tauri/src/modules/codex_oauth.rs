@@ -997,6 +997,17 @@ async fn exchange_code_for_token_internal(
         .map_err(|e| format!("读取响应失败: {}", e))?;
 
     if !status.is_success() {
+        let response_summary = serde_json::from_str::<serde_json::Value>(&body)
+            .map(|value| crate::modules::codex_auth_diagnostic::oauth_response_summary(&value))
+            .unwrap_or_else(|_| serde_json::json!({"body_type":"non_json"}));
+        crate::modules::codex_auth_diagnostic::log_event(
+            "oauth_token_exchange_failed",
+            serde_json::json!({
+                "status": status.as_u16(),
+                "body_length": body.len(),
+                "response": response_summary,
+            }),
+        );
         logger::log_error(&format!(
             "Token 交换失败: status={}, body_len={}",
             status,
@@ -1013,6 +1024,15 @@ async fn exchange_code_for_token_internal(
 
     let token_response: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("解析 Token 响应失败: {}", e))?;
+
+    crate::modules::codex_auth_diagnostic::log_event(
+        "oauth_token_exchange_response",
+        serde_json::json!({
+            "status": status.as_u16(),
+            "body_length": body.len(),
+            "response": crate::modules::codex_auth_diagnostic::oauth_response_summary(&token_response),
+        }),
+    );
 
     let id_token = token_response
         .get("id_token")
@@ -1106,6 +1126,15 @@ pub async fn complete_oauth_login(login_id: &str) -> Result<CodexTokens, String>
             return Err(e);
         }
     };
+
+    crate::modules::codex_auth_diagnostic::log_event(
+        "oauth_login_tokens_received",
+        serde_json::json!({
+            "attempt_id": attempt_id,
+            "login_id": login_id,
+            "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&tokens),
+        }),
+    );
 
     set_oauth_state(None);
 
@@ -1351,6 +1380,19 @@ pub async fn refresh_access_token_with_fallback(
 
     if !status.is_success() {
         let error_code = extract_token_error_code(&body);
+        let response_summary = serde_json::from_str::<serde_json::Value>(&body)
+            .map(|value| crate::modules::codex_auth_diagnostic::oauth_response_summary(&value))
+            .unwrap_or_else(|_| serde_json::json!({"body_type":"non_json"}));
+        crate::modules::codex_auth_diagnostic::log_event(
+            "oauth_token_refresh_failed",
+            serde_json::json!({
+                "status": status.as_u16(),
+                "error_code": error_code,
+                "body_length": body.len(),
+                "response": response_summary,
+                "refresh_token": crate::modules::codex_auth_diagnostic::token_summary(refresh_token, "refresh_token"),
+            }),
+        );
         logger::log_error(&format!(
             "Token 刷新失败: status={}, error_code={:?}, body_len={}",
             status,
@@ -1384,11 +1426,22 @@ pub async fn refresh_access_token_with_fallback(
         .map(|s| s.to_string())
         .or_else(|| Some(refresh_token.to_string()));
 
-    Ok(CodexTokens {
+    let refreshed_tokens = CodexTokens {
         id_token,
         access_token,
         refresh_token: new_refresh_token,
-    })
+    };
+    crate::modules::codex_auth_diagnostic::log_event(
+        "oauth_token_refresh_response",
+        serde_json::json!({
+            "status": status.as_u16(),
+            "body_length": body.len(),
+            "response": crate::modules::codex_auth_diagnostic::oauth_response_summary(&token_response),
+            "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&refreshed_tokens),
+        }),
+    );
+
+    Ok(refreshed_tokens)
 }
 
 #[cfg(test)]

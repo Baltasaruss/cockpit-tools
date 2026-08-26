@@ -13,8 +13,14 @@ use tracing_subscriber::{
 
 const APP_LOG_FILE_PREFIX: &str = "app.log";
 const CODEX_API_LOG_FILE_PREFIX: &str = "codex-api.log";
+const CODEX_AUTH_DIAGNOSTIC_LOG_FILE_PREFIX: &str = "codex-auth-diagnostic.log";
 const CODEX_API_LOG_TARGET: &str = "codex_api";
-const MANAGED_LOG_FILE_PREFIXES: &[&str] = &[APP_LOG_FILE_PREFIX, CODEX_API_LOG_FILE_PREFIX];
+const CODEX_AUTH_DIAGNOSTIC_LOG_TARGET: &str = "codex_auth_diagnostic";
+const MANAGED_LOG_FILE_PREFIXES: &[&str] = &[
+    APP_LOG_FILE_PREFIX,
+    CODEX_API_LOG_FILE_PREFIX,
+    CODEX_AUTH_DIAGNOSTIC_LOG_FILE_PREFIX,
+];
 const LOG_RETENTION_DAYS: i64 = 3;
 const DEFAULT_LOG_TAIL_LINES: usize = 200;
 const MIN_LOG_TAIL_LINES: usize = 20;
@@ -252,6 +258,8 @@ fn cleanup_expired_logs(log_dir: &Path) {
 pub fn init_logger() {
     let _ = tracing_log::LogTracer::init();
 
+    let is_dev_profile = crate::modules::account::is_dev_profile();
+
     let log_dir = match get_log_dir() {
         Ok(dir) => dir,
         Err(e) => {
@@ -266,7 +274,6 @@ pub fn init_logger() {
         tracing_appender::rolling::daily(log_dir.clone(), CODEX_API_LOG_FILE_PREFIX);
     let (codex_api_non_blocking, codex_api_guard) =
         tracing_appender::non_blocking(codex_api_file_appender);
-
     let console_layer = fmt::Layer::new()
         .with_target(false)
         .with_thread_ids(false)
@@ -289,7 +296,7 @@ pub fn init_logger() {
 
     let filter_layer = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let _ = tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         .with(filter_layer)
         .with(console_layer)
         .with(app_file_layer.with_filter(filter_fn(|metadata| {
@@ -297,11 +304,41 @@ pub fn init_logger() {
         })))
         .with(codex_api_file_layer.with_filter(filter_fn(|metadata| {
             metadata.target() == CODEX_API_LOG_TARGET
-        })))
-        .try_init();
+        })));
+
+    // 授权诊断日志只在本地 dev profile 创建和写入，生产环境不打开对应文件。
+    let codex_auth_diagnostic_guard = if is_dev_profile {
+        let codex_auth_diagnostic_file_appender = tracing_appender::rolling::daily(
+            log_dir.clone(),
+            CODEX_AUTH_DIAGNOSTIC_LOG_FILE_PREFIX,
+        );
+        let (codex_auth_diagnostic_non_blocking, guard) =
+            tracing_appender::non_blocking(codex_auth_diagnostic_file_appender);
+        let codex_auth_diagnostic_file_layer = fmt::Layer::new()
+            .with_writer(codex_auth_diagnostic_non_blocking)
+            .with_ansi(false)
+            .with_target(false)
+            .with_level(true)
+            .with_timer(LocalTimer);
+
+        let _ = registry
+            .with(
+                codex_auth_diagnostic_file_layer.with_filter(filter_fn(|metadata| {
+                    metadata.target() == CODEX_AUTH_DIAGNOSTIC_LOG_TARGET
+                })),
+            )
+            .try_init();
+        Some(guard)
+    } else {
+        let _ = registry.try_init();
+        None
+    };
 
     std::mem::forget(app_guard);
     std::mem::forget(codex_api_guard);
+    if let Some(guard) = codex_auth_diagnostic_guard {
+        std::mem::forget(guard);
+    }
 
     info!("日志系统已完成初始化");
 
@@ -333,6 +370,18 @@ pub fn log_codex_api_warn(message: &str) {
 
 pub fn log_codex_api_error(message: &str) {
     error!(target: CODEX_API_LOG_TARGET, "{}", sanitize_message(message));
+}
+
+/// Codex 授权诊断日志。只接受已经去除 bearer 凭据的诊断摘要，禁止写入原始 token。
+pub fn log_codex_auth_diagnostic(message: &str) {
+    if !crate::modules::account::is_dev_profile() {
+        return;
+    }
+    info!(
+        target: CODEX_AUTH_DIAGNOSTIC_LOG_TARGET,
+        "{}",
+        sanitize_message(message)
+    );
 }
 
 fn sanitize_message(message: &str) -> String {
