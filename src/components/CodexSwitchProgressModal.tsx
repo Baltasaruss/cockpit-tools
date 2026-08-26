@@ -19,7 +19,7 @@ import "./CodexSwitchProgressModal.css";
 
 type SwitchStage =
   "preparing" | "credentials" | "writing" | "starting" | "completed";
-type SwitchStatus = "running" | "completed" | "error";
+type SwitchStatus = "running" | "completed" | "auth-required" | "error";
 type SwitchStepId =
   | "credentials"
   | "accessToken"
@@ -140,6 +140,11 @@ export function CodexSwitchProgressModal() {
         if (detail.type === "error") {
           const errorText =
             detail.error || base.error || t("common.failed", "失败");
+          const authFailure =
+            detail.authFailure === undefined
+              ? base.authFailure
+              : detail.authFailure;
+          const isAuthRequired = authFailure != null;
           const steps = base.steps.map((step) => ({ ...step }));
           let targetIndex = steps.findIndex(
             (step) => step.status === "running",
@@ -154,7 +159,7 @@ export function CodexSwitchProgressModal() {
             const target = steps[targetIndex];
             steps[targetIndex] = {
               ...target,
-              status: "error",
+              status: isAuthRequired ? "warning" : "error",
               details: {
                 ...target.details,
                 error: errorText,
@@ -165,12 +170,9 @@ export function CodexSwitchProgressModal() {
             ...base,
             accountId,
             steps,
-            status: "error",
+            status: isAuthRequired ? "auth-required" : "error",
             error: errorText,
-            authFailure:
-              detail.authFailure === undefined
-                ? base.authFailure
-                : detail.authFailure,
+            authFailure,
             canRetry:
               detail.canRetry ??
               (detail.details?.canRetry === true ? true : undefined) ??
@@ -266,11 +268,11 @@ export function CodexSwitchProgressModal() {
   const accountLabel =
     account?.account_name || account?.email || state.accountId;
   const isError = state.status === "error";
+  const isAuthRequired = state.status === "auth-required";
   const windowsOperationError = isError
     ? parseWindowsOperationError(state.error)
     : null;
-  const authFailure = isError ? state.authFailure : null;
-  const isApiOnlyAuthFailure = authFailure?.apiOnlyAvailable === true;
+  const authFailure = isAuthRequired ? state.authFailure : null;
   const authReason = authFailure
     ? authFailure.reasonCode === "refresh_token_reused"
       ? t("codex.authError.refreshTokenReused")
@@ -537,14 +539,12 @@ export function CodexSwitchProgressModal() {
       >
         <div className="codex-switch-progress-header">
           <div
-            className={`codex-switch-progress-icon ${isError ? (isApiOnlyAuthFailure ? "warning" : "error") : ""} ${state.status === "completed" ? "completed" : ""}`}
+            className={`codex-switch-progress-icon ${isAuthRequired ? "warning" : isError ? "error" : ""} ${state.status === "completed" ? "completed" : ""}`}
           >
-            {isError ? (
-              isApiOnlyAuthFailure ? (
-                <AlertTriangle size={20} />
-              ) : (
-                <X size={20} />
-              )
+            {isAuthRequired ? (
+              <AlertTriangle size={20} />
+            ) : isError ? (
+              <X size={20} />
             ) : state.status === "completed" ? (
               <Check size={20} />
             ) : (
@@ -576,7 +576,7 @@ export function CodexSwitchProgressModal() {
             aria-valuenow={state.progress}
           >
             <div
-              className={`codex-switch-progress-bar ${isError ? (isApiOnlyAuthFailure ? "warning" : "error") : ""}`}
+              className={`codex-switch-progress-bar ${isAuthRequired ? "warning" : isError ? "error" : ""}`}
               style={{ width: `${state.progress}%` }}
             />
           </div>
@@ -669,7 +669,7 @@ export function CodexSwitchProgressModal() {
           )}
         </div>
 
-        {isError && authFailure && (
+        {isAuthRequired && authFailure && (
           <div className="codex-switch-progress-footer codex-switch-auth-footer">
             <button
               type="button"

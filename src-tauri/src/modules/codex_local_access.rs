@@ -1795,7 +1795,11 @@ fn sidecar_account_needs_background_refresh(account: &CodexAccount) -> bool {
         && codex_account::managed_account_tokens_need_refresh(account)
 }
 
-fn sidecar_background_refresh_account_ids(collection: &CodexLocalAccessCollection) -> Vec<String> {
+/// 返回需要维护 sidecar OAuth 文件的完整账号范围。
+///
+/// 绑定 OAuth 可能只存在于 API Key 或 collection 的绑定字段中，并不一定
+/// 出现在普通账号池 `account_ids` 里；这些账号仍必须接收重新授权后的新 Token。
+fn sidecar_auth_account_ids(collection: &CodexLocalAccessCollection) -> Vec<String> {
     let mut scoped_account_ids = effective_sidecar_account_ids(collection);
     let mut seen = scoped_account_ids.iter().cloned().collect::<HashSet<_>>();
 
@@ -1829,12 +1833,25 @@ fn sidecar_background_refresh_account_ids(collection: &CodexLocalAccessCollectio
     }
 
     scoped_account_ids
+}
+
+fn sidecar_background_refresh_account_ids(collection: &CodexLocalAccessCollection) -> Vec<String> {
+    sidecar_auth_account_ids(collection)
         .into_iter()
         .filter(|account_id| {
             codex_account::load_account(account_id)
                 .is_some_and(|account| sidecar_account_needs_background_refresh(&account))
         })
         .collect()
+}
+
+fn sidecar_auth_account_is_scoped(
+    collection: &CodexLocalAccessCollection,
+    account_id: &str,
+) -> bool {
+    sidecar_auth_account_ids(collection)
+        .iter()
+        .any(|scoped_id| scoped_id == account_id)
 }
 
 fn trigger_sidecar_account_refresh_in_background(collection: CodexLocalAccessCollection) {
@@ -11829,10 +11846,7 @@ fn sync_sidecar_auth_file_for_account_with_task_source(
     let Some(collection) = load_collection_from_disk()? else {
         return Ok(());
     };
-    if !effective_sidecar_account_ids(&collection)
-        .iter()
-        .any(|account_id| account_id == &account.id)
-    {
+    if !sidecar_auth_account_is_scoped(&collection, &account.id) {
         return Ok(());
     }
 
@@ -14077,6 +14091,13 @@ fn collect_local_access_profile_takeover_dirs_from_store(
     dirs
 }
 
+fn should_include_default_profile_for_takeover(
+    is_dev_profile: bool,
+    default_profile_is_oauth_runtime: bool,
+) -> bool {
+    !is_dev_profile && !default_profile_is_oauth_runtime
+}
+
 fn collect_local_access_profile_takeover_dirs() -> Vec<PathBuf> {
     let store = match crate::modules::codex_instance::load_instance_store() {
         Ok(store) => store,
@@ -14090,11 +14111,31 @@ fn collect_local_access_profile_takeover_dirs() -> Vec<PathBuf> {
     };
 
     // Dev and production keep separate app data, but the official default Codex
-    // profile is shared. Never let an automatically restored dev gateway claim it.
+    // profile is shared. Never let an automatically restored gateway claim a
+    // default profile that is currently being used by an OAuth-backed official
+    // Codex process from the other environment.
+    let default_profile_is_oauth_runtime = {
+        let default_profile = codex_account::get_codex_home();
+        let default_key = normalize_profile_dir_key(&default_profile);
+        process::collect_codex_process_entries()
+            .into_iter()
+            .any(|(_, runtime_home)| {
+                (runtime_home.is_none()
+                    || runtime_home
+                        .as_deref()
+                        .map(Path::new)
+                        .map(normalize_profile_dir_key)
+                        .is_some_and(|key| key == default_key))
+                    && codex_account::oauth_account_id_for_runtime_dir(&default_profile).is_some()
+            })
+    };
     collect_local_access_profile_takeover_dirs_from_store(
         store,
         codex_account::get_codex_home(),
-        !account::is_dev_profile(),
+        should_include_default_profile_for_takeover(
+            account::is_dev_profile(),
+            default_profile_is_oauth_runtime,
+        ),
     )
 }
 
@@ -14103,6 +14144,13 @@ async fn ensure_profile_takeover(
     collection: &CodexLocalAccessCollection,
 ) -> Result<(), String> {
     if !collection.enabled {
+        return Ok(());
+    }
+    if codex_account::profile_mutation_lease_held_by_other_process(profile_dir) {
+        logger::log_codex_api_warn(&format!(
+            "跳过 API Service profile 自动接管：目标目录正由另一个 Cockpit 进程执行凭据事务: profile_dir={}",
+            profile_dir.display()
+        ));
         return Ok(());
     }
 
@@ -17635,6 +17683,25 @@ pub async fn get_local_access_state() -> Result<CodexLocalAccessState, String> {
     snapshot_state().await
 }
 
+/// Resolve the OAuth account used by an API Service-bound Codex profile.
+///
+/// API Service is represented in the instance store by a synthetic bind ID, so
+/// the normal instance binding resolver cannot discover the actual OAuth owner.
+pub(crate) async fn bound_oauth_account_id_for_instance_start() -> Result<Option<String>, String> {
+    ensure_runtime_loaded_without_start().await?;
+    let bound_id = {
+        let runtime = gateway_runtime().lock().await;
+        runtime.collection.as_ref().and_then(|collection| {
+            normalize_optional_account_ref(collection.bound_oauth_account_id.as_deref())
+        })
+    };
+    let Some(bound_id) = bound_id else {
+        return Ok(None);
+    };
+    let account = validate_local_access_bound_oauth_account(&bound_id)?;
+    Ok(Some(account.id))
+}
+
 pub async fn activate_local_access_for_dir(
     profile_dir: &Path,
 ) -> Result<CodexLocalAccessState, String> {
@@ -20064,6 +20131,13 @@ async fn run_local_access_chat_stream_dialog(
         .header(AUTHORIZATION, format!("Bearer {}", api_key.trim()))
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "text/event-stream")
+        // The dialog sends an ordinary text probe. Keep hosted image generation
+        // available on the API Service, but do not advertise it to an upstream
+        // provider group that may not have image capability enabled.
+        .header(
+            CODEX_LOCAL_ACCESS_DISABLE_HOSTED_IMAGE_GENERATION_HEADER,
+            CODEX_LOCAL_ACCESS_DISABLE_HOSTED_IMAGE_GENERATION_HEADER_VALUE,
+        )
         .json(&body)
         .send()
         .await
@@ -20257,6 +20331,13 @@ async fn run_local_access_chat_dialog(
         .header(AUTHORIZATION, format!("Bearer {}", api_key.trim()))
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
+        // The dialog sends an ordinary text probe. Keep hosted image generation
+        // available on the API Service, but do not advertise it to an upstream
+        // provider group that may not have image capability enabled.
+        .header(
+            CODEX_LOCAL_ACCESS_DISABLE_HOSTED_IMAGE_GENERATION_HEADER,
+            CODEX_LOCAL_ACCESS_DISABLE_HOSTED_IMAGE_GENERATION_HEADER_VALUE,
+        )
         .json(&body)
         .send()
         .await
@@ -28002,13 +28083,13 @@ mod tests {
         should_try_next_account, sidecar_account_manifest_value,
         sidecar_account_needs_background_refresh, sidecar_api_key_account_scope_values,
         sidecar_api_key_manifest_values, sidecar_api_key_priority_state_values,
-        sidecar_auth_file_name, sidecar_auth_json_for_account, sidecar_auths_dir,
-        sidecar_client_api_keys, sidecar_codex_api_key_auth_id, sidecar_codex_key_config_value,
-        sidecar_config_fingerprint, sidecar_local_account_usable_for_start,
-        sidecar_payload_default_service_tier, sidecar_quota_reserve_snapshot_value,
-        sidecar_routing_strategy_value, sidecar_stable_id, sidecar_usage_event_is_client_canceled,
-        sidecar_usage_event_should_auto_restart, supported_codex_model_ids,
-        system_proxy_target_scheme, system_proxy_value_url,
+        sidecar_auth_account_is_scoped, sidecar_auth_file_name, sidecar_auth_json_for_account,
+        sidecar_auths_dir, sidecar_client_api_keys, sidecar_codex_api_key_auth_id,
+        sidecar_codex_key_config_value, sidecar_config_fingerprint,
+        sidecar_local_account_usable_for_start, sidecar_payload_default_service_tier,
+        sidecar_quota_reserve_snapshot_value, sidecar_routing_strategy_value, sidecar_stable_id,
+        sidecar_usage_event_is_client_canceled, sidecar_usage_event_should_auto_restart,
+        supported_codex_model_ids, system_proxy_target_scheme, system_proxy_value_url,
         tool_declares_image_generation_capability, usage_event_from_row,
         validate_api_key_account_scope_update, validate_client_model_visible,
         validate_loaded_local_access_bound_oauth_account, visible_codex_model_ids_for_api_key,
@@ -30617,6 +30698,14 @@ wire_api = "responses"
     }
 
     #[test]
+    fn sidecar_auth_scope_includes_collection_bound_oauth_account() {
+        let mut collection = test_local_access_collection(Vec::new());
+        collection.bound_oauth_account_id = Some(" oauth-bound ".to_string());
+
+        assert!(sidecar_auth_account_is_scoped(&collection, "oauth-bound"));
+    }
+
+    #[test]
     fn sidecar_background_refresh_only_selects_expired_refreshable_oauth_accounts() {
         let expired_account = CodexAccount::new(
             "account-expired".to_string(),
@@ -31021,6 +31110,22 @@ wire_api = "responses"
         );
 
         assert_eq!(dirs, vec![PathBuf::from("/tmp/codex-api-service")]);
+    }
+
+    #[test]
+    fn oauth_runtime_prevents_automatic_default_profile_takeover() {
+        assert!(!super::should_include_default_profile_for_takeover(
+            false, true
+        ));
+        assert!(!super::should_include_default_profile_for_takeover(
+            true, true
+        ));
+        assert!(!super::should_include_default_profile_for_takeover(
+            true, false
+        ));
+        assert!(super::should_include_default_profile_for_takeover(
+            false, false
+        ));
     }
 
     #[test]

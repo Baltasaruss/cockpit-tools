@@ -34,7 +34,9 @@ import {
   getCodexAuthMetadata,
   getCodexSubscriptionPresentationForAccount,
   isCodexApiKeyAccount,
+  isStandardCodexOAuthAccount,
 } from "../../types/codex";
+import { getCodexJwtExpiration } from "../../utils/codexSwitchAuthFailure";
 import type { UnifiedQuotaMetric } from "../../presentation/platformAccountPresentation";
 import { buildCodexAccountPresentation } from "../../presentation/platformAccountPresentation";
 import { ModalErrorMessage, useModalErrorState } from "../ModalErrorMessage";
@@ -54,6 +56,7 @@ export interface CodexLaunchPreviewFact {
   value: string;
   monospace?: boolean;
   wide?: boolean;
+  tone?: "warning" | "danger";
 }
 
 export interface CodexLaunchPreviewUsage {
@@ -123,7 +126,7 @@ export function CodexLaunchPreviewModal({
   onClose,
   onExecute,
 }: CodexLaunchPreviewModalProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [loadedConfig, setLoadedConfig] = useState<CodexQuickConfig | null>(
     null,
   );
@@ -398,7 +401,65 @@ export function CodexLaunchPreviewModal({
       },
     ];
   }, [account, accountAuthMetadata, accountSubscription, isApiKeySubject, t]);
-  const displayFacts = summary?.facts ?? fallbackFacts;
+  const tokenExpiryFacts = useMemo<CodexLaunchPreviewFact[]>(() => {
+    if (!account || !isStandardCodexOAuthAccount(account)) return [];
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const locale = i18n.resolvedLanguage || i18n.language;
+    const relativeTime = new Intl.RelativeTimeFormat(locale, {
+      numeric: "auto",
+    });
+    const formatExpiry = (expiresAt: number | null) => {
+      if (expiresAt === null) {
+        return t("codex.switchProgress.detail.expiryUnknown");
+      }
+      const diffSeconds = expiresAt - nowSeconds;
+      const absoluteSeconds = Math.abs(diffSeconds);
+      let unit: Intl.RelativeTimeFormatUnit = "minute";
+      let divisor = 60;
+      if (absoluteSeconds >= 36 * 60 * 60) {
+        unit = "day";
+        divisor = 24 * 60 * 60;
+      } else if (absoluteSeconds >= 90 * 60) {
+        unit = "hour";
+        divisor = 60 * 60;
+      }
+      const relativeValue =
+        diffSeconds < 0
+          ? Math.floor(diffSeconds / divisor)
+          : Math.max(1, Math.ceil(diffSeconds / divisor));
+      return t("codex.switchProgress.detail.expiresAt", {
+        time: new Date(expiresAt * 1000).toLocaleString(locale),
+        relative: relativeTime.format(relativeValue, unit),
+      });
+    };
+    const buildFact = (
+      label: string,
+      token: string | undefined,
+      refreshLeadSeconds: number,
+    ): CodexLaunchPreviewFact => {
+      const expiresAt = getCodexJwtExpiration(token?.trim() || "");
+      return {
+        label,
+        value: formatExpiry(expiresAt),
+        tone:
+          expiresAt !== null && expiresAt <= nowSeconds
+            ? "danger"
+            : expiresAt !== null && expiresAt <= nowSeconds + refreshLeadSeconds
+              ? "warning"
+              : undefined,
+      };
+    };
+
+    return [
+      buildFact("access_token", account.tokens?.access_token, 5 * 60),
+      buildFact("id_token", account.tokens?.id_token, 10 * 60),
+    ];
+  }, [account, i18n.language, i18n.resolvedLanguage, t]);
+  const displayFacts = [
+    ...(summary?.facts ?? fallbackFacts),
+    ...tokenExpiryFacts,
+  ];
   const displayQuotaItems =
     summary?.quotaItems ?? accountPresentation?.quotaItems.slice(0, 3) ?? [];
   const displayActions = actions ?? [];
@@ -642,7 +703,12 @@ export function CodexLaunchPreviewModal({
                   {displayFacts.map((fact, index) => (
                     <div
                       key={`${fact.label}-${index}`}
-                      className={fact.wide ? "is-wide" : undefined}
+                      className={[
+                        fact.wide ? "is-wide" : "",
+                        fact.tone ? `is-${fact.tone}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
                     >
                       <span>{fact.label}</span>
                       <strong

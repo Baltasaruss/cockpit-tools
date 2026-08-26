@@ -870,6 +870,10 @@ pub async fn switch_codex_account(
     launch_after_switch: Option<bool>,
     skip_official_account_check: Option<bool>,
 ) -> Result<CodexAccount, String> {
+    let _profile_lease = codex_account::try_acquire_profile_mutation_lease(
+        &codex_account::get_codex_home(),
+        "oauth-account-switch",
+    )?;
     let mut progress_guard = CodexSwitchProgressGuard {
         app: app.clone(),
         account_id: account_id.clone(),
@@ -1276,7 +1280,7 @@ pub async fn switch_codex_account(
             },
             96,
             serde_json::json!({
-                "error": launch_error,
+                "error": launch_error.as_deref(),
                 "canRetry": launch_error.is_some(),
                 "canSkipOfficialCheck": false,
             }),
@@ -1287,6 +1291,21 @@ pub async fn switch_codex_account(
             launch_started.elapsed().as_millis(),
             flow_started.elapsed().as_millis()
         ));
+        if let Some(error) = launch_error {
+            let error = format!("Codex 切号凭据已提交，但客户端启动失败: {}", error);
+            let _ = app.emit(
+                "codex:switch-progress",
+                serde_json::json!({
+                    "accountId": account_id,
+                    "type": "error",
+                    "error": error.clone(),
+                    "canRetry": true,
+                    "canSkipOfficialCheck": false,
+                }),
+            );
+            progress_guard.completed = true;
+            return Err(error);
+        }
     } else {
         logger::log_info("已关闭切换 Codex 时自动启动 Codex App");
         emit_codex_switch_step(
@@ -4645,6 +4664,18 @@ pub async fn codex_local_access_delete_api_key(
 pub async fn codex_local_access_set_enabled(
     enabled: bool,
 ) -> Result<CodexLocalAccessState, String> {
+    let codex_home = codex_account::get_codex_home();
+    let _profile_lease = codex_account::try_acquire_profile_mutation_lease(
+        &codex_home,
+        if enabled {
+            "api-service-enable"
+        } else {
+            "api-service-disable"
+        },
+    )?;
+    if enabled {
+        stop_default_codex_runtime_before_auth_commit().await?;
+    }
     codex_local_access::set_local_access_enabled(enabled).await
 }
 
@@ -4656,6 +4687,10 @@ pub async fn codex_local_access_activate(
     let flow_started = Instant::now();
     logger::log_info("[Codex API Service Switch][Backend] codex_local_access_activate started");
     let codex_home = codex_account::get_codex_home();
+    let _profile_lease =
+        codex_account::try_acquire_profile_mutation_lease(&codex_home, "api-service-activate")?;
+    // 先停止仍在使用共享默认 profile 的官方客户端，再写入 API Service 凭据。
+    stop_default_codex_runtime_before_auth_commit().await?;
     let previous_credential = read_current_codex_launch_credential_snapshot();
     logger::log_info(&format!(
         "[Codex API Service Switch][Backend] previous credential resolved: elapsed_ms={}",
@@ -4738,29 +4773,37 @@ pub async fn codex_local_access_activate(
         if process::is_codex_running() {
             logger::log_info("检测到 Codex 正在运行，将按默认实例 PID 逻辑重启");
         }
-        match crate::commands::codex_instance::codex_start_default_with_prepared_profile(
-            app.clone(),
-            false,
-            true,
-        )
-        .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                logger::log_warn(&format!("Codex 启动失败: {}", e));
-                if e.starts_with("APP_PATH_NOT_FOUND:") {
-                    let _ = app.emit(
-                        "app:path_missing",
-                        serde_json::json!({ "app": "codex", "retry": { "kind": "default" } }),
-                    );
+        let launch_error =
+            match crate::commands::codex_instance::codex_start_default_with_prepared_profile(
+                app.clone(),
+                false,
+                true,
+            )
+            .await
+            {
+                Ok(_) => None,
+                Err(e) => {
+                    logger::log_warn(&format!("Codex 启动失败: {}", e));
+                    if e.starts_with("APP_PATH_NOT_FOUND:") {
+                        let _ = app.emit(
+                            "app:path_missing",
+                            serde_json::json!({ "app": "codex", "retry": { "kind": "default" } }),
+                        );
+                    }
+                    Some(e)
                 }
-            }
-        }
+            };
         logger::log_info(&format!(
             "[Codex API Service Switch][Backend] codex_start_default_with_prepared_profile finished: elapsed_ms={}, total_ms={}",
             launch_started.elapsed().as_millis(),
             flow_started.elapsed().as_millis()
         ));
+        if let Some(error) = launch_error {
+            return Err(format!(
+                "Codex API Service 已激活，但客户端启动失败: {}",
+                error
+            ));
+        }
     } else {
         logger::log_info("已关闭切换 Codex 时自动启动 Codex App");
     }

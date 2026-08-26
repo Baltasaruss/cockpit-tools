@@ -6,6 +6,7 @@ use reqwest::header::{
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
 
 // 使用 wham/usage 端点（Quotio 使用的）
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
@@ -1564,8 +1565,14 @@ fn sync_subscription_expiry_from_current_id_token(account: &mut CodexAccount) {
 async fn refresh_account_quota_once(
     account_id: &str,
     options: RefreshQuotaOptions,
+    runtime_snapshot: &codex_account::CodexQuotaRuntimeSnapshot,
 ) -> Result<CodexQuota, String> {
-    let mut account = match codex_account::prepare_account_for_quota_query(account_id).await {
+    let mut account = match codex_account::prepare_account_for_quota_query_with_runtime_snapshot(
+        account_id,
+        runtime_snapshot,
+    )
+    .await
+    {
         Ok(account) => account,
         Err(error) => {
             if codex_account::is_refresh_ownership_deferred_error(&error) {
@@ -1709,12 +1716,17 @@ async fn refresh_account_quota_once(
     Ok(result.quota)
 }
 
-pub async fn refresh_account_quota(account_id: &str) -> Result<CodexQuota, String> {
+async fn refresh_account_quota_with_runtime_snapshot(
+    account_id: &str,
+    runtime_snapshot: &codex_account::CodexQuotaRuntimeSnapshot,
+) -> Result<CodexQuota, String> {
     crate::modules::codex_auth_diagnostic::log_event(
         "quota_refresh_flow_start",
         serde_json::json!({"account_id": account_id}),
     );
-    let result = refresh_account_quota_once(account_id, RefreshQuotaOptions::default()).await;
+    let result =
+        refresh_account_quota_once(account_id, RefreshQuotaOptions::default(), runtime_snapshot)
+            .await;
     crate::modules::codex_auth_diagnostic::log_event(
         "quota_refresh_flow_finished",
         serde_json::json!({
@@ -1729,6 +1741,20 @@ pub async fn refresh_account_quota(account_id: &str) -> Result<CodexQuota, Strin
     )
     .await;
     result
+}
+
+pub async fn refresh_account_quota(account_id: &str) -> Result<CodexQuota, String> {
+    let account = codex_account::load_account(account_id)
+        .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+    if account.is_api_key_auth()
+        || account.is_agent_identity_auth()
+        || account.is_web_session_auth()
+    {
+        let runtime_snapshot = codex_account::CodexQuotaRuntimeSnapshot::empty();
+        return refresh_account_quota_with_runtime_snapshot(account_id, &runtime_snapshot).await;
+    }
+    let runtime_snapshot = codex_account::CodexQuotaRuntimeSnapshot::capture().await?;
+    refresh_account_quota_with_runtime_snapshot(account_id, &runtime_snapshot).await
 }
 
 /// OAuth 刚完成时使用授权回调返回并已落库的凭据查询配额。
@@ -1791,7 +1817,17 @@ pub async fn refresh_account_quota_with_options(
     account_id: &str,
     options: RefreshQuotaOptions,
 ) -> Result<CodexQuota, String> {
-    let result = refresh_account_quota_once(account_id, options).await;
+    let account = codex_account::load_account(account_id)
+        .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+    let runtime_snapshot = if account.is_api_key_auth()
+        || account.is_agent_identity_auth()
+        || account.is_web_session_auth()
+    {
+        codex_account::CodexQuotaRuntimeSnapshot::empty()
+    } else {
+        codex_account::CodexQuotaRuntimeSnapshot::capture().await?
+    };
+    let result = refresh_account_quota_once(account_id, options, &runtime_snapshot).await;
     crate::modules::codex_local_access::reevaluate_bound_oauth_quota_reserve_after_refresh(
         account_id,
         result.is_ok(),
@@ -1860,6 +1896,16 @@ pub async fn refresh_account_subscription_info(
 
 const CODEX_QUOTA_REFRESH_MAX_CONCURRENT: usize = 5;
 
+fn attach_runtime_snapshot_to_account_ids(
+    account_ids: Vec<String>,
+    runtime_snapshot: Arc<codex_account::CodexQuotaRuntimeSnapshot>,
+) -> Vec<(String, Arc<codex_account::CodexQuotaRuntimeSnapshot>)> {
+    account_ids
+        .into_iter()
+        .map(|account_id| (account_id, runtime_snapshot.clone()))
+        .collect()
+}
+
 /// 按账号 ID 列表限流并发刷新配额（分组/勾选批量共用）。
 ///
 /// `respect_group_quota_refresh=true`：跳过分组策略为「不刷新」的账号。
@@ -1874,9 +1920,21 @@ pub async fn refresh_quotas_for_account_ids_with_options(
     account_ids: &[String],
     respect_group_quota_refresh: bool,
 ) -> Result<Vec<(String, Result<CodexQuota, String>)>, String> {
+    refresh_quotas_for_account_ids_with_options_and_runtime_snapshot(
+        account_ids,
+        respect_group_quota_refresh,
+        None,
+    )
+    .await
+}
+
+async fn refresh_quotas_for_account_ids_with_options_and_runtime_snapshot(
+    account_ids: &[String],
+    respect_group_quota_refresh: bool,
+    runtime_snapshot: Option<Arc<codex_account::CodexQuotaRuntimeSnapshot>>,
+) -> Result<Vec<(String, Result<CodexQuota, String>)>, String> {
     use futures::future::join_all;
     use std::collections::HashSet;
-    use std::sync::Arc;
     use tokio::sync::Semaphore;
 
     if account_ids.is_empty() {
@@ -1910,17 +1968,33 @@ pub async fn refresh_quotas_for_account_ids_with_options(
         return Ok(Vec::new());
     }
 
+    let needs_runtime_snapshot = unique_ids.iter().any(|account_id| {
+        codex_account::load_account(account_id).is_some_and(|account| {
+            !account.is_api_key_auth()
+                && !account.is_agent_identity_auth()
+                && !account.is_web_session_auth()
+        })
+    });
+    let runtime_snapshot = match runtime_snapshot {
+        Some(runtime_snapshot) => runtime_snapshot,
+        None if needs_runtime_snapshot => {
+            Arc::new(codex_account::CodexQuotaRuntimeSnapshot::capture().await?)
+        }
+        None => Arc::new(codex_account::CodexQuotaRuntimeSnapshot::empty()),
+    };
     let semaphore = Arc::new(Semaphore::new(CODEX_QUOTA_REFRESH_MAX_CONCURRENT));
-    let tasks: Vec<_> = unique_ids
+    let tasks: Vec<_> = attach_runtime_snapshot_to_account_ids(unique_ids, runtime_snapshot)
         .into_iter()
-        .map(|account_id| {
+        .map(|(account_id, runtime_snapshot)| {
             let semaphore = semaphore.clone();
             async move {
                 let _permit = semaphore
                     .acquire_owned()
                     .await
                     .map_err(|e| format!("获取 Codex 刷新并发许可失败: {}", e))?;
-                let result = refresh_account_quota(&account_id).await;
+                let result =
+                    refresh_account_quota_with_runtime_snapshot(&account_id, &runtime_snapshot)
+                        .await;
                 Ok::<(String, Result<CodexQuota, String>), String>((account_id, result))
             }
         })
@@ -1952,18 +2026,28 @@ async fn refresh_all_quotas_with_options(
     skip_running_oauth_accounts: bool,
 ) -> Result<Vec<(String, Result<CodexQuota, String>)>, String> {
     let disabled = codex_account::load_quota_refresh_disabled_account_ids();
-    let running_oauth_account_ids = if skip_running_oauth_accounts {
-        codex_account::running_codex_oauth_account_ids().unwrap_or_else(|error| {
-            logger::log_warn(&format!(
-                "[Codex配额] 无法确认运行中账号，自动刷新将跳过 OAuth 账号: {}",
-                error
-            ));
-            codex_account::list_accounts()
-                .into_iter()
-                .filter(|account| !account.is_api_key_auth())
-                .map(|account| account.id)
-                .collect()
-        })
+    let runtime_snapshot = if skip_running_oauth_accounts {
+        Some(Arc::new(
+            codex_account::CodexQuotaRuntimeSnapshot::capture().await?,
+        ))
+    } else {
+        None
+    };
+    let running_oauth_account_ids = if let Some(runtime_snapshot) = runtime_snapshot.as_ref() {
+        runtime_snapshot
+            .running_oauth_account_ids()
+            .map(|account_ids| account_ids.clone())
+            .unwrap_or_else(|error| {
+                logger::log_warn(&format!(
+                    "[Codex配额] 无法确认运行中账号，自动刷新将跳过 OAuth 账号: {}",
+                    error
+                ));
+                codex_account::list_accounts()
+                    .into_iter()
+                    .filter(|account| !account.is_api_key_auth())
+                    .map(|account| account.id)
+                    .collect()
+            })
     } else {
         std::collections::HashSet::new()
     };
@@ -1974,14 +2058,20 @@ async fn refresh_all_quotas_with_options(
         .filter(|account| !running_oauth_account_ids.contains(&account.id))
         .map(|account| account.id)
         .collect();
-    refresh_quotas_for_account_ids_with_options(&account_ids, false).await
+    refresh_quotas_for_account_ids_with_options_and_runtime_snapshot(
+        &account_ids,
+        false,
+        runtime_snapshot,
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_codex_api_headers, normalize_http_error_body_for_display,
-        normalize_remaining_percentage, parse_account_check_snapshot, parse_reset_credits_snapshot,
+        attach_runtime_snapshot_to_account_ids, build_codex_api_headers,
+        normalize_http_error_body_for_display, normalize_remaining_percentage,
+        parse_account_check_snapshot, parse_reset_credits_snapshot,
         send_codex_api_request_with_agent_auth_base_url, WindowInfo,
         HTTP_ERROR_BODY_DISPLAY_MAX_CHARS,
     };
@@ -1994,6 +2084,21 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn batch_quota_jobs_share_one_runtime_snapshot() {
+        let runtime_snapshot =
+            Arc::new(crate::modules::codex_account::CodexQuotaRuntimeSnapshot::empty());
+        let jobs = attach_runtime_snapshot_to_account_ids(
+            vec!["account-a".to_string(), "account-b".to_string()],
+            runtime_snapshot.clone(),
+        );
+
+        assert_eq!(jobs.len(), 2);
+        assert!(jobs
+            .iter()
+            .all(|(_, snapshot)| Arc::ptr_eq(snapshot, &runtime_snapshot)));
+    }
 
     fn agent_identity_test_account() -> CodexAccount {
         let signing_key = SigningKey::generate(&mut OsRng);

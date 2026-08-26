@@ -15,7 +15,6 @@ use crate::modules;
 
 const DEFAULT_INSTANCE_ID: &str = "__default__";
 const CODEX_INSTANCE_LAUNCH_PROGRESS_EVENT: &str = "codex:instance-launch-progress";
-const CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX: &str = "CODEX_INSTANCE_ACCOUNT_CONFLICT:";
 static CODEX_INSTANCE_STARTS_IN_PROGRESS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static CODEX_INSTANCE_START_FLOW_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
@@ -49,27 +48,6 @@ impl Drop for CodexInstanceStartGuard {
             .unwrap_or_else(|error| error.into_inner())
             .remove(&self.instance_id);
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexInstanceRuntimeOwner {
-    instance_id: String,
-    instance_name: String,
-    user_data_dir: String,
-    pid: u32,
-    is_default: bool,
-    managed: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexInstanceAccountConflict {
-    target_instance_id: String,
-    target_instance_name: String,
-    account_id: String,
-    account_email: String,
-    owners: Vec<CodexInstanceRuntimeOwner>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,167 +136,6 @@ fn resolve_codex_instance_start_target(
         bind_account_id: instance.bind_account_id,
         is_default: false,
     })
-}
-
-fn find_known_codex_runtime_owner(
-    pid: u32,
-    runtime_home: Option<&str>,
-    store: &crate::models::InstanceStore,
-    default_home: &Path,
-) -> Option<CodexInstanceRuntimeOwner> {
-    let singleton = vec![(pid, runtime_home.map(str::to_string))];
-    if modules::process::resolve_codex_pid_from_entries(
-        store.default_settings.last_pid,
-        None,
-        &singleton,
-    ) == Some(pid)
-    {
-        return Some(CodexInstanceRuntimeOwner {
-            instance_id: DEFAULT_INSTANCE_ID.to_string(),
-            instance_name: String::new(),
-            user_data_dir: default_home.to_string_lossy().to_string(),
-            pid,
-            is_default: true,
-            managed: true,
-        });
-    }
-
-    store.instances.iter().find_map(|instance| {
-        (modules::process::resolve_codex_pid_from_entries(
-            instance.last_pid,
-            Some(&instance.user_data_dir),
-            &singleton,
-        ) == Some(pid))
-        .then(|| CodexInstanceRuntimeOwner {
-            instance_id: instance.id.clone(),
-            instance_name: instance.name.clone(),
-            user_data_dir: instance.user_data_dir.clone(),
-            pid,
-            is_default: false,
-            managed: true,
-        })
-    })
-}
-
-fn collect_codex_instance_account_conflicts(
-    target: &CodexInstanceStartTarget,
-) -> Result<Option<CodexInstanceAccountConflict>, String> {
-    let Some(oauth_account_id) = modules::codex_account::oauth_account_id_for_runtime_binding(
-        target.bind_account_id.as_deref(),
-    ) else {
-        return Ok(None);
-    };
-    let oauth_account = modules::codex_account::load_account(&oauth_account_id)
-        .ok_or_else(|| format!("账号不存在: {}", oauth_account_id))?;
-    let store = modules::codex_instance::load_instance_store()?;
-    let default_home = modules::codex_instance::get_default_codex_home()?;
-    let mut seen_pids = HashSet::new();
-    let mut owners = Vec::new();
-
-    for (pid, runtime_home) in modules::process::collect_codex_process_entries() {
-        if !seen_pids.insert(pid) {
-            continue;
-        }
-        let mut owner =
-            find_known_codex_runtime_owner(pid, runtime_home.as_deref(), &store, &default_home)
-                .unwrap_or_else(|| {
-                    let runtime_dir = runtime_home
-                        .as_deref()
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| default_home.clone());
-                    CodexInstanceRuntimeOwner {
-                        instance_id: format!("external:{}", pid),
-                        instance_name: runtime_dir
-                            .file_name()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        user_data_dir: runtime_dir.to_string_lossy().to_string(),
-                        pid,
-                        is_default: runtime_home.is_none(),
-                        managed: false,
-                    }
-                });
-        if owner.instance_id == target.instance_id
-            || Path::new(&owner.user_data_dir) == target.user_data_dir
-        {
-            continue;
-        }
-
-        let owner_oauth_account_id = modules::codex_account::oauth_account_id_for_runtime_dir(
-            Path::new(&owner.user_data_dir),
-        )
-        .or_else(|| {
-            if owner.is_default {
-                modules::codex_account::oauth_account_id_for_runtime_binding(
-                    resolve_default_account_id(&store.default_settings).as_deref(),
-                )
-            } else {
-                store
-                    .instances
-                    .iter()
-                    .find(|instance| instance.id == owner.instance_id)
-                    .and_then(|instance| {
-                        modules::codex_account::oauth_account_id_for_runtime_binding(
-                            instance.bind_account_id.as_deref(),
-                        )
-                    })
-            }
-        });
-        if owner_oauth_account_id.as_deref() != Some(oauth_account_id.as_str()) {
-            continue;
-        }
-        if owner.instance_name.trim().is_empty() && !owner.is_default {
-            owner.instance_name = owner.instance_id.clone();
-        }
-        owners.push(owner);
-    }
-
-    if owners.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(CodexInstanceAccountConflict {
-        target_instance_id: target.instance_id.clone(),
-        target_instance_name: target.instance_name.clone(),
-        account_id: oauth_account.id,
-        account_email: oauth_account.email,
-        owners,
-    }))
-}
-
-async fn stop_conflicting_codex_runtime_owners(
-    conflict: &CodexInstanceAccountConflict,
-) -> Result<(), String> {
-    let runtime_dirs = conflict
-        .owners
-        .iter()
-        .map(|owner| PathBuf::from(&owner.user_data_dir))
-        .collect::<Vec<_>>();
-    if let Err(error) = modules::codex_account::sync_account_from_runtime_authority_dirs(
-        &conflict.account_id,
-        &runtime_dirs,
-    ) {
-        modules::logger::log_warn(&format!(
-            "[Codex Start] 受控转移前回收运行态 Token 失败，停止转移: account_id={}, error={}",
-            conflict.account_id, error
-        ));
-        return Err(error);
-    }
-
-    for owner in &conflict.owners {
-        let profile_dir = Path::new(&owner.user_data_dir);
-        modules::codex_app_injection::stop_for_profile(profile_dir);
-        modules::process::close_pid(owner.pid, 20)?;
-        modules::codex_local_access::stop_provider_gateways_for_profile(profile_dir).await;
-        if owner.managed {
-            if owner.is_default {
-                let _ = modules::codex_instance::update_default_pid(None)?;
-            } else {
-                let _ = modules::codex_instance::update_instance_pid(&owner.instance_id, None)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -696,6 +513,16 @@ async fn apply_bound_account_to_initialized_profile(
 
     let previous_kind = read_applied_launch_credential_kind_for_dir(profile_dir);
     if let Some(account_id) = bind_account_id {
+        // 已初始化 profile 的绑定变更也可能立即被官方客户端读取。
+        // 先刷新实际 OAuth 账号，再写入目标 profile，避免投影旧凭据。
+        if let Some(oauth_account_id) =
+            modules::codex_account::oauth_account_id_for_runtime_binding(Some(account_id))
+        {
+            modules::codex_account::prepare_account_for_instance_launch_preflight(
+                &oauth_account_id,
+            )
+            .await?;
+        }
         inject_bound_account_to_profile(profile_dir, account_id, false).await?;
         ensure_provider_gateway_for_bind_account(profile_dir, bind_account_id).await?;
     } else {
@@ -1983,7 +1810,7 @@ async fn codex_start_instance_internal(
     app: AppHandle,
     instance_id: String,
     skip_default_bind_account_injection: bool,
-    transfer_conflicting_account: bool,
+    _transfer_conflicting_account: bool,
     _skip_official_account_check: bool,
     emit_launch_progress: bool,
 ) -> Result<CodexInstanceProfileView, String> {
@@ -1996,7 +1823,7 @@ async fn codex_start_instance_internal(
         serde_json::json!({
             "type": "start",
             "progress": 2,
-            "transferConflictingAccount": transfer_conflicting_account,
+            "oauthRuntimePolicy": "latest-runtime-wins",
         }),
     );
     emit_codex_instance_launch_step(
@@ -2031,17 +1858,33 @@ async fn codex_start_instance_internal(
         12,
         serde_json::json!({}),
     );
-    let oauth_account_id = modules::codex_account::oauth_account_id_for_runtime_binding(
-        launch_target.bind_account_id.as_deref(),
-    );
+    let is_api_service_binding = launch_target
+        .bind_account_id
+        .as_deref()
+        .is_some_and(modules::codex_instance::is_api_service_bind_account_id);
+    let oauth_account_id = if is_api_service_binding {
+        modules::codex_local_access::bound_oauth_account_id_for_instance_start().await?
+    } else {
+        // 未显式绑定账号时，默认实例/多开实例仍可能已经落盘了官方 OAuth
+        // 凭据。按实际 profile 快照解析账号并刷新，避免跳过凭据准备。
+        modules::codex_account::oauth_account_id_for_runtime_binding(
+            launch_target.bind_account_id.as_deref(),
+        )
+        .or_else(|| {
+            modules::codex_account::oauth_account_id_for_runtime_dir(&launch_target.user_data_dir)
+        })
+    };
     let oauth_account = oauth_account_id
         .as_deref()
         .and_then(modules::codex_account::load_account);
     let oauth_access_token_refresh_due = oauth_account.as_ref().is_some_and(|account| {
         modules::codex_oauth::is_token_expired(&account.tokens.access_token)
     });
-    // 最新官方客户端只以 access_token 作为登录门禁；id_token 仅保留为账号资料。
-    let oauth_refresh_required = oauth_access_token_refresh_due;
+    let oauth_id_token_refresh_due = oauth_account.as_ref().is_some_and(|account| {
+        modules::codex_account::account_has_refresh_token(account)
+            && modules::codex_oauth::is_id_token_refresh_due(&account.tokens.id_token)
+    });
+    let oauth_refresh_required = oauth_access_token_refresh_due || oauth_id_token_refresh_due;
     let oauth_token_generation_before = oauth_account
         .as_ref()
         .map(|account| account.token_generation)
@@ -2056,6 +1899,8 @@ async fn codex_start_instance_internal(
         "checkAccount",
         if oauth_account.is_none() {
             "skipped"
+        } else if oauth_refresh_required {
+            "warning"
         } else {
             "running"
         },
@@ -2072,20 +1917,13 @@ async fn codex_start_instance_internal(
                 modules::codex_oauth::jwt_token_expiration_timestamp(&account.tokens.id_token)
             }),
             "accessTokenRefreshDue": oauth_access_token_refresh_due,
-            "idTokenRefreshDue": false,
+            "idTokenRefreshDue": oauth_id_token_refresh_due,
             "refreshRequired": oauth_refresh_required,
             "hasRefreshToken": oauth_has_refresh_token,
             "tokenGenerationBefore": oauth_token_generation_before,
             "remoteCheckPending": oauth_account.is_some(),
         }),
     );
-    let _runtime_account_lease = match oauth_account_id.as_deref() {
-        Some(account_id) => Some(
-            modules::codex_account::acquire_runtime_account_lease(account_id, "instance-start")
-                .await?,
-        ),
-        None => None,
-    };
     if let Some(account_id) = oauth_account_id.as_deref() {
         modules::codex_account::prepare_account_for_instance_launch_preflight(account_id).await?;
         let checked_account = modules::codex_account::load_account(account_id)
@@ -2107,7 +1945,11 @@ async fn codex_start_instance_internal(
                     &checked_account.tokens.id_token,
                 ),
                 "accessTokenRefreshDue": false,
-                "idTokenRefreshDue": false,
+                "idTokenRefreshDue": modules::codex_account::account_has_refresh_token(
+                    &checked_account,
+                ) && modules::codex_oauth::is_id_token_refresh_due(
+                    &checked_account.tokens.id_token,
+                ),
                 "refreshRequired": oauth_refresh_required,
                 "hasRefreshToken": modules::codex_account::account_has_refresh_token(
                     &checked_account,
@@ -2128,76 +1970,27 @@ async fn codex_start_instance_internal(
         22,
         serde_json::json!({}),
     );
-    let conflict = collect_codex_instance_account_conflicts(&launch_target)?;
-    if let Some(conflict) = conflict {
-        if !transfer_conflicting_account {
-            emit_codex_instance_launch_progress(
-                &app,
-                emit_launch_progress,
-                &launch_target,
-                serde_json::json!({
-                    "type": "conflict",
-                    "progress": 28,
-                    "step": "checkOccupancy",
-                    "stepStatus": "warning",
-                    "conflict": conflict,
-                }),
-            );
-            let payload = serde_json::to_string(&conflict)
-                .map_err(|error| format!("序列化 Codex 实例账号占用冲突失败: {}", error))?;
-            return Err(format!(
-                "{}{}",
-                CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX, payload
-            ));
-        }
-        emit_codex_instance_launch_step(
-            &app,
-            emit_launch_progress,
-            &launch_target,
-            "checkOccupancy",
-            "completed",
-            28,
-            serde_json::json!({ "ownerCount": conflict.owners.len() }),
-        );
-        emit_codex_instance_launch_step(
-            &app,
-            emit_launch_progress,
-            &launch_target,
-            "stopPrevious",
-            "running",
-            30,
-            serde_json::json!({ "owners": conflict.owners }),
-        );
-        stop_conflicting_codex_runtime_owners(&conflict).await?;
-        emit_codex_instance_launch_step(
-            &app,
-            emit_launch_progress,
-            &launch_target,
-            "stopPrevious",
-            "completed",
-            40,
-            serde_json::json!({ "owners": conflict.owners }),
-        );
-    } else {
-        emit_codex_instance_launch_step(
-            &app,
-            emit_launch_progress,
-            &launch_target,
-            "checkOccupancy",
-            "completed",
-            28,
-            serde_json::json!({ "ownerCount": 0 }),
-        );
-        emit_codex_instance_launch_step(
-            &app,
-            emit_launch_progress,
-            &launch_target,
-            "stopPrevious",
-            "skipped",
-            40,
-            serde_json::json!({}),
-        );
-    }
+    // 同一 OAuth 账号可以被默认实例、多开实例和 API Key 绑定同时使用。
+    // 启动前的 Token Authority 已从运行态 profile 回收最新凭据，因此这里不再
+    // 以“账号占用”为由阻断，也不会关闭其它正在运行的实例。
+    emit_codex_instance_launch_step(
+        &app,
+        emit_launch_progress,
+        &launch_target,
+        "checkOccupancy",
+        "completed",
+        28,
+        serde_json::json!({ "policy": "latest-runtime-wins" }),
+    );
+    emit_codex_instance_launch_step(
+        &app,
+        emit_launch_progress,
+        &launch_target,
+        "stopPrevious",
+        "skipped",
+        40,
+        serde_json::json!({ "preserveOtherOauthRuntimes": true }),
+    );
     let flow_started = Instant::now();
     modules::logger::log_info(&format!(
         "[Codex Start] start_instance_internal started: instance_id={}, skip_default_bind_account_injection={}",
@@ -2271,7 +2064,7 @@ async fn codex_start_instance_internal(
             serde_json::json!({
                 "refreshRequired": oauth_refresh_required,
                 "accessTokenRefreshDue": oauth_access_token_refresh_due,
-                "idTokenRefreshDue": false,
+                "idTokenRefreshDue": oauth_id_token_refresh_due,
                 "hasRefreshToken": oauth_has_refresh_token,
                 "tokenGenerationBefore": oauth_token_generation_before,
             }),
@@ -2540,7 +2333,7 @@ async fn codex_start_instance_internal(
         serde_json::json!({
             "refreshRequired": oauth_refresh_required,
             "accessTokenRefreshDue": oauth_access_token_refresh_due,
-            "idTokenRefreshDue": false,
+            "idTokenRefreshDue": oauth_id_token_refresh_due,
             "hasRefreshToken": oauth_has_refresh_token,
             "tokenGenerationBefore": oauth_token_generation_before,
         }),
@@ -2737,6 +2530,8 @@ async fn codex_start_instance_internal(
     ))
 }
 
+/// 调用方必须在整个“凭据写入 + 默认实例启动”事务期间持有默认 profile 写入租约。
+/// 同一 OAuth 可继续由其它 profile 使用；启动预检只把最新运行态凭据回收到账号库。
 pub(crate) async fn codex_start_default_with_prepared_profile(
     app: AppHandle,
     skip_official_account_check: bool,
@@ -2755,19 +2550,17 @@ pub(crate) async fn codex_start_default_with_prepared_profile(
     )
     .await;
     if let (Some(target), Err(error)) = (&launch_target, &result) {
-        if !error.starts_with(CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX) {
-            emit_codex_instance_launch_progress(
-                &app,
-                true,
-                target,
-                serde_json::json!({
-                    "type": "error",
-                    "error": error,
-                    "canRetry": true,
-                    "canSkipOfficialCheck": false,
-                }),
-            );
-        }
+        emit_codex_instance_launch_progress(
+            &app,
+            true,
+            target,
+            serde_json::json!({
+                "type": "error",
+                "error": error,
+                "canRetry": true,
+                "canSkipOfficialCheck": false,
+            }),
+        );
     }
     result
 }
@@ -2780,6 +2573,10 @@ pub async fn codex_start_instance(
     skip_official_account_check: Option<bool>,
 ) -> Result<CodexInstanceProfileView, String> {
     let launch_target = resolve_codex_instance_start_target(&instance_id)?;
+    let _profile_lease = modules::codex_account::try_acquire_profile_mutation_lease(
+        &launch_target.user_data_dir,
+        "instance-start",
+    )?;
     let result = codex_start_instance_internal(
         app.clone(),
         instance_id,
@@ -2790,30 +2587,39 @@ pub async fn codex_start_instance(
     )
     .await;
     if let Err(error) = &result {
-        if !error.starts_with(CODEX_INSTANCE_ACCOUNT_CONFLICT_PREFIX) {
-            let auth_account_id = modules::codex_account::oauth_account_id_for_runtime_binding(
+        let auth_account_id = if launch_target
+            .bind_account_id
+            .as_deref()
+            .is_some_and(modules::codex_instance::is_api_service_bind_account_id)
+        {
+            modules::codex_local_access::bound_oauth_account_id_for_instance_start()
+                .await
+                .ok()
+                .flatten()
+        } else {
+            modules::codex_account::oauth_account_id_for_runtime_binding(
                 launch_target.bind_account_id.as_deref(),
             )
-            .or_else(|| launch_target.bind_account_id.clone());
-            let error_for_ui = auth_account_id
-                .as_deref()
-                .map(|account_id| {
-                    modules::codex_account::format_account_switch_error(account_id, error.clone())
-                })
-                .unwrap_or_else(|| error.clone());
-            emit_codex_instance_launch_progress(
-                &app,
-                true,
-                &launch_target,
-                serde_json::json!({
-                    "type": "error",
-                    "error": error_for_ui,
-                    "canRetry": true,
-                    "canSkipOfficialCheck": false,
-                    "transferConflictingAccount": transfer_conflicting_account.unwrap_or(false),
-                }),
-            );
         }
+        .or_else(|| launch_target.bind_account_id.clone());
+        let error_for_ui = auth_account_id
+            .as_deref()
+            .map(|account_id| {
+                modules::codex_account::format_account_switch_error(account_id, error.clone())
+            })
+            .unwrap_or_else(|| error.clone());
+        emit_codex_instance_launch_progress(
+            &app,
+            true,
+            &launch_target,
+            serde_json::json!({
+                "type": "error",
+                "error": error_for_ui,
+                "canRetry": true,
+                "canSkipOfficialCheck": false,
+                "oauthRuntimePolicy": "latest-runtime-wins",
+            }),
+        );
     }
     result
 }

@@ -556,9 +556,9 @@ export function CodexExperimentalModelEditor({
         "跟随模型",
       );
     }
-    if (preset === "preset_516k") return "516K / 460K";
-    if (preset === "preset_1m") return "1M / 900K";
-    return `${formatTokenSize(model.context_window)} / ${formatTokenSize(
+    if (preset === "preset_516k") return "516K/460K";
+    if (preset === "preset_1m") return "1M/900K";
+    return `${formatTokenSize(model.context_window)}/${formatTokenSize(
       model.auto_compact_token_limit,
     )}`;
   };
@@ -805,23 +805,18 @@ export function CodexExperimentalModelEditor({
                               "codex.experimentalModelCatalog.models.contextDefaultShort",
                               "默认",
                             ),
-                            t(
-                              "codex.experimentalModelCatalog.models.contextDefault",
-                              "跟随模型",
-                            ),
                           ],
-                          ["preset_516k", "516K", "516K / 460K"],
-                          ["preset_1m", "1M", "1M / 900K"],
+                          ["preset_516k", "516K/460K"],
+                          ["preset_1m", "1M/900K"],
                           [
                             "custom",
                             t(
                               "codex.experimentalModelCatalog.models.contextCustomShort",
                               "自定义",
                             ),
-                            contextLabel(model),
                           ],
-                        ] as Array<[ContextPresetId, string, string]>
-                      ).map(([preset, label, detail]) => (
+                        ] as Array<[ContextPresetId, string]>
+                      ).map(([preset, label]) => (
                         <button
                           key={preset}
                           type="button"
@@ -838,8 +833,7 @@ export function CodexExperimentalModelEditor({
                             }
                           }}
                         >
-                          <span>{label}</span>
-                          <small>{detail}</small>
+                          {label}
                         </button>
                       ))}
                     </div>

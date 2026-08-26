@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { CodexAccount } from "../types/codex.ts";
 import {
+  getCodexJwtExpiration,
   isCodexApiOnlyAccessTokenUsable,
   isCodexClientReauthNoticeOnly,
   isCodexIdTokenReauthReason,
@@ -60,6 +61,11 @@ test("API-only availability follows the backend five-minute safety window", () =
     isCodexApiOnlyAccessTokenUsable(accountWithAccessToken("at-opaque-token"), now),
     true,
   );
+});
+
+test("reads OAuth JWT expiration for launch preview", () => {
+  assert.equal(getCodexJwtExpiration(jwt(2_000_000_000)), 2_000_000_000);
+  assert.equal(getCodexJwtExpiration("not-a-jwt"), null);
 });
 
 test("refresh token reuse stays a non-blocking notice while access token is usable", () => {

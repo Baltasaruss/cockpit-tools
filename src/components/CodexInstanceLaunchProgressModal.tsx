@@ -39,7 +39,12 @@ type LaunchStepId =
   | "startClient";
 type LaunchStepStatus =
   "pending" | "running" | "completed" | "warning" | "skipped" | "error";
-type LaunchStatus = "running" | "conflict" | "completed" | "error";
+type LaunchStatus =
+  | "running"
+  | "conflict"
+  | "completed"
+  | "auth-required"
+  | "error";
 
 interface LaunchProgressPayload {
   type?: "start" | "conflict" | "complete" | "error";
@@ -172,11 +177,14 @@ export function CodexInstanceLaunchProgressModal() {
           if (payload.type === "error") {
             const authFailure =
               payload.authFailure ?? parseCodexSwitchAuthFailure(payload.error);
+            const isAuthRequired = authFailure !== null;
             const markedSteps = steps.map((step) =>
               step.status === "running"
                 ? {
                     ...step,
-                    status: "error" as const,
+                    status: isAuthRequired
+                      ? ("warning" as const)
+                      : ("error" as const),
                     details: {
                       ...step.details,
                       error: payload.error || t("common.failed", "失败"),
@@ -186,7 +194,7 @@ export function CodexInstanceLaunchProgressModal() {
             );
             return {
               ...base,
-              status: "error",
+              status: isAuthRequired ? "auth-required" : "error",
               steps: markedSteps,
               error: payload.error || t("common.failed", "失败"),
               authFailure,
@@ -265,7 +273,8 @@ export function CodexInstanceLaunchProgressModal() {
     owner.isDefault
       ? t("instances.defaultName", "默认实例")
       : owner.instanceName || owner.instanceId;
-  const authFailure = state.status === "error" ? state.authFailure : null;
+  const authFailure =
+    state.status === "auth-required" ? state.authFailure : null;
   const windowsOperationError = state.error
     ? parseWindowsOperationError(state.error)
     : null;
@@ -316,12 +325,21 @@ export function CodexInstanceLaunchProgressModal() {
         const accessExpiry = optionalTimestamp(
           step.details.accessTokenExpiresAt,
         );
+        const idExpiry = optionalTimestamp(step.details.idTokenExpiresAt);
         if (accessExpiry !== null) {
           lines.push(`access_token：${formatExpiry(accessExpiry)}`);
+        }
+        if (idExpiry !== null) {
+          lines.push(`id_token：${formatExpiry(idExpiry)}`);
         }
         if (optionalBoolean(step.details.accessTokenRefreshDue) === true) {
           lines.push(
             `access_token：${t("codex.switchProgress.detail.refreshNeeded")}`,
+          );
+        }
+        if (optionalBoolean(step.details.idTokenRefreshDue) === true) {
+          lines.push(
+            `id_token：${t("codex.switchProgress.detail.refreshNeeded")}`,
           );
         }
         if (optionalBoolean(step.details.knownRefreshFailure) === true) {
@@ -395,6 +413,10 @@ export function CodexInstanceLaunchProgressModal() {
         );
         if (accessExpiry !== null) {
           lines.push(`access_token：${formatExpiry(accessExpiry)}`);
+        }
+        const idExpiry = optionalTimestamp(step.details.idTokenExpiresAt);
+        if (idExpiry !== null) {
+          lines.push(`id_token：${formatExpiry(idExpiry)}`);
         }
         return lines;
       }
@@ -580,16 +602,18 @@ export function CodexInstanceLaunchProgressModal() {
         <div className="codex-switch-progress-header">
           <div
             className={`codex-switch-progress-icon ${
-              state.status === "error"
-                ? isApiOnlyAuthFailure
-                  ? "warning"
-                  : "error"
+              state.status === "auth-required"
+                ? "warning"
+                : state.status === "error"
+                  ? "error"
                 : state.status === "completed"
                   ? "completed"
                   : ""
             }`}
           >
-            {state.status === "error" || state.status === "conflict" ? (
+            {state.status === "error" ||
+            state.status === "conflict" ||
+            state.status === "auth-required" ? (
               state.status === "error" && !isApiOnlyAuthFailure ? (
                 <X size={19} />
               ) : (
@@ -630,7 +654,7 @@ export function CodexInstanceLaunchProgressModal() {
           </div>
           <div className="codex-switch-progress-track">
             <div
-              className={`codex-switch-progress-bar ${state.status === "error" ? (isApiOnlyAuthFailure ? "warning" : "error") : ""}`}
+              className={`codex-switch-progress-bar ${state.status === "auth-required" ? "warning" : state.status === "error" ? "error" : ""}`}
               style={{ width: `${state.progress}%` }}
             />
           </div>
@@ -809,7 +833,7 @@ export function CodexInstanceLaunchProgressModal() {
         )}
 
         {(state.status === "conflict" ||
-          (state.status === "error" && authFailure)) && (
+          state.status === "auth-required") && (
           <div className="codex-switch-progress-footer codex-instance-launch-footer">
             {authFailure ? (
               <>

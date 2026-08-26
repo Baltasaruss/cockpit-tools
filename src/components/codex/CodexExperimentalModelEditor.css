@@ -370,16 +370,8 @@
 }
 
 .codex-experimental-model-editor__context-option {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.codex-experimental-model-editor__context-option small {
-  color: var(--text-muted);
-  font-size: 10px;
-  white-space: nowrap;
 }
 
 .codex-experimental-model-editor__reasoning-option:hover,

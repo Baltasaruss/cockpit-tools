@@ -554,6 +554,14 @@ func isCodexResponsesLiteRequest(body []byte, headers http.Header) bool {
 }
 
 func ensureImageGenerationTool(body []byte, baseModel string, auth *cliproxyauth.Auth, headers http.Header) []byte {
+	// A chat-scoped disable header is used by the API Service test dialog for
+	// ordinary text probes. Image API requests use a separate execution path,
+	// so honoring it here does not disable image generation endpoints.
+	if strings.EqualFold(strings.TrimSpace(headers.Get(helps.DisableImageGenerationHeader)), "chat") ||
+		strings.EqualFold(strings.TrimSpace(headers.Get(helps.DisableImageGenerationHeader)), "images_only") ||
+		strings.EqualFold(strings.TrimSpace(headers.Get(helps.DisableImageGenerationHeader)), "images-only") {
+		return body
+	}
 	tools := gjson.GetBytes(body, "tools")
 	hasHostedImageGeneration := false
 	hasFunctionConflict := codexRequestUsesImageGenerationFunction(body)

@@ -65,7 +65,7 @@ export function normalizeCodexSwitchError(error: unknown): CodexSwitchAccountErr
   return new CodexSwitchAccountError(message, authFailure);
 }
 
-function decodeJwtExpiration(token: string): number | null {
+export function getCodexJwtExpiration(token: string): number | null {
   const parts = token.trim().split(".");
   if (parts.length !== 3) return null;
   try {
@@ -88,7 +88,7 @@ export function isCodexApiOnlyAccessTokenUsable(
   const token = account?.tokens?.access_token?.trim() || "";
   if (!token) return false;
   if (token.startsWith("at-")) return true;
-  const expiresAt = decodeJwtExpiration(token);
+  const expiresAt = getCodexJwtExpiration(token);
   return (
     expiresAt !== null &&
     expiresAt >= nowSeconds + ACCESS_TOKEN_SAFETY_WINDOW_SECONDS
