@@ -4477,9 +4477,32 @@ fn should_migrate_legacy_codex_launch_path(current: &Path, detected: &Path) -> b
     should_migrate
 }
 
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+fn should_probe_legacy_codex_launch_path(current: &Path) -> bool {
+    let mut should_probe = false;
+
+    #[cfg(any(test, target_os = "windows"))]
+    {
+        should_probe |= is_legacy_codex_store_launch_path(current);
+    }
+
+    #[cfg(any(test, target_os = "macos"))]
+    {
+        should_probe |= is_official_legacy_codex_macos_path(current);
+    }
+
+    should_probe
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn migrate_legacy_codex_launch_path(custom_path: &str) -> Option<std::path::PathBuf> {
     let current_path = std::path::PathBuf::from(custom_path);
+    // 路径迁移只适用于旧官方 Codex 安装。已迁移的 ChatGPT.exe 和用户自定义路径
+    // 不需要再次扫描 WindowsApps / Appx；该函数位于高频进程探测路径上，提前返回
+    // 可避免每次额度刷新都启动 PowerShell Get-AppxPackage。
+    if !should_probe_legacy_codex_launch_path(&current_path) {
+        return None;
+    }
     let detected = detect_codex_exec_path()?;
     if !should_migrate_legacy_codex_launch_path(&current_path, &detected) {
         return None;
@@ -15129,7 +15152,7 @@ mod codex_linux_layout_tests {
 mod codex_path_migration_tests {
     use super::{
         is_codex_embedded_backend_executable, score_windows_candidate,
-        should_migrate_legacy_codex_launch_path,
+        should_migrate_legacy_codex_launch_path, should_probe_legacy_codex_launch_path,
     };
     use std::collections::HashSet;
     use std::path::Path;
@@ -15194,6 +15217,25 @@ mod codex_path_migration_tests {
             Path::new("/Users/test/Applications/Codex.app"),
             Path::new("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"),
         ));
+    }
+
+    #[test]
+    fn only_probes_official_legacy_codex_paths_for_migration() {
+        assert!(should_probe_legacy_codex_launch_path(Path::new(
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_1.0.0.0_x64__8wekyb3d8bbwe\app\Codex.exe"
+        )));
+        assert!(should_probe_legacy_codex_launch_path(Path::new(
+            "/Applications/Codex.app"
+        )));
+        assert!(!should_probe_legacy_codex_launch_path(Path::new(
+            r"C:\Program Files\WindowsApps\OpenAI.ChatGPT_2.0.0.0_x64__8wekyb3d8bbwe\app\ChatGPT.exe"
+        )));
+        assert!(!should_probe_legacy_codex_launch_path(Path::new(
+            r"D:\Tools\Codex.exe"
+        )));
+        assert!(!should_probe_legacy_codex_launch_path(Path::new(
+            "/Users/test/Applications/Codex.app"
+        )));
     }
 
     #[test]

@@ -1564,8 +1564,14 @@ fn sync_subscription_expiry_from_current_id_token(account: &mut CodexAccount) {
 async fn refresh_account_quota_once(
     account_id: &str,
     options: RefreshQuotaOptions,
+    authority_snapshot: Option<&codex_account::CodexQuotaAuthoritySnapshot>,
 ) -> Result<CodexQuota, String> {
-    let mut account = match codex_account::prepare_account_for_quota_query(account_id).await {
+    let mut account = match codex_account::prepare_account_for_quota_query_with_snapshot(
+        account_id,
+        authority_snapshot,
+    )
+    .await
+    {
         Ok(account) => account,
         Err(error) => {
             if codex_account::is_refresh_ownership_deferred_error(&error) {
@@ -1710,11 +1716,23 @@ async fn refresh_account_quota_once(
 }
 
 pub async fn refresh_account_quota(account_id: &str) -> Result<CodexQuota, String> {
+    refresh_account_quota_with_authority_snapshot(account_id, None).await
+}
+
+async fn refresh_account_quota_with_authority_snapshot(
+    account_id: &str,
+    authority_snapshot: Option<&codex_account::CodexQuotaAuthoritySnapshot>,
+) -> Result<CodexQuota, String> {
     crate::modules::codex_auth_diagnostic::log_event(
         "quota_refresh_flow_start",
         serde_json::json!({"account_id": account_id}),
     );
-    let result = refresh_account_quota_once(account_id, RefreshQuotaOptions::default()).await;
+    let result = refresh_account_quota_once(
+        account_id,
+        RefreshQuotaOptions::default(),
+        authority_snapshot,
+    )
+    .await;
     crate::modules::codex_auth_diagnostic::log_event(
         "quota_refresh_flow_finished",
         serde_json::json!({
@@ -1791,7 +1809,7 @@ pub async fn refresh_account_quota_with_options(
     account_id: &str,
     options: RefreshQuotaOptions,
 ) -> Result<CodexQuota, String> {
-    let result = refresh_account_quota_once(account_id, options).await;
+    let result = refresh_account_quota_once(account_id, options, None).await;
     crate::modules::codex_local_access::reevaluate_bound_oauth_quota_reserve_after_refresh(
         account_id,
         result.is_ok(),
@@ -1910,17 +1928,25 @@ pub async fn refresh_quotas_for_account_ids_with_options(
         return Ok(Vec::new());
     }
 
+    // 一轮批量刷新只探测一次 Codex 运行态。所有账号复用该快照；真正需要轮换 RT 时，
+    // prepare_account_for_quota_query_with_snapshot 仍会在文件锁内执行即时复查。
+    let authority_snapshot = codex_account::capture_codex_quota_authority_snapshot();
     let semaphore = Arc::new(Semaphore::new(CODEX_QUOTA_REFRESH_MAX_CONCURRENT));
     let tasks: Vec<_> = unique_ids
         .into_iter()
         .map(|account_id| {
             let semaphore = semaphore.clone();
+            let authority_snapshot = authority_snapshot.clone();
             async move {
                 let _permit = semaphore
                     .acquire_owned()
                     .await
                     .map_err(|e| format!("获取 Codex 刷新并发许可失败: {}", e))?;
-                let result = refresh_account_quota(&account_id).await;
+                let result = refresh_account_quota_with_authority_snapshot(
+                    &account_id,
+                    Some(&authority_snapshot),
+                )
+                .await;
                 Ok::<(String, Result<CodexQuota, String>), String>((account_id, result))
             }
         })

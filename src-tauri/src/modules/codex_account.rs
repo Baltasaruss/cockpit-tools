@@ -4772,9 +4772,36 @@ pub(crate) fn is_refresh_ownership_deferred_error(message: &str) -> bool {
         || lower.contains("为避免重复轮换 refresh_token")
 }
 
+/// 一轮批量额度刷新复用的官方运行态快照。
+///
+/// 普通额度读取只需要使用批次开始时的运行态来选择凭据同步来源；真正准备轮换
+/// refresh_token 前仍会执行一次即时探测，避免长批次中的实例启停造成 RT 冲突。
+#[derive(Clone)]
+pub(crate) struct CodexQuotaAuthoritySnapshot {
+    running_oauth_account_ids: Arc<HashSet<String>>,
+    runtime_dirs: Arc<Vec<PathBuf>>,
+}
+
+impl CodexQuotaAuthoritySnapshot {
+    fn official_runtime_owns_refresh(&self, account_id: &str) -> bool {
+        self.running_oauth_account_ids.contains(account_id)
+    }
+
+    fn runtime_dirs(&self) -> &[PathBuf] {
+        self.runtime_dirs.as_slice()
+    }
+}
+
 /// 额度查询专用凭据准备：只在 access_token 过期时尝试 Token Authority 刷新。
 /// id_token 临期、8 天保活周期和历史 requires_reauth 标记都不应阻断额度请求。
 pub async fn prepare_account_for_quota_query(account_id: &str) -> Result<CodexAccount, String> {
+    prepare_account_for_quota_query_with_snapshot(account_id, None).await
+}
+
+pub(crate) async fn prepare_account_for_quota_query_with_snapshot(
+    account_id: &str,
+    authority_snapshot: Option<&CodexQuotaAuthoritySnapshot>,
+) -> Result<CodexAccount, String> {
     let lock = codex_token_lock_for(account_id);
     let _guard = lock.lock().await;
     let mut account =
@@ -4787,13 +4814,18 @@ pub async fn prepare_account_for_quota_query(account_id: &str) -> Result<CodexAc
         return Ok(account);
     }
 
-    let official_runtime_owns_refresh = running_codex_oauth_account_ids()
-        .map(|account_ids| account_ids.contains(&account.id))
-        .unwrap_or(false);
+    let official_runtime_owns_refresh = authority_snapshot
+        .map(|snapshot| snapshot.official_runtime_owns_refresh(&account.id))
+        .unwrap_or_else(|| {
+            running_codex_oauth_account_ids()
+                .map(|account_ids| account_ids.contains(&account.id))
+                .unwrap_or(false)
+        });
+    let runtime_dirs = authority_snapshot.map(CodexQuotaAuthoritySnapshot::runtime_dirs);
     let sync_result = if official_runtime_owns_refresh {
-        sync_account_from_live_authority_sources(&mut account)
+        sync_account_from_live_authority_sources_with_runtime_dirs(&mut account, runtime_dirs)
     } else {
-        sync_account_from_authority_sources(&mut account)
+        sync_account_from_authority_sources_with_runtime_dirs(&mut account, runtime_dirs)
     };
     if let Err(error) = sync_result {
         logger::log_warn(&format!(
@@ -4937,8 +4969,14 @@ pub(crate) fn oauth_account_id_for_runtime_dir(base_dir: &Path) -> Option<String
 /// 轮换 refresh_token 会让官方进程稍后在 cloud requirements/config 请求中
 /// 收到 Auth/relogin。未运行账号仍可由 TokenKeeper 正常保活。
 pub(crate) fn running_codex_oauth_account_ids() -> Result<HashSet<String>, String> {
-    let store = crate::modules::codex_instance::load_instance_store()?;
     let process_entries = crate::modules::process::collect_codex_process_entries();
+    running_codex_oauth_account_ids_from_process_entries(&process_entries)
+}
+
+fn running_codex_oauth_account_ids_from_process_entries(
+    process_entries: &[(u32, Option<String>)],
+) -> Result<HashSet<String>, String> {
+    let store = crate::modules::codex_instance::load_instance_store()?;
     let accounts = list_accounts();
     let mut account_ids = HashSet::new();
 
@@ -4946,7 +4984,7 @@ pub(crate) fn running_codex_oauth_account_ids() -> Result<HashSet<String>, Strin
     // 是共享的。直接检查所有可识别 Codex 进程的 CODEX_HOME/auth 快照，避免
     // 另一个安装启动的实例漏出 TokenKeeper 保护范围。
     let default_home = get_codex_home();
-    for (_, runtime_home) in &process_entries {
+    for (_, runtime_home) in process_entries {
         let runtime_dir = runtime_home
             .as_deref()
             .map(Path::new)
@@ -4959,7 +4997,7 @@ pub(crate) fn running_codex_oauth_account_ids() -> Result<HashSet<String>, Strin
     let default_pid_matches = crate::modules::process::resolve_codex_pid_from_entries(
         store.default_settings.last_pid,
         None,
-        &process_entries,
+        process_entries,
     )
     .is_some();
     // 官方 app-server 可能仍在运行，但 GUI PID 的记录在重启/接管过程中短暂失配。
@@ -4998,7 +5036,7 @@ pub(crate) fn running_codex_oauth_account_ids() -> Result<HashSet<String>, Strin
         let running = crate::modules::process::resolve_codex_pid_from_entries(
             instance.last_pid,
             Some(&instance.user_data_dir),
-            &process_entries,
+            process_entries,
         )
         .is_some();
         if !running {
@@ -5017,6 +5055,31 @@ pub(crate) fn running_codex_oauth_account_ids() -> Result<HashSet<String>, Strin
     }
 
     Ok(account_ids)
+}
+
+pub(crate) fn capture_codex_quota_authority_snapshot() -> CodexQuotaAuthoritySnapshot {
+    let process_entries = crate::modules::process::collect_codex_process_entries();
+    let running_oauth_account_ids =
+        running_codex_oauth_account_ids_from_process_entries(&process_entries).unwrap_or_else(
+            |error| {
+                logger::log_warn(&format!(
+                    "[Codex配额] 批量刷新无法确认运行中账号，将仅复用运行目录快照: {}",
+                    error
+                ));
+                HashSet::new()
+            },
+        );
+    let mut seen = HashSet::new();
+    let runtime_dirs = process_entries
+        .into_iter()
+        .filter_map(|(_, runtime_home)| runtime_home.map(PathBuf::from))
+        .filter(|dir| seen.insert(dir.to_string_lossy().to_string()))
+        .collect::<Vec<_>>();
+
+    CodexQuotaAuthoritySnapshot {
+        running_oauth_account_ids: Arc::new(running_oauth_account_ids),
+        runtime_dirs: Arc::new(runtime_dirs),
+    }
 }
 
 pub fn is_pending_oauth_account(account: &CodexAccount) -> bool {
@@ -7782,8 +7845,20 @@ fn sync_current_live_oauth_snapshot_before_switch(
 }
 
 fn sync_account_from_authority_sources(account: &mut CodexAccount) -> Result<bool, String> {
+    sync_account_from_authority_sources_with_runtime_dirs(account, None)
+}
+
+fn sync_account_from_authority_sources_with_runtime_dirs(
+    account: &mut CodexAccount,
+    runtime_dirs: Option<&[PathBuf]>,
+) -> Result<bool, String> {
     let mut dirs = vec![get_codex_home()];
-    dirs.extend(authority_projection_dirs_for_account(account));
+    dirs.extend(match runtime_dirs {
+        Some(runtime_dirs) => {
+            authority_projection_dirs_for_account_with_runtime_dirs(account, runtime_dirs)
+        }
+        None => authority_projection_dirs_for_account(account),
+    });
 
     let mut seen = HashSet::new();
     dirs.retain(|dir| seen.insert(dir.to_string_lossy().to_string()));
@@ -7798,8 +7873,20 @@ fn sync_account_from_authority_sources(account: &mut CodexAccount) -> Result<boo
 }
 
 fn sync_account_from_live_authority_sources(account: &mut CodexAccount) -> Result<bool, String> {
+    sync_account_from_live_authority_sources_with_runtime_dirs(account, None)
+}
+
+fn sync_account_from_live_authority_sources_with_runtime_dirs(
+    account: &mut CodexAccount,
+    runtime_dirs: Option<&[PathBuf]>,
+) -> Result<bool, String> {
     let mut dirs = vec![get_codex_home()];
-    dirs.extend(authority_projection_dirs_for_account(account));
+    dirs.extend(match runtime_dirs {
+        Some(runtime_dirs) => {
+            authority_projection_dirs_for_account_with_runtime_dirs(account, runtime_dirs)
+        }
+        None => authority_projection_dirs_for_account(account),
+    });
 
     let mut seen = HashSet::new();
     dirs.retain(|dir| seen.insert(dir.to_string_lossy().to_string()));
@@ -9190,6 +9277,17 @@ fn managed_projection_dirs_for_account(account_id: &str) -> Vec<PathBuf> {
 /// 仍能在 OAuth 账号下次启动前被接回。v1 组合投影没有凭据所有者字段，只在 Token 身份
 /// 确认匹配时兼容接回，避免把其它账号的投影误归属。
 fn authority_projection_dirs_for_account(account: &CodexAccount) -> Vec<PathBuf> {
+    let runtime_dirs = crate::modules::process::collect_codex_process_entries()
+        .into_iter()
+        .filter_map(|(_, runtime_home)| runtime_home.map(PathBuf::from))
+        .collect::<Vec<_>>();
+    authority_projection_dirs_for_account_with_runtime_dirs(account, &runtime_dirs)
+}
+
+fn authority_projection_dirs_for_account_with_runtime_dirs(
+    account: &CodexAccount,
+    runtime_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
     let mut dirs = managed_projection_dirs_for_account(&account.id);
     let mut candidates = vec![get_codex_home()];
     if let Some(wsl_dir) = configured_codex_wsl_config_dir() {
@@ -9206,11 +9304,7 @@ fn authority_projection_dirs_for_account(account: &CodexAccount) -> Vec<PathBuf>
                 .map(|instance| PathBuf::from(instance.user_data_dir)),
         );
     }
-    candidates.extend(
-        crate::modules::process::collect_codex_process_entries()
-            .into_iter()
-            .filter_map(|(_, runtime_home)| runtime_home.map(PathBuf::from)),
-    );
+    candidates.extend(runtime_dirs.iter().cloned());
 
     let mut seen = dirs
         .iter()
