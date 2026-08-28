@@ -11,42 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **Codex OAuth tokens can now be force-refreshed manually**: the account overview can use the current `refresh_token` to obtain a new `access_token` and `id_token`, persist the result locally, and update the account state immediately; the result, failure reason, retry check, and reauthorization actions are handled in a dedicated dialog.
-- **Codex account pools now provide pool-level diagnostics**: when a request cannot select an available account, the account-pool dialog shows the model, candidate accounts, auth identity, proxy selection, scope matches, availability, quota reservations, and image-policy decisions, with an action to resynchronize the pool.
-- **API Service now supports per-account image-generation policies**: an account in a pool can be set to inherit, enable, or disable image generation, while text and image requests continue to route according to the selected account's capabilities.
+- **Manual Codex OAuth Token refresh**: refresh an account's credentials from the account overview and review the result, failure reason, retry, or reauthorization action in a dedicated dialog.
+- **Account-pool diagnostics**: when no account can handle a request, the account-pool dialog explains the selection result and provides recovery actions.
+- **Per-account image-generation policy**: API Service account pools can enable or disable image generation for individual accounts without affecting text requests.
 
 ### Changed
 
-- **Codex no longer treats `refresh_token_reused` as an automatic account failure or switching condition**: automatic flows no longer block switching or launching, or persist account failure state for this response; the launch preview still supports manual Token force-refresh, with failures shown only in the current dialog.
-- **Codex launch progress can now be cancelled and continued after skippable failures**: users can cancel the transaction at any time, or close the dialog to cancel and close it; when a skippable check, gateway preparation, or maintenance step fails, the dialog offers “Skip and launch” to continue starting the client.
-- **Codex client auth observation now uses less runtime overhead**: realtime login status uses a lightweight CDP page snapshot every 5 seconds, while full network diagnostics run in the background every 30 seconds without blocking status updates or continuously occupying the client's debugging channel.
-- **Codex client reauthorization notices now explain the detected login-page state**: users can reauthorize to restore client use, while API Service remains usable for now.
-- **Client authorization-required state is now an account-card notice only**: it no longer blocks switching or launching, and the details dialog provides reauthorization and a clear-warning action.
-- **Codex client state and API authorization state are now presented separately**: observed client sign-in redirects, Token refresh failures, and server revocations no longer share one status. An explicit server revocation has the highest priority and is never shown alongside “Client authorization required” or “API Service available.”
-- **Codex launch, account switching, and OAuth binding now share one authentication flow**: the account overview, default instance, managed instances, API Service bindings, and API Key accounts bound to OAuth reuse the same credential preparation, Token refresh, reauthorization, progress presentation, and result persistence.
-- **Codex OAuth authorization URLs now match the official desktop client**: authorization uses the official `chatgpt.com/codex/desktop-auth` page and desktop-client identity parameters, while Cockpit owns PKCE, the `localhost:1455` callback, and Token exchange. Browser authorization therefore works without the official client installed and when Windows cannot execute `codex.exe` inside `WindowsApps`.
-- **Codex client launch no longer treats a local expired `id_token` as a hard gate**: Token refresh is attempted before launch only when the `access_token` is confirmed expired; reauthorization is based on the official runtime's observed state and can be handled through the shared flow with a choice to reauthorize or continue.
-- **Codex API Service availability now follows real upstream results**: after a quota/API request explicitly returns 401, 403, or a remote Token rejection, the account is removed from prepared caches and candidate pools and enters the shared reauthorization state; an unexpired local JWT no longer overrides a remote rejection.
-- **Codex API Service and managed-instance provider gateways are isolated by profile**: each API Service binding and managed instance uses its own local gateway lifecycle and port, so stopping or restarting one profile does not affect other instances.
-- **Codex quota refresh now avoids repeated runtime probing**: one process snapshot is reused per batch and quota requests use bounded concurrency, reducing Windows subprocess overhead and request contention during refresh bursts.
-- **OAuth authorization URLs now support a remotely controlled, locally cached client-version default**: authorization uses a fixed official client version; the default can be updated remotely and cached locally so authorization continues during temporary remote-config outages, while users can override it manually in Settings.
-- **Codex browser OAuth authorization now waits up to 10 minutes**: login, MFA, and callback handling have more time to complete, while the device-code authorization timeout remains unchanged.
-- **Subscription details are explicitly labeled as “Subscription validity”**: account cards and details no longer blur subscription expiry with Token expiry.
+- **Unified Codex authentication flow**: account overview, default and managed instances, API Service, and API Key OAuth bindings now use the same credential preparation, refresh, reauthorization, progress, and result handling.
+- **Client authorization state is informational**: an observed client login-page redirect no longer blocks switching or API Service use; an explicit upstream authorization revocation remains the highest-priority state.
+- **OAuth authorization follows the official desktop entry point** and remains usable without a local Codex client; browser authorization now allows up to 10 minutes, and the client-version default can be managed remotely, cached locally, or overridden in Settings.
+- **Profile isolation and quota refresh efficiency**: API Service and managed instances keep independent provider gateways, while batch quota refresh reduces repeated process probing and request contention.
+- **Launch actions are recoverable**: users can cancel, retry, reauthorize, or skip eligible non-blocking failures from the active launch dialog.
+- **Subscription information is labeled as “Subscription validity”** so it is distinct from Token expiration.
 
 ### Fixed
 
-- **Fixed account cards continuing to spin after a Codex switch was cancelled or closed**: cancellation now clears the matching card's switching state immediately while the backend transaction finishes cleanup at its safe checkpoints.
-- **Fixed client sign-in state being inferred from incidental page text**: “Client authorization required” is now recorded only from the official `/login` route or the complete LoginRoute UI signature used by the desktop `MemoryRouter`; ordinary login wording, auth hints, and non-Codex CDP targets no longer trigger reauthorization.
-- **Fixed delayed account-card updates after client sign-in observations were persisted**: once an official login-page or recovered-availability state passes consecutive confirmation and is saved, the account overview synchronizes it immediately without a manual refresh or waiting for the next polling cycle.
-- **Codex client login-page observations now include an instance timeline**: issue details show the instance launch time, login-page redirect time, detection time, and observed instance in a fixed order so it is clear when the client entered the login page.
-- **Fixed client-auth observations blocking switching and launching**: a client login-page observation is no longer converted into a launch authorization failure; clearing the warning removes only local observation fields and never changes Tokens or a genuine server-side authorization failure.
-- **Fixed account-pool issues not appearing promptly after real API Service dispatch failures**: an internal `auth_unavailable` result now produces account-level and pool-level diagnostics and synchronizes them to the UI immediately. Error text follows the Cockpit Tools language setting, using Chinese for the Chinese UI and English otherwise.
-- **Fixed the switch dialog reporting “API Service available” after an API 401**: switch authorization results now consider both recorded remote API rejection and local Token expiry, so an actually unavailable account is not shown as API-only available.
-- **Fixed new credentials being overwritten by stale data after reauthorization or official-client rotation**: switching, reauthorization, quota refresh, local synchronization, and API bindings now preserve the latest credentials, avoiding a return to an old `access_token` or `refresh_token` and subsequent remote revocation.
-- **Fixed account pools showing “no available account” without an abnormal-account detail**: pool-level failures are retained even when no individual account is flagged, and the account-pool dialog now provides actionable recovery.
-- **Fixed OAuth state and credentials becoming inconsistent after binding an API Key or API Service**: the latest credentials after reauthorization, unbinding, rebinding, or managed-instance launch are synchronized to the relevant profile instead of reusing stale authorization state.
-- **Fixed API Service text requests being blocked by image-capability checks**: text, edit, and image requests are handled according to request type and account policy, so a text request does not fail merely because an upstream lacks image capability.
-- **Fixed several pages falling back to browser-native gray buttons**: affected buttons, disabled states, dialog actions, and compact labels now use the project visual system without changing the established font, size, or layout.
+- **Fixed stale OAuth credentials being restored after reauthorization, switching, quota refresh, or profile synchronization**, preventing accounts from reverting to an older Token.
+- **Fixed client login-page observations leaving stale or delayed account-card state**: the account overview now updates the recorded client status promptly and keeps it separate from API authorization failures.
+- **Fixed account-pool errors being hidden after dispatch failures**: unavailable-account results now retain pool diagnostics and display localized recovery information in the account-pool dialog.
+- **Fixed API 401 results being shown as API Service available**: the account status now reflects an actual upstream rejection.
+- **Fixed account cards remaining in a loading state after cancelling a switch**.
+- **Fixed text requests being rejected solely because image generation is unavailable**, and corrected affected controls that displayed browser-native gray button styles.
 
 ## [1.3.33] - 2026-08-27
 
