@@ -3,7 +3,8 @@
     use super::{
         authority_projection_dirs_for_account, build_account_storage_id,
         build_agent_identity_account_draft, build_auth_file_value,
-        build_legacy_agent_identity_account_id, clear_retired_app_server_preflight_reauth,
+        build_legacy_agent_identity_account_id, clear_client_auth_observation,
+        clear_retired_app_server_preflight_reauth,
         decode_jwt_payload_value, detect_auth_file_plan_type_from_path,
         ensure_managed_account_fresh, extract_codex_import_candidate_from_value,
         extract_codex_tokens_from_value, extract_user_info,
@@ -3184,6 +3185,98 @@
             .expect("structured switch auth failure");
 
         assert_eq!(payload["apiOnlyAvailable"], false);
+    }
+
+    #[test]
+    fn switch_auth_error_treats_server_revocation_as_terminal_without_quota_error() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let _env = TestEnvGuard::new("codex-switch-auth-server-revoked-test");
+        let mut account = seed_oauth_account(make_codex_tokens(
+            "server-revoked@example.com",
+            "acc-server-revoked",
+            "org-server-revoked",
+            "server-revoked",
+            "rt-server-revoked",
+        ));
+        account.requires_reauth = true;
+        account.reauth_reason = Some(
+            "Codex 登录授权已被服务端撤销，无法自动刷新。请重新登录 Codex 账号。"
+                .to_string(),
+        );
+        save_account(&account).expect("save server-revoked account");
+
+        let encoded = format_account_switch_error(&account.id, "fallback".to_string());
+        let payload = encoded
+            .strip_prefix("CODEX_SWITCH_AUTH_REQUIRED:")
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+            .expect("structured switch auth failure");
+
+        assert_eq!(payload["reasonCode"], "refresh_token_invalidated");
+        assert_eq!(payload["apiOnlyAvailable"], false);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn clearing_client_auth_observation_preserves_credentials_and_reauth_state() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let _env = TestEnvGuard::new("codex-skip-auth-check-clears-observation-test");
+        let mut account = seed_oauth_account(make_codex_tokens(
+            "skip-observation@example.com",
+            "acc-skip-observation",
+            "org-skip-observation",
+            "skip-observation",
+            "rt-skip-observation",
+        ));
+        account.client_auth_status = Some("login_required".to_string());
+        account.last_client_auth_observed_at = Some(100);
+        account.last_client_login_redirect_at = Some(101);
+        account.last_client_launch_at = Some(99);
+        account.last_client_auth_instance_id = Some("default".to_string());
+        account.requires_reauth = true;
+        account.reauth_reason = Some("真实 Token Authority 授权异常".to_string());
+        save_account(&account).expect("save observed account");
+
+        assert!(
+            clear_client_auth_observation(&account.id)
+                .await
+                .expect("clear client observation")
+        );
+        let persisted = load_account(&account.id).expect("load cleared account");
+        assert_eq!(persisted.client_auth_status, None);
+        assert_eq!(persisted.last_client_auth_observed_at, None);
+        assert_eq!(persisted.last_client_login_redirect_at, None);
+        assert_eq!(persisted.last_client_launch_at, None);
+        assert_eq!(persisted.last_client_auth_instance_id, None);
+        assert!(persisted.requires_reauth);
+        assert_eq!(
+            persisted.reauth_reason.as_deref(),
+            Some("真实 Token Authority 授权异常")
+        );
+    }
+
+    #[test]
+    fn client_auth_observation_does_not_wrap_switch_errors() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let _env = TestEnvGuard::new("codex-client-auth-observation-no-switch-block-test");
+        let mut account = seed_oauth_account(make_codex_tokens(
+            "client-observation@example.com",
+            "acc-client-observation",
+            "org-client-observation",
+            "client-observation",
+            "rt-client-observation",
+        ));
+        account.client_auth_status = Some("login_required".to_string());
+        save_account(&account).expect("save observed account");
+
+        assert_eq!(
+            format_account_switch_error(&account.id, "ordinary switch error".to_string()),
+            "ordinary switch error"
+        );
     }
 
     #[test]

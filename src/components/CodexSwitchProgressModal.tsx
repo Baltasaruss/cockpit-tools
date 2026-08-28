@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { useCodexAccountStore } from "../stores/useCodexAccountStore";
 import * as codexLocalAccessService from "../services/codexLocalAccessService";
+import * as codexService from "../services/codexService";
 import { requestCodexOpenAddAccount } from "../utils/codexAddAccountRequest";
 import { conciseCodexCredentialFailure } from "../utils/codexCredentialProgress";
 import type { CodexSwitchAuthFailure } from "../utils/codexSwitchAuthFailure";
@@ -104,8 +105,8 @@ function optionalTimestamp(value: unknown): number | null {
 export function CodexSwitchProgressModal() {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<SwitchProgressState | null>(null);
-  const [actionBusy, setActionBusy] = useState<"api" | null>(null);
-  const [retryBusy, setRetryBusy] = useState<"retry" | "skip" | null>(null);
+  const [actionBusy, setActionBusy] = useState<"api" | "clear" | null>(null);
+  const [retryBusy, setRetryBusy] = useState<"retry" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const accounts = useCodexAccountStore((store) => store.accounts);
 
@@ -501,19 +502,22 @@ export function CodexSwitchProgressModal() {
     }
   };
 
-  const skipAuthCheckAndSwitch = async () => {
-    if (retryBusy || !authFailure?.apiOnlyAvailable) return;
-    setRetryBusy("skip");
+  const clearClientAuthObservation = async () => {
+    if (actionBusy || authFailure?.reasonCode !== "client_login_required") return;
+    setActionBusy("clear");
     setActionError(null);
     try {
-      await useCodexAccountStore.getState().switchAccount(state.accountId, {
-        launchAfterSwitch: state.launchAfterSwitch,
-        skipAuthCheck: true,
-      });
+      await codexService.clearClientAuthObservation(state.accountId);
+      await useCodexAccountStore.getState().fetchAccounts();
+      setState(null);
     } catch (error) {
-      setActionError(String(error).replace(/^Error:\s*/, ""));
+      setActionError(
+        t("codex.switchAuth.clearClientAuthFailed", {
+          error: String(error).replace(/^Error:\s*/, ""),
+        }),
+      );
     } finally {
-      setRetryBusy(null);
+      setActionBusy(null);
     }
   };
 
@@ -690,6 +694,18 @@ export function CodexSwitchProgressModal() {
                   : t("codex.localAccess.entryAction", "添加至 API 服务")}
               </button>
             )}
+            {authFailure.reasonCode === "client_login_required" && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void clearClientAuthObservation()}
+                disabled={actionBusy !== null || retryBusy !== null}
+              >
+                {actionBusy === "clear"
+                  ? t("common.loading", "加载中...")
+                  : t("codex.switchAuth.clearClientAuth", "清除异常标识")}
+              </button>
+            )}
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -698,18 +714,6 @@ export function CodexSwitchProgressModal() {
                 >
                   {t("common.reauthorize", "重新授权")}
                 </button>
-                {authFailure.apiOnlyAvailable && (
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => void skipAuthCheckAndSwitch()}
-                    disabled={actionBusy !== null || retryBusy !== null}
-                  >
-                    {retryBusy === "skip"
-                      ? t("common.loading", "加载中...")
-                      : t("codex.switchAuth.skipAuthCheck", "跳过检查并继续")}
-                  </button>
-                )}
           </div>
         )}
 

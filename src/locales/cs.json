@@ -555,7 +555,9 @@
       "progress": "Průběh spuštění",
       "conflictTitle": "Účet se již používá",
       "completedTitle": "Instance spuštěna",
+      "cancelledTitle": "Spuštění zrušeno",
       "failedTitle": "Spuštění instance selhalo",
+      "skipAndLaunch": "Přeskočit a spustit",
       "conflictAccount": "Účet: {{account}}",
       "conflictDescription": "Tento účet běží v {{owners}}. Aby oficiální instance nesoutěžily o refresh_token, může jeden účet OAuth běžet pouze v jedné instanci.",
       "locate": "Najít instanci",
@@ -2131,11 +2133,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Klient vyžaduje přihlášení",
       "reauthorizeTitle": "Autorizace Codex vypršela",
-      "apiOnlyDescription": "Klient tohoto účtu vyžaduje nové ověření. Služba API je stále dostupná.",
-      "observationStatus": "Poslední kontrola zjistila, že klient tohoto účtu vyžaduje nové ověření.",
+      "apiOnlyDescription": "Aktuální klient přešel na přihlašovací stránku. Znovu jej autorizujte pro obnovení používání klienta; službu API lze zatím dál používat.",
+      "observationStatus": "Bylo zjištěno přesměrování na přihlašovací stránku",
       "observationTime": "Poslední kontrola: {{time}}",
       "loginRedirectTime": "Poslední přesměrování na přihlašovací stránku: {{time}}",
       "observationInstance": "Sledovaná instance: {{instance}}",
+      "launchTime": "Čas spuštění této instance: {{time}}",
       "reauthorizeDescription": "Přihlašovací údaje se nepodařilo obnovit a access_token už nelze použít pro službu API. Pokračujte novou autorizací.",
       "idTokenUnavailable": "Identita klienta vypršela a automatická obnova nevrátila platný id_token.",
       "reasonLabel": "Důvod",
@@ -2149,7 +2152,9 @@
       "startInstanceAfterReauthFailed": "Autorizace byla aktualizována, ale instance se nepodařilo spustit: {{error}}",
       "reauthorizedAndStartedInstance": "Znovu autorizováno a instance spuštěna",
       "apiOnlyBadge": "Nutné přihlášení",
-      "skipAuthCheck": "Přeskočit kontrolu a pokračovat"
+      "clearClientAuth": "Vymazat upozornění",
+      "clearClientAuthSuccess": "Upozornění klienta vymazáno",
+      "clearClientAuthFailed": "Upozornění klienta se nepodařilo vymazat: {{error}}"
     },
     "current": "Aktuální",
     "empty": {

@@ -116,6 +116,7 @@ pub fn upsert_agent_identity_account(identity: CodexAgentIdentity) -> Result<Cod
     account.client_auth_status = None;
     account.last_client_auth_observed_at = None;
     account.last_client_login_redirect_at = None;
+    account.last_client_launch_at = None;
     account.last_client_auth_instance_id = None;
     account.update_last_used();
     save_account_from_user_action(&mut account)?;
@@ -432,6 +433,7 @@ fn upsert_account_with_hints_and_reauth_target(
     account.client_auth_status = None;
     account.last_client_auth_observed_at = None;
     account.last_client_login_redirect_at = None;
+    account.last_client_launch_at = None;
     account.last_client_auth_instance_id = None;
 
     // 远端 API 鉴权拒绝描述的是旧 access_token。OAuth 已换入新凭据后继续

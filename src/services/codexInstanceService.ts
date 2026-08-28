@@ -36,7 +36,7 @@ export async function startInstance(
   instanceId: string,
   options?: {
     transferConflictingAccount?: boolean;
-    skipAuthCheck?: boolean;
+    skipFailedStep?: string;
   },
 ): Promise<InstanceProfile> {
   const startedAt = performance.now();
@@ -48,7 +48,7 @@ export async function startInstance(
       instanceId,
       transferConflictingAccount:
         options?.transferConflictingAccount === true ? true : null,
-      skipAuthCheck: options?.skipAuthCheck === true ? true : null,
+      skipFailedStep: options?.skipFailedStep ?? null,
     });
   } finally {
     console.info(
@@ -59,6 +59,11 @@ export async function startInstance(
       },
     );
   }
+}
+
+/** 请求后端停止目标实例的启动事务；弹框是否关闭由调用方决定。 */
+export async function cancelInstanceStart(instanceId: string): Promise<void> {
+  await invoke("codex_cancel_instance_start", { instanceId });
 }
 export const stopInstance = service.stopInstance;
 export const closeAllInstances = service.closeAllInstances;

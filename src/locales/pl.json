@@ -555,7 +555,9 @@
       "progress": "Postęp uruchamiania",
       "conflictTitle": "Konto jest używane",
       "completedTitle": "Instancja uruchomiona",
+      "cancelledTitle": "Uruchamianie anulowane",
       "failedTitle": "Nie udało się uruchomić instancji",
+      "skipAndLaunch": "Pomiń i uruchom",
       "conflictAccount": "Konto: {{account}}",
       "conflictDescription": "To konto działa w {{owners}}. Aby oficjalne instancje nie rywalizowały o refresh_token, jedno konto OAuth może działać tylko w jednej instancji.",
       "locate": "Znajdź instancję",
@@ -2131,11 +2133,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Klient wymaga logowania",
       "reauthorizeTitle": "Autoryzacja Codex wygasła",
-      "apiOnlyDescription": "Klient tego konta wymaga ponownej autoryzacji. Usługa API jest nadal dostępna.",
-      "observationStatus": "Ostatnie sprawdzenie wykazało, że klient tego konta wymaga ponownej autoryzacji.",
+      "apiOnlyDescription": "Bieżący klient przeszedł na stronę logowania. Ponownie go autoryzuj, aby przywrócić działanie klienta; usługa API jest na razie nadal dostępna.",
+      "observationStatus": "Wykryto przekierowanie na stronę logowania",
       "observationTime": "Ostatnie sprawdzenie: {{time}}",
       "loginRedirectTime": "Ostatnie przekierowanie na stronę logowania: {{time}}",
       "observationInstance": "Obserwowana instancja: {{instance}}",
+      "launchTime": "Czas uruchomienia instancji: {{time}}",
       "reauthorizeDescription": "Nie udało się odnowić danych logowania, a access_token nie jest już dostępny dla usługi API. Ponownie autoryzuj konto.",
       "idTokenUnavailable": "Tożsamość klienta wygasła, a automatyczne odnowienie nie zwróciło prawidłowego id_token.",
       "reasonLabel": "Powód",
@@ -2149,7 +2152,9 @@
       "startInstanceAfterReauthFailed": "Autoryzacja została zaktualizowana, ale nie udało się uruchomić instancji: {{error}}",
       "reauthorizedAndStartedInstance": "Ponownie autoryzowano i uruchomiono instancję",
       "apiOnlyBadge": "Wymagane logowanie",
-      "skipAuthCheck": "Pomiń sprawdzanie i kontynuuj"
+      "clearClientAuth": "Wyczyść ostrzeżenie",
+      "clearClientAuthSuccess": "Ostrzeżenie klienta wyczyszczone",
+      "clearClientAuthFailed": "Nie udało się wyczyścić ostrzeżenia klienta: {{error}}"
     },
     "current": "Bieżące",
     "empty": {

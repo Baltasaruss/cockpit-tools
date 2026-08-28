@@ -602,7 +602,9 @@
       "progress": "تقدم التشغيل",
       "conflictTitle": "الحساب قيد الاستخدام",
       "completedTitle": "تم تشغيل المثيل",
+      "cancelledTitle": "تم إلغاء التشغيل",
       "failedTitle": "فشل تشغيل المثيل",
+      "skipAndLaunch": "تخطّي وبدء التشغيل",
       "conflictAccount": "الحساب: {{account}}",
       "conflictDescription": "هذا الحساب يعمل في {{owners}}. لمنع المثيلات الرسمية من التنافس على refresh_token، يمكن تشغيل حساب OAuth واحد في مثيل واحد فقط.",
       "locate": "تحديد موقع المثيل",
@@ -2178,11 +2180,12 @@
     "switchAuth": {
       "apiOnlyTitle": "يلزم تسجيل دخول العميل",
       "reauthorizeTitle": "انتهى تفويض Codex",
-      "apiOnlyDescription": "تم اكتشاف أن عميل هذا الحساب يحتاج إلى التفويض مجددًا، بينما تظل خدمة API متاحة.",
-      "observationStatus": "أظهر آخر فحص أن عميل هذا الحساب يحتاج إلى التفويض مجددًا.",
+      "apiOnlyDescription": "انتقل العميل الحالي إلى صفحة تسجيل الدخول. أعد التفويض لاستعادة استخدام العميل؛ ويمكنك مواصلة استخدام خدمة API مؤقتًا.",
+      "observationStatus": "تم اكتشاف انتقال إلى صفحة تسجيل الدخول",
       "observationTime": "وقت آخر فحص: {{time}}",
       "loginRedirectTime": "آخر انتقال إلى صفحة تسجيل الدخول: {{time}}",
       "observationInstance": "مثيل الرصد: {{instance}}",
+      "launchTime": "وقت بدء المثيل الحالي: {{time}}",
       "reauthorizeDescription": "تعذر تحديث بيانات تسجيل الدخول ولم يعد access_token متاحًا لخدمة API. أعد تفويض الحساب للمتابعة.",
       "idTokenUnavailable": "انتهت صلاحية بيانات هوية العميل ولم يُرجع التحديث التلقائي id_token صالحًا.",
       "reasonLabel": "السبب",
@@ -2196,7 +2199,9 @@
       "startInstanceAfterReauthFailed": "تم تحديث التفويض، لكن فشل تشغيل المثيل: {{error}}",
       "reauthorizedAndStartedInstance": "تمت إعادة التفويض وتشغيل المثيل",
       "apiOnlyBadge": "يلزم التفويض",
-      "skipAuthCheck": "تخطّي الفحص والمتابعة"
+      "clearClientAuth": "مسح التحذير",
+      "clearClientAuthSuccess": "تم مسح تحذير العميل",
+      "clearClientAuthFailed": "تعذر مسح تحذير العميل: {{error}}"
     },
     "current": "الحالي",
     "empty": {

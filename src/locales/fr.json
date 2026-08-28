@@ -555,7 +555,9 @@
       "progress": "Progression du démarrage",
       "conflictTitle": "Compte déjà utilisé",
       "completedTitle": "Instance démarrée",
+      "cancelledTitle": "Lancement annulé",
       "failedTitle": "Échec du démarrage",
+      "skipAndLaunch": "Ignorer et lancer",
       "conflictAccount": "Compte : {{account}}",
       "conflictDescription": "Ce compte est actif dans {{owners}}. Pour éviter que les instances officielles se disputent le refresh_token, un compte OAuth ne peut fonctionner que dans une seule instance.",
       "locate": "Localiser l’instance",
@@ -2131,11 +2133,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Connexion client requise",
       "reauthorizeTitle": "Autorisation Codex expirée",
-      "apiOnlyDescription": "Le client de ce compte doit être autorisé à nouveau. Le service API reste disponible.",
-      "observationStatus": "La dernière vérification a détecté que le client de ce compte doit être autorisé à nouveau.",
+      "apiOnlyDescription": "Le client actuel a été redirigé vers la page de connexion. Réautorisez-le pour rétablir son utilisation ; le service API reste utilisable pour le moment.",
+      "observationStatus": "Redirection vers la page de connexion détectée",
       "observationTime": "Dernière vérification : {{time}}",
       "loginRedirectTime": "Dernière redirection vers la page de connexion : {{time}}",
       "observationInstance": "Instance observée : {{instance}}",
+      "launchTime": "Heure de démarrage de l’instance : {{time}}",
       "reauthorizeDescription": "Les identifiants n’ont pas pu être renouvelés et le access_token n’est plus utilisable par le service API. Réautorisez le compte pour continuer.",
       "idTokenUnavailable": "L’identité du client a expiré et le renouvellement automatique n’a pas fourni de id_token valide.",
       "reasonLabel": "Raison",
@@ -2149,7 +2152,9 @@
       "startInstanceAfterReauthFailed": "Autorisation mise à jour, mais l’instance n’a pas pu démarrer : {{error}}",
       "reauthorizedAndStartedInstance": "Réautorisé et instance démarrée",
       "apiOnlyBadge": "Connexion requise",
-      "skipAuthCheck": "Ignorer la vérification et continuer"
+      "clearClientAuth": "Effacer l’avertissement",
+      "clearClientAuthSuccess": "Avertissement du client effacé",
+      "clearClientAuthFailed": "Impossible d’effacer l’avertissement du client : {{error}}"
     },
     "current": "Actuel",
     "empty": {

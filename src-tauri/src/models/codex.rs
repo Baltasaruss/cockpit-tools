@@ -235,6 +235,9 @@ pub struct CodexAccount {
     pub last_client_auth_observed_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_client_login_redirect_at: Option<i64>,
+    /// 最近一次启动并开始观测该 Codex 实例的时间（Unix seconds）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_client_launch_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_client_auth_instance_id: Option<String>,
     pub quota: Option<CodexQuota>,
@@ -517,6 +520,7 @@ impl CodexAccount {
             client_auth_status: None,
             last_client_auth_observed_at: None,
             last_client_login_redirect_at: None,
+            last_client_launch_at: None,
             last_client_auth_instance_id: None,
             quota: None,
             quota_error: None,

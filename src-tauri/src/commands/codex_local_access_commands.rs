@@ -443,7 +443,7 @@ pub async fn codex_local_access_activate(
                 app.clone(),
                 true,
                 Some("instance-launch"),
-                false,
+                None,
             )
             .await
             {

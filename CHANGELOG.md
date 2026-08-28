@@ -12,11 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - **Codex OAuth tokens can now be force-refreshed manually**: the account overview can use the current `refresh_token` to obtain a new `access_token` and `id_token`, persist the result locally, and update the account state immediately.
-- **Codex account pools now provide pool-level diagnostics**: when a request cannot select an available account, the account-pool dialog shows the model, candidate accounts, scope matches, available accounts, quota reservations, and image-policy decisions, with an action to resynchronize the pool.
+- **Codex account pools now provide pool-level diagnostics**: when a request cannot select an available account, the account-pool dialog shows the model, candidate accounts, auth identity, proxy selection, scope matches, availability, quota reservations, and image-policy decisions, with an action to resynchronize the pool.
 - **API Service now supports per-account image-generation policies**: an account in a pool can be set to inherit, enable, or disable image generation, while text and image requests continue to route according to the selected account's capabilities.
 
 ### Changed
 
+- **Codex launch progress can now be cancelled and continued after skippable failures**: users can cancel the transaction at any time, or close the dialog to cancel and close it; when a skippable check, gateway preparation, or maintenance step fails, the dialog offers “Skip and launch” to continue starting the client.
+- **Codex client auth observation now uses less runtime overhead**: realtime login status uses a lightweight CDP page snapshot every 5 seconds, while full network diagnostics run in the background every 30 seconds without blocking status updates or continuously occupying the client's debugging channel.
+- **Codex client reauthorization notices now explain the detected login-page state**: users can reauthorize to restore client use, while API Service remains usable for now.
+- **Client authorization-required state is now an account-card notice only**: it no longer blocks switching or launching, and the details dialog provides reauthorization and a clear-warning action.
+- **Codex client state and API authorization state are now presented separately**: observed client sign-in redirects, Token refresh failures, and server revocations no longer share one status. An explicit server revocation has the highest priority and is never shown alongside “Client authorization required” or “API Service available.”
 - **Codex launch, account switching, and OAuth binding now share one authentication flow**: the account overview, default instance, managed instances, API Service bindings, and API Key accounts bound to OAuth reuse the same credential preparation, Token refresh, reauthorization, progress presentation, and result persistence.
 - **Codex OAuth authorization URLs now match the official desktop client**: authorization uses the official `chatgpt.com/codex/desktop-auth` page and desktop-client identity parameters, while Cockpit owns PKCE, the `localhost:1455` callback, and Token exchange. Browser authorization therefore works without the official client installed and when Windows cannot execute `codex.exe` inside `WindowsApps`.
 - **Codex client launch no longer treats a local expired `id_token` as a hard gate**: Token refresh is attempted before launch only when the `access_token` is confirmed expired; reauthorization is based on the official runtime's observed state and can be handled through the shared flow with a choice to reauthorize or continue.
@@ -29,6 +34,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Fixed client sign-in state being inferred from incidental page text**: “Client authorization required” is now recorded only from the official `/login` route or the complete LoginRoute UI signature used by the desktop `MemoryRouter`; ordinary login wording, auth hints, and non-Codex CDP targets no longer trigger reauthorization.
+- **Fixed delayed account-card updates after client sign-in observations were persisted**: once an official login-page or recovered-availability state passes consecutive confirmation and is saved, the account overview synchronizes it immediately without a manual refresh or waiting for the next polling cycle.
+- **Codex client login-page observations now include an instance timeline**: issue details show the instance launch time, login-page redirect time, detection time, and observed instance in a fixed order so it is clear when the client entered the login page.
+- **Fixed client-auth observations blocking switching and launching**: a client login-page observation is no longer converted into a launch authorization failure; clearing the warning removes only local observation fields and never changes Tokens or a genuine server-side authorization failure.
+- **Fixed account-pool issues not appearing promptly after real API Service dispatch failures**: an internal `auth_unavailable` result now produces account-level and pool-level diagnostics and synchronizes them to the UI immediately. Error text follows the Cockpit Tools language setting, using Chinese for the Chinese UI and English otherwise.
 - **Fixed the switch dialog reporting “API Service available” after an API 401**: switch authorization results now consider both recorded remote API rejection and local Token expiry, so an actually unavailable account is not shown as API-only available.
 - **Fixed new credentials being overwritten by stale data after reauthorization or official-client rotation**: switching, reauthorization, quota refresh, local synchronization, and API bindings now preserve the latest credentials, avoiding a return to an old `access_token` or `refresh_token` and subsequent remote revocation.
 - **Fixed account pools showing “no available account” without an abnormal-account detail**: pool-level failures are retained even when no individual account is flagged, and the account-pool dialog now provides actionable recovery.
@@ -41,7 +51,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - **The account overview and managed instances now share the same Codex client launch experience**: “Switch and launch” from the account overview, the default instance, and managed instances now use the same launch progress and authentication-result presentation, including consistent `access_token` and `id_token` expiration, refresh, and reauthorization states. Authorization or launch failures can be retried from the same dialog, and the original launch resumes after reauthorization succeeds.
-- **The top promotional announcement is hidden by default**: the top promotion area on the home page is no longer shown, while other announcements and update notices remain unchanged.
 
 ## [1.3.32] - 2026-08-26
 

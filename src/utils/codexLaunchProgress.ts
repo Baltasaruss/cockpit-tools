@@ -20,7 +20,7 @@ export type CodexLaunchStepStatus =
   | 'error';
 
 export interface CodexMappedLaunchProgress {
-  type?: 'start' | 'complete' | 'error';
+  type?: 'start' | 'complete' | 'cancelled' | 'error';
   instanceId: string;
   instanceName: string;
   isDefault: true;
@@ -33,6 +33,7 @@ export interface CodexMappedLaunchProgress {
   error?: string;
   authFailure?: CodexSwitchAuthFailure | null;
   canRetry?: boolean;
+  source: 'switch-service';
 }
 
 const SWITCH_STEP_MAP: Record<string, CodexLaunchStepId> = {
@@ -75,7 +76,7 @@ export function mapCodexSwitchProgressToLaunch(
       : {};
   return {
     type:
-      payload.type === 'start' || payload.type === 'complete' || payload.type === 'error'
+      payload.type === 'start' || payload.type === 'complete' || payload.type === 'cancelled' || payload.type === 'error'
         ? payload.type
         : undefined,
     instanceId: '__default__',
@@ -93,5 +94,6 @@ export function mapCodexSwitchProgressToLaunch(
     error: typeof payload.error === 'string' ? payload.error : undefined,
     authFailure: (payload.authFailure as CodexSwitchAuthFailure | null | undefined) ?? null,
     canRetry: payload.canRetry === true,
+    source: 'switch-service',
   };
 }

@@ -3140,6 +3140,14 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
         } | null;
         if (payload?.platformId !== "codex") return;
         if (payload.reason === "delete") return;
+        if (
+          payload.reason === "client-auth-observation" ||
+          payload.reason === "client-auth-launch"
+        ) {
+          // CDP 已完成连续确认并落盘，立即回读权威账号快照，避免卡片等待轮询。
+          await Promise.all([fetchAccounts(), fetchCurrentAccount()]);
+          return;
+        }
         if (payload.accountId) {
           await refreshApiKeyUsageByAccountId(payload.accountId, {
             force: false,
@@ -3171,7 +3179,7 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
         unlistenAccountsChanged?.();
         unlistenCurrentChanged?.();
       };
-    }, [refreshApiKeyUsageByAccountId]);
+    }, [fetchAccounts, fetchCurrentAccount, refreshApiKeyUsageByAccountId]);
   
     const formatApiKeyUsageMoney = useCallback(
       (value?: number | null, unit?: string | null): string =>

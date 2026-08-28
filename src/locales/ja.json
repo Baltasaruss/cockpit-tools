@@ -555,7 +555,9 @@
       "progress": "起動の進行状況",
       "conflictTitle": "アカウントは使用中です",
       "completedTitle": "インスタンスを起動しました",
+      "cancelledTitle": "起動をキャンセルしました",
       "failedTitle": "インスタンスの起動に失敗しました",
+      "skipAndLaunch": "スキップして起動",
       "conflictAccount": "アカウント：{{account}}",
       "conflictDescription": "このアカウントは {{owners}} で実行中です。公式インスタンス間で refresh_token が競合しないよう、1 つの OAuth アカウントは 1 つのインスタンスでのみ実行できます。",
       "locate": "インスタンスを表示",
@@ -2131,11 +2133,12 @@
     "switchAuth": {
       "apiOnlyTitle": "クライアントのログインが必要",
       "reauthorizeTitle": "Codex の認証期限切れ",
-      "apiOnlyDescription": "このアカウントのクライアントには再認証が必要です。API サービスは引き続き利用できます。",
-      "observationStatus": "最新の確認で、このアカウントのクライアントに再認証が必要だと判定されました。",
+      "apiOnlyDescription": "現在のクライアントがログインページに移動しました。クライアントを復元するには再認証してください。しばらくは API サービスを引き続き利用できます。",
+      "observationStatus": "ログインページへのリダイレクトを検出しました",
       "observationTime": "最新の確認：{{time}}",
       "loginRedirectTime": "ログインページへの最新のリダイレクト：{{time}}",
       "observationInstance": "確認したインスタンス：{{instance}}",
+      "launchTime": "インスタンスの起動時刻：{{time}}",
       "reauthorizeDescription": "ログイン情報を更新できず、access_token も API サービスで利用できません。続行するには再認証してください。",
       "idTokenUnavailable": "クライアント ID 情報の期限が切れ、自動更新でも有効な id_token を取得できませんでした。",
       "reasonLabel": "理由",
@@ -2149,7 +2152,9 @@
       "startInstanceAfterReauthFailed": "認証情報は更新されましたが、インスタンスを起動できませんでした：{{error}}",
       "reauthorizedAndStartedInstance": "再認証してインスタンスを起動しました",
       "apiOnlyBadge": "再認証必要",
-      "skipAuthCheck": "確認をスキップして続行"
+      "clearClientAuth": "警告をクリア",
+      "clearClientAuthSuccess": "クライアントの警告をクリアしました",
+      "clearClientAuthFailed": "クライアントの警告をクリアできませんでした：{{error}}"
     },
     "current": "現在",
     "empty": {

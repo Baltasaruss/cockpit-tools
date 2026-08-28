@@ -121,6 +121,7 @@ export function isCodexApiOnlyAccessTokenUsable(
   account?: CodexAccount | null,
   nowSeconds = Math.floor(Date.now() / 1000),
 ): boolean {
+  if (isCodexServerRevokedReauth(account)) return false;
   if (isCodexApiServiceAuthRejected(account)) return false;
   const token = account?.tokens?.access_token?.trim() || "";
   if (!token) return false;
@@ -160,6 +161,28 @@ export function isCodexIdTokenReauthReason(reason?: string | null): boolean {
     normalized.includes("expired") ||
     normalized.includes("invalid") ||
     normalized.includes("missing")
+  );
+}
+
+/**
+ * 服务端明确撤销 Codex 授权时，账号进入最高优先级的终止状态。
+ * 这类状态表示 refresh_token 无法恢复，不能再与“客户端需授权但 API 仍可用”并列展示。
+ */
+export function isCodexServerRevokedReauth(
+  account?: CodexAccount | null,
+): boolean {
+  if (!account) return false;
+  const reason = String(account.reauth_reason || "").trim().toLowerCase();
+  const quotaCode = String(account.quota_error?.code || "")
+    .trim()
+    .toLowerCase();
+  return (
+    reason.includes("refresh_token_invalidated") ||
+    reason.includes("token_invalidated") ||
+    reason.includes("authentication token has been invalidated") ||
+    reason.includes("服务端撤销") ||
+    quotaCode === "refresh_token_invalidated" ||
+    quotaCode === "token_invalidated"
   );
 }
 

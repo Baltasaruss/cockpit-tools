@@ -13,6 +13,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import * as codexInstanceService from "../services/codexInstanceService";
+import * as codexService from "../services/codexService";
 import * as codexLocalAccessService from "../services/codexLocalAccessService";
 import { useCodexAccountStore } from "../stores/useCodexAccountStore";
 import { useCodexInstanceStore } from "../stores/useCodexInstanceStore";
@@ -41,11 +42,12 @@ type LaunchStatus =
   | "running"
   | "conflict"
   | "completed"
+  | "cancelled"
   | "auth-required"
   | "error";
 
 interface LaunchProgressPayload {
-  type?: "start" | "conflict" | "complete" | "error";
+  type?: "start" | "conflict" | "complete" | "cancelled" | "error";
   instanceId?: string;
   instanceName?: string;
   isDefault?: boolean;
@@ -61,6 +63,7 @@ interface LaunchProgressPayload {
   accountId?: string;
   operation?: CodexLaunchOperation;
   source?: "switch-service";
+  cancelled?: boolean;
 }
 
 interface LaunchStepState {
@@ -83,6 +86,8 @@ interface LaunchProgressState {
   transferConflictingAccount?: boolean;
   accountId?: string;
   operation?: CodexLaunchOperation;
+  cancelled?: boolean;
+  source?: "switch-service";
 }
 
 const STEP_IDS: LaunchStepId[] = [
@@ -106,6 +111,7 @@ function createState(payload: LaunchProgressPayload): LaunchProgressState {
     transferConflictingAccount: payload.transferConflictingAccount === true,
     accountId: payload.accountId,
     operation: payload.operation || "instance-launch",
+    source: payload.source,
   };
 }
 
@@ -120,10 +126,10 @@ function optionalBoolean(value: unknown): boolean | null {
 export function CodexInstanceLaunchProgressModal() {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<LaunchProgressState | null>(null);
-  const [actionBusy, setActionBusy] = useState<"locate" | "transfer" | null>(
+  const [actionBusy, setActionBusy] = useState<"locate" | "transfer" | "cancel" | null>(
     null,
   );
-  const [retryBusy, setRetryBusy] = useState<"retry" | "skip" | null>(null);
+  const [retryBusy, setRetryBusy] = useState<"retry" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [apiActionBusy, setApiActionBusy] = useState(false);
   const accounts = useCodexAccountStore((store) => store.accounts);
@@ -152,6 +158,7 @@ export function CodexInstanceLaunchProgressModal() {
               ...previous,
               progress: Math.max(previous.progress, payload.progress ?? 2),
               status: "running",
+              source: payload.source,
             };
           }
           return createState(payload);
@@ -188,6 +195,14 @@ export function CodexInstanceLaunchProgressModal() {
             steps,
           };
         }
+        if (payload.type === "cancelled" || payload.cancelled === true) {
+          return {
+            ...base,
+            status: "cancelled",
+            error: undefined,
+            cancelled: true,
+          };
+        }
         if (payload.type === "error") {
           const authFailure =
             payload.authFailure ?? parseCodexSwitchAuthFailure(payload.error);
@@ -216,6 +231,7 @@ export function CodexInstanceLaunchProgressModal() {
             transferConflictingAccount:
               payload.transferConflictingAccount ??
               base.transferConflictingAccount,
+            cancelled: false,
           };
         }
         return {
@@ -472,6 +488,8 @@ export function CodexInstanceLaunchProgressModal() {
       ? t("instances.accountLease.conflictTitle")
       : state.status === "completed"
         ? t("instances.accountLease.completedTitle")
+        : state.status === "cancelled"
+          ? t("instances.accountLease.cancelledTitle")
         : state.status === "error"
           ? t("instances.accountLease.failedTitle")
           : t("instances.accountLease.title");
@@ -571,34 +589,78 @@ export function CodexInstanceLaunchProgressModal() {
       setRetryBusy(null);
     }
   };
-  const skipAuthCheckAndLaunch = async () => {
-    if (retryBusy || !authFailure?.apiOnlyAvailable) return;
-    setRetryBusy("skip");
+
+  const failedStepId = state.source === "switch-service"
+    ? undefined
+    : state.steps.find((step) =>
+        step.status === "error" || step.status === "warning",
+      )?.id;
+
+  const cancelLaunch = async () => {
+    if (!state || actionBusy === "cancel") return;
+    setActionBusy("cancel");
     setActionError(null);
     try {
       if (state.operation === "switch-and-start" && state.accountId) {
-        await useCodexAccountStore.getState().switchAccount(state.accountId, {
-          launchAfterSwitch: true,
-          skipAuthCheck: true,
-        });
-      } else {
-        const instance = await codexInstanceService.startInstance(
-          state.instanceId,
-          {
-            transferConflictingAccount: state.transferConflictingAccount,
-            skipAuthCheck: true,
-          },
-        );
-        window.dispatchEvent(
-          new CustomEvent("codex:instance-launch-transferred", {
-            detail: { instance },
-          }),
-        );
+        await invoke("codex_cancel_account_switch", { accountId: state.accountId });
       }
+      await codexInstanceService.cancelInstanceStart(state.instanceId);
+    } catch (error) {
+      setActionError(String(error).replace(/^Error:\s*/, ""));
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const closeLaunch = async () => {
+    if (state.status === "running") {
+      await cancelLaunch();
+    }
+    setState(null);
+  };
+
+  const skipAndLaunch = async () => {
+    if (!failedStepId || retryBusy) return;
+    setRetryBusy("retry");
+    setActionError(null);
+    try {
+      const instance = await codexInstanceService.startInstance(state.instanceId, {
+        transferConflictingAccount: state.transferConflictingAccount,
+        skipFailedStep: failedStepId,
+      });
+      window.dispatchEvent(
+        new CustomEvent("codex:instance-launch-transferred", { detail: { instance } }),
+      );
     } catch (error) {
       setActionError(String(error).replace(/^Error:\s*/, ""));
     } finally {
       setRetryBusy(null);
+    }
+  };
+
+  const clearClientAuthObservation = async () => {
+    if (
+      apiActionBusy ||
+      retryBusy ||
+      authFailure?.reasonCode !== "client_login_required" ||
+      !accountId
+    ) {
+      return;
+    }
+    setActionError(null);
+    setApiActionBusy(true);
+    try {
+      await codexService.clearClientAuthObservation(accountId);
+      await useCodexAccountStore.getState().fetchAccounts();
+      setState(null);
+    } catch (error) {
+      setActionError(
+        t("codex.switchAuth.clearClientAuthFailed", {
+          error: String(error).replace(/^Error:\s*/, ""),
+        }),
+      );
+    } finally {
+      setApiActionBusy(false);
     }
   };
   const selectOtherAccount = () => {
@@ -678,6 +740,8 @@ export function CodexInstanceLaunchProgressModal() {
                   ? "error"
                 : state.status === "completed"
                   ? "completed"
+                  : state.status === "cancelled"
+                    ? "error"
                   : ""
             }`}
           >
@@ -691,6 +755,8 @@ export function CodexInstanceLaunchProgressModal() {
               )
             ) : state.status === "completed" ? (
               <Check size={19} />
+            ) : state.status === "cancelled" ? (
+              <X size={19} />
             ) : (
               <RefreshCw size={18} className="loading-spinner" />
             )}
@@ -699,22 +765,16 @@ export function CodexInstanceLaunchProgressModal() {
             <h2>{title}</h2>
             <p>{authFailure ? accountLabel : instanceLabel}</p>
           </div>
-          {state.status !== "running" && (
-            <button
-              type="button"
-              className="codex-switch-progress-close"
-              onClick={() => setState(null)}
-              disabled={
-                retryBusy !== null ||
-                actionBusy !== null ||
-                apiActionBusy
-              }
-              aria-label={t("common.close", "关闭")}
-              title={t("common.close", "关闭")}
-            >
-              <X size={18} />
-            </button>
-          )}
+          <button
+            type="button"
+            className="codex-switch-progress-close"
+            onClick={() => void closeLaunch()}
+            disabled={retryBusy !== null || actionBusy !== null || apiActionBusy}
+            aria-label={t("common.close", "关闭")}
+            title={t("common.close", "关闭")}
+          >
+            <X size={18} />
+          </button>
         </div>
 
         <div className="codex-switch-progress-overview">
@@ -835,12 +895,32 @@ export function CodexInstanceLaunchProgressModal() {
           )}
         </div>
 
+        {state.status === "running" && (
+          <div className="codex-switch-progress-footer codex-instance-launch-footer">
+            <button type="button" className="btn btn-secondary" onClick={() => void cancelLaunch()} disabled={actionBusy !== null}>
+              {actionBusy === "cancel" && <RefreshCw size={14} className="loading-spinner" />}
+              {t("common.cancel", "取消")}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => void closeLaunch()} disabled={actionBusy !== null}>
+              {t("common.close", "关闭")}
+            </button>
+          </div>
+        )}
+
+        {state.status === "cancelled" && (
+          <div className="codex-switch-progress-footer codex-instance-launch-footer">
+            <button type="button" className="btn btn-primary" onClick={() => setState(null)}>
+              {t("common.close", "关闭")}
+            </button>
+          </div>
+        )}
+
         {state.status === "error" && !authFailure && (
           <div className="codex-switch-progress-footer codex-instance-launch-footer">
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setState(null)}
+                  onClick={() => void closeLaunch()}
                   disabled={retryBusy !== null}
                 >
                   {t("common.close", "关闭")}
@@ -858,6 +938,11 @@ export function CodexInstanceLaunchProgressModal() {
                     {t("common.retry", "重试")}
                   </button>
                 )}
+                {failedStepId && (
+                  <button type="button" className="btn btn-secondary" onClick={() => void skipAndLaunch()} disabled={retryBusy !== null}>
+                    {t("instances.accountLease.skipAndLaunch")}
+                  </button>
+                )}
           </div>
         )}
 
@@ -869,7 +954,7 @@ export function CodexInstanceLaunchProgressModal() {
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setState(null)}
+                  onClick={() => void closeLaunch()}
                   disabled={apiActionBusy}
                 >
                   {t("common.cancel", "取消")}
@@ -886,6 +971,18 @@ export function CodexInstanceLaunchProgressModal() {
                       : t("codex.localAccess.entryAction", "添加至 API 服务")}
                   </button>
                 )}
+                {authFailure.reasonCode === "client_login_required" && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void clearClientAuthObservation()}
+                    disabled={apiActionBusy || retryBusy !== null}
+                  >
+                    {apiActionBusy
+                      ? t("common.loading", "加载中...")
+                      : t("codex.switchAuth.clearClientAuth", "清除异常标识")}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -894,16 +991,9 @@ export function CodexInstanceLaunchProgressModal() {
                 >
                   {t("common.reauthorize", "重新授权")}
                 </button>
-                {authFailure.apiOnlyAvailable && (
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => void skipAuthCheckAndLaunch()}
-                    disabled={apiActionBusy || retryBusy !== null}
-                  >
-                    {retryBusy === "skip"
-                      ? t("common.loading", "加载中...")
-                      : t("codex.switchAuth.skipAuthCheck", "跳过检查并继续")}
+                {failedStepId && (
+                  <button type="button" className="btn btn-secondary" onClick={() => void skipAndLaunch()} disabled={apiActionBusy || retryBusy !== null}>
+                    {t("instances.accountLease.skipAndLaunch")}
                   </button>
                 )}
               </>
@@ -912,7 +1002,7 @@ export function CodexInstanceLaunchProgressModal() {
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setState(null)}
+                  onClick={() => void closeLaunch()}
                   disabled={actionBusy !== null}
                 >
                   {t("common.close", "关闭")}
@@ -952,7 +1042,7 @@ export function CodexInstanceLaunchProgressModal() {
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setState(null)}
+                onClick={() => void closeLaunch()}
               >
                 {t("common.close", "关闭")}
               </button>

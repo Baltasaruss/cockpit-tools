@@ -614,7 +614,9 @@
       "progress": "Progres peluncuran",
       "conflictTitle": "Akun sedang digunakan",
       "completedTitle": "Instans telah dimulai",
+      "cancelledTitle": "Peluncuran dibatalkan",
       "failedTitle": "Gagal memulai instans",
+      "skipAndLaunch": "Lewati dan luncurkan",
       "conflictAccount": "Akun: {{account}}",
       "conflictDescription": "Akun ini sedang berjalan di {{owners}}. Agar instans resmi tidak berebut refresh_token, satu akun OAuth hanya dapat berjalan di satu instans.",
       "locate": "Temukan instans",
@@ -2178,11 +2180,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Klien perlu masuk",
       "reauthorizeTitle": "Otorisasi Codex kedaluwarsa",
-      "apiOnlyDescription": "Klien untuk akun ini perlu diotorisasi ulang. Layanan API masih tersedia.",
-      "observationStatus": "Pemeriksaan terakhir mendeteksi bahwa klien akun ini perlu diotorisasi ulang.",
+      "apiOnlyDescription": "Klien saat ini telah membuka halaman login. Otorisasi ulang untuk memulihkan penggunaan klien; Layanan API masih dapat digunakan untuk sementara.",
+      "observationStatus": "Terdeteksi pengalihan ke halaman masuk",
       "observationTime": "Pemeriksaan terakhir: {{time}}",
       "loginRedirectTime": "Pengalihan terakhir ke halaman masuk: {{time}}",
       "observationInstance": "Instans yang diamati: {{instance}}",
+      "launchTime": "Waktu mulai instans: {{time}}",
       "reauthorizeDescription": "Kredensial masuk tidak dapat diperbarui dan access_token tidak lagi tersedia untuk layanan API. Otorisasi ulang akun untuk melanjutkan.",
       "idTokenUnavailable": "Identitas klien telah kedaluwarsa dan pembaruan otomatis tidak menghasilkan id_token yang valid.",
       "reasonLabel": "Alasan",
@@ -2196,7 +2199,9 @@
       "startInstanceAfterReauthFailed": "Otorisasi diperbarui, tetapi instance gagal dimulai: {{error}}",
       "reauthorizedAndStartedInstance": "Diotorisasi ulang dan instance dimulai",
       "apiOnlyBadge": "Perlu otorisasi",
-      "skipAuthCheck": "Lewati pemeriksaan dan lanjutkan"
+      "clearClientAuth": "Hapus peringatan",
+      "clearClientAuthSuccess": "Peringatan klien dihapus",
+      "clearClientAuthFailed": "Gagal menghapus peringatan klien: {{error}}"
     },
     "current": "Saat Ini",
     "account": {

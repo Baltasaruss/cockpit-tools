@@ -24,6 +24,7 @@ fn classify_refresh_error(message: &str) -> CodexRefreshErrorKind {
     if lower.contains("refresh_token_invalidated")
         || lower.contains("token_invalidated")
         || lower.contains("authentication token has been invalidated")
+        || lower.contains("服务端撤销")
     {
         return CodexRefreshErrorKind::RefreshTokenInvalidated;
     }
@@ -46,6 +47,14 @@ fn is_reauth_required_refresh_error(message: &str) -> bool {
             | CodexRefreshErrorKind::RefreshTokenExpired
             | CodexRefreshErrorKind::RefreshTokenInvalidated
             | CodexRefreshErrorKind::InvalidGrant
+    )
+}
+
+/// 服务端明确撤销授权是账号级终止状态，不能再降级为仅客户端需授权。
+fn is_server_revoked_refresh_error(message: &str) -> bool {
+    matches!(
+        classify_refresh_error(message),
+        CodexRefreshErrorKind::RefreshTokenInvalidated
     )
 }
 
@@ -105,30 +114,24 @@ pub(crate) fn format_account_switch_error(account_id: &str, error: String) -> St
     let Some(account) = load_account(account_id) else {
         return error;
     };
-    let client_login_required = account.client_auth_status.as_deref() == Some("login_required");
-    if !account.requires_reauth && !client_login_required {
+    // CDP 客户端登录页观测只用于账号卡片展示，不把任何普通切号/启动错误包装成
+    // 授权失败弹框。只有 Token Authority 明确写入 requires_reauth 时才进入此状态。
+    if !account.requires_reauth {
         return error;
     }
 
-    let reason = if client_login_required && !account.requires_reauth {
-        "官方客户端上次运行时检测到需要登录，请重新授权后再启动。".to_string()
-    } else {
-        account
-            .reauth_reason
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(error)
-    };
+    let reason = account
+        .reauth_reason
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(error);
     let payload = serde_json::json!({
         "accountId": account.id,
-        "reasonCode": if client_login_required && !account.requires_reauth {
-            "client_login_required"
-        } else {
-            switch_auth_reason_code(&reason)
-        },
+        "reasonCode": switch_auth_reason_code(&reason),
         // 本地 JWT 尚未到 exp 不能覆盖已确认的远端 API 401/403；否则切号弹框
         // 会把实际不可用的账号误报成“API 服务可用”。
-        "apiOnlyAvailable": !codex_oauth::is_token_expired(&account.tokens.access_token)
+        "apiOnlyAvailable": !is_server_revoked_refresh_error(&reason)
+            && !codex_oauth::is_token_expired(&account.tokens.access_token)
             && !account_has_remote_api_auth_rejection(&account),
         "accessTokenExpiresAt": codex_oauth::jwt_token_expiration_timestamp(
             &account.tokens.access_token,
@@ -136,11 +139,6 @@ pub(crate) fn format_account_switch_error(account_id: &str, error: String) -> St
         "message": reason,
     });
     format!("{}{}", CODEX_SWITCH_AUTH_REQUIRED_PREFIX, payload)
-}
-
-/// 返回由 CDP 观察到的客户端登录状态是否需要用户确认重新授权。
-pub(crate) fn client_auth_status_requires_reauthorization(account: &CodexAccount) -> bool {
-    account.client_auth_status.as_deref() == Some("login_required")
 }
 
 fn mark_account_requires_reauth(account: &mut CodexAccount, reason: &str) -> Result<(), String> {
@@ -188,6 +186,70 @@ pub(crate) async fn update_client_auth_observation(
         account.last_client_login_redirect_at = Some(now);
     }
     save_account_with_tombstone_guard(&account)
+}
+
+/// 记录实例本次启动（或恢复监控）的时间，不触碰任何 Token 或授权状态。
+pub(crate) async fn record_client_launch(
+    account_id: &str,
+    instance_id: &str,
+    launched_at: i64,
+) -> Result<(), String> {
+    let token_lock = codex_token_lock_for(account_id);
+    let _token_guard = token_lock.lock().await;
+    let _file_guard =
+        acquire_codex_token_refresh_file_lock(account_id, "client-launch-observation").await?;
+    let _guard = CODEX_ACCOUNT_MUTATION_LOCK
+        .lock()
+        .map_err(|_| "Codex 账号写入锁已损坏".to_string())?;
+    let Some(mut account) = load_account(account_id) else {
+        return Err(format!("账号不存在: {}", account_id));
+    };
+    account.last_client_launch_at = Some(launched_at);
+    account.last_client_auth_instance_id = Some(instance_id.to_string());
+    save_account_with_tombstone_guard(&account)
+}
+
+/// 清除官方客户端登录页观测状态。
+///
+/// 这里只清理 CDP 观察字段，不清理 Token Authority 明确写入的
+/// `requires_reauth`/`reauth_reason`，也不修改任何 Token，避免把真实的远端凭据
+/// 失效伪装成正常。客户端观测状态只用于账号卡片展示，用户可随时手动清理。
+pub(crate) async fn clear_client_auth_observation(
+    account_id: &str,
+) -> Result<bool, String> {
+    let token_lock = codex_token_lock_for(account_id);
+    let _token_guard = token_lock.lock().await;
+    let _file_guard =
+        acquire_codex_token_refresh_file_lock(account_id, "clear-client-auth-observation").await?;
+    let _guard = CODEX_ACCOUNT_MUTATION_LOCK
+        .lock()
+        .map_err(|_| "Codex 账号写入锁已损坏".to_string())?;
+    let Some(mut account) = load_account(account_id) else {
+        return Err(format!("账号不存在: {}", account_id));
+    };
+    let had_observation = account.client_auth_status.is_some()
+        || account.last_client_auth_observed_at.is_some()
+        || account.last_client_login_redirect_at.is_some()
+        || account.last_client_launch_at.is_some()
+        || account.last_client_auth_instance_id.is_some();
+    if !had_observation {
+        return Ok(false);
+    }
+    account.client_auth_status = None;
+    account.last_client_auth_observed_at = None;
+    account.last_client_login_redirect_at = None;
+    account.last_client_launch_at = None;
+    account.last_client_auth_instance_id = None;
+    save_account_with_tombstone_guard(&account)?;
+    crate::modules::codex_auth_diagnostic::log_event(
+        "client_auth_observation_cleared_by_user",
+        serde_json::json!({
+            "account_id": account.id,
+            "email": account.email,
+            "reason": "user_clear_client_auth_observation",
+        }),
+    );
+    Ok(true)
 }
 
 pub(crate) fn managed_account_tokens_need_refresh(account: &CodexAccount) -> bool {

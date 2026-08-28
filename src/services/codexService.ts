@@ -107,13 +107,17 @@ export async function forceRefreshCodexTokens(accountId: string): Promise<CodexA
   return await invoke<CodexAccount>('force_refresh_codex_tokens', { accountId });
 }
 
+/** 清除官方客户端登录页观测标识，不修改 Token 或远端授权状态。 */
+export async function clearClientAuthObservation(accountId: string): Promise<boolean> {
+  return await invoke<boolean>('codex_clear_client_auth_observation', { accountId });
+}
+
 /** 切换 Codex 账号 */
 export async function switchCodexAccount(
   accountId: string,
   options?: {
     reauthTokenGeneration?: number;
     launchAfterSwitch?: boolean;
-    skipAuthCheck?: boolean;
   },
 ): Promise<CodexAccount> {
   const startedAt = performance.now();
@@ -155,7 +159,6 @@ export async function switchCodexAccount(
         typeof options?.reauthTokenGeneration === 'number' ? options.reauthTokenGeneration : null,
       launchAfterSwitch:
         typeof options?.launchAfterSwitch === 'boolean' ? options.launchAfterSwitch : null,
-      skipAuthCheck: options?.skipAuthCheck === true ? true : null,
     });
     window.dispatchEvent(
       new CustomEvent('codex-switch-progress', {
@@ -184,6 +187,29 @@ export async function switchCodexAccount(
     }
     return account;
   } catch (error) {
+    if (String(error).includes('CODEX_START_CANCELLED')) {
+      const cancelledPayload = {
+        type: 'cancelled' as const,
+        accountId,
+        error: 'CODEX_START_CANCELLED',
+        cancelled: true,
+      };
+      window.dispatchEvent(new CustomEvent('codex-switch-progress', { detail: cancelledPayload }));
+      if (options?.launchAfterSwitch === true) {
+        window.dispatchEvent(
+          new CustomEvent('codex:instance-launch-progress', {
+            detail: {
+              ...cancelledPayload,
+              instanceId: '__default__',
+              instanceName: '',
+              isDefault: true,
+              operation: 'switch-and-start',
+            },
+          }),
+        );
+      }
+      throw error;
+    }
     const normalizedError = normalizeCodexSwitchError(error);
     window.dispatchEvent(
       new CustomEvent('codex-switch-progress', {

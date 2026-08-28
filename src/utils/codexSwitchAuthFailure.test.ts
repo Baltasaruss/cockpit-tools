@@ -8,6 +8,7 @@ import {
   isCodexClientReauthNoticeOnly,
   isCodexIdTokenReauthReason,
   isCodexRefreshTokenNoticeOnly,
+  isCodexServerRevokedReauth,
   normalizeCodexSwitchError,
   parseCodexSwitchAuthFailure,
 } from "./codexSwitchAuthFailure.ts";
@@ -101,6 +102,29 @@ test("remote API 401 overrides local access token expiration heuristic", () => {
   assert.equal(isCodexApiServiceAuthRejected(account), true);
   assert.equal(isCodexApiOnlyAccessTokenUsable(account, now), false);
   assert.equal(isCodexRefreshTokenNoticeOnly(account, now), false);
+});
+
+test("server-revoked authorization is terminal and never API-only", () => {
+  const now = 2_000_000_000;
+  const account = accountWithAccessToken(jwt(now + 3600));
+  account.requires_reauth = true;
+  account.reauth_reason =
+    "Codex 登录授权已被服务端撤销，无法自动刷新。请重新登录 Codex 账号。";
+  account.client_auth_status = "login_required";
+
+  assert.equal(isCodexServerRevokedReauth(account), true);
+  assert.equal(isCodexApiOnlyAccessTokenUsable(account, now), false);
+  assert.equal(isCodexClientReauthNoticeOnly(account, now), false);
+
+  const quotaRejected = accountWithAccessToken(jwt(now + 3600));
+  quotaRejected.client_auth_status = "login_required";
+  quotaRejected.quota_error = {
+    code: "token_invalidated",
+    message: "API 返回错误 401 Unauthorized",
+    timestamp: 1,
+  };
+  assert.equal(isCodexServerRevokedReauth(quotaRejected), true);
+  assert.equal(isCodexApiOnlyAccessTokenUsable(quotaRejected, now), false);
 });
 
 test("refresh token 401 alone does not invalidate a still-usable access token", () => {

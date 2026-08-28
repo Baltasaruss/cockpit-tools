@@ -9,6 +9,34 @@ const CODEX_BATCH_DELETE_JOBS_DIR: &str = "codex_batch_delete_jobs";
 const CODEX_MAIL_PREVIEW_MAX_BYTES: usize = 512 * 1024;
 static CODEX_BATCH_DELETE_JOBS: LazyLock<Mutex<HashMap<String, CodexBatchDeleteJob>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static CODEX_SWITCH_CANCEL_REQUESTS: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn request_codex_switch_cancel(account_id: &str) {
+    CODEX_SWITCH_CANCEL_REQUESTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(account_id.to_string());
+}
+
+fn clear_codex_switch_cancel(account_id: &str) {
+    CODEX_SWITCH_CANCEL_REQUESTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(account_id);
+}
+
+fn ensure_codex_switch_not_cancelled(account_id: &str) -> Result<(), String> {
+    if CODEX_SWITCH_CANCEL_REQUESTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .contains(account_id)
+    {
+        Err("CODEX_START_CANCELLED".to_string())
+    } else {
+        Ok(())
+    }
+}
 
 struct CodexSwitchProgressGuard {
     app: AppHandle,
@@ -860,6 +888,15 @@ pub async fn force_refresh_codex_tokens(account_id: String) -> Result<CodexAccou
     codex_account::force_refresh_managed_account(&account_id, "用户手动强制刷新 Token").await
 }
 
+/// 清除账号上由 CDP 记录的“客户端跳转登录页”观测标识。
+///
+/// 该操作只影响账号卡片上的客户端观测状态，不会修改 Token、远端授权状态或
+/// API 服务可用性判断。
+#[tauri::command]
+pub async fn codex_clear_client_auth_observation(account_id: String) -> Result<bool, String> {
+    codex_account::clear_client_auth_observation(&account_id).await
+}
+
 /// 切换 Codex 账号（包含 token 刷新检查）
 #[tauri::command]
 pub async fn switch_codex_account(
@@ -868,8 +905,8 @@ pub async fn switch_codex_account(
     auto_repair_mode: Option<codex_session_visibility::CodexSessionVisibilityAutoRepairMode>,
     reauth_token_generation: Option<u64>,
     launch_after_switch: Option<bool>,
-    skip_auth_check: Option<bool>,
 ) -> Result<CodexAccount, String> {
+    clear_codex_switch_cancel(&account_id);
     let _profile_lease = codex_account::try_acquire_profile_mutation_lease(
         &codex_account::get_codex_home(),
         "oauth-account-switch",
@@ -894,6 +931,7 @@ pub async fn switch_codex_account(
     ));
     let initial_account = codex_account::load_account(&account_id)
         .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+    ensure_codex_switch_not_cancelled(&account_id)?;
     let is_oauth_account = !initial_account.is_api_key_auth()
         && !initial_account.is_agent_identity_auth()
         && !initial_account.is_web_session_auth();
@@ -910,34 +948,8 @@ pub async fn switch_codex_account(
     let initial_token_generation = initial_account.token_generation;
     let user_config = config::get_user_config();
     let launch_after_switch = launch_after_switch.unwrap_or(user_config.codex_launch_on_switch);
-    let skip_auth_check = skip_auth_check.unwrap_or(false);
-    if launch_after_switch
-        && !skip_auth_check
-        && !is_reauth_handoff
-        && codex_account::client_auth_status_requires_reauthorization(&initial_account)
-    {
-        // 启动前先处理上次 CDP 对官方客户端登录页的观测，避免先落盘切号、
-        // 关闭当前运行态后才发现客户端会跳登录。
-        let formatted_error = codex_account::format_account_switch_error(
-            &account_id,
-            "官方客户端上次运行时检测到需要登录，请重新授权后再启动。".to_string(),
-        );
-        logger::log_warn(&format!(
-            "[Codex Switch][Backend] client auth observation requires reauthorization before commit: account_id={}",
-            account_id
-        ));
-        let _ = app.emit(
-            "codex:switch-progress",
-            serde_json::json!({
-                "accountId": account_id,
-                "type": "error",
-                "error": formatted_error.clone(),
-                "canRetry": false,
-            }),
-        );
-        progress_guard.completed = true;
-        return Err(formatted_error);
-    }
+    // client_auth_status 仅记录官方客户端运行后的观测结果，不参与切号或启动拦截。
+    // 真实 Token Authority 失败仍由 prepare/switch 流程返回结构化授权错误。
     if launch_after_switch {
         let default_settings = crate::modules::codex_instance::load_default_settings()?;
         if default_settings.launch_mode != crate::models::InstanceLaunchMode::Cli {
@@ -1084,13 +1096,6 @@ pub async fn switch_codex_account(
             before_commit,
         )
         .await
-    } else if skip_auth_check {
-        codex_account::switch_account_managed_with_before_commit_options(
-            &account_id,
-            true,
-            before_commit,
-        )
-        .await
     } else {
         codex_account::switch_account_managed_with_before_commit_and_revalidation_options(
             &account_id,
@@ -1098,6 +1103,7 @@ pub async fn switch_codex_account(
         )
         .await
     };
+    ensure_codex_switch_not_cancelled(&account_id)?;
     let account = match switch_result {
         Ok(account) => account,
         Err(error) => {
@@ -1239,6 +1245,7 @@ pub async fn switch_codex_account(
     );
 
     if launch_after_switch {
+        ensure_codex_switch_not_cancelled(&account_id)?;
         emit_codex_switch_step(
             &app,
             &account_id,
@@ -1259,7 +1266,7 @@ pub async fn switch_codex_account(
                 app.clone(),
                 true,
                 Some("switch-and-start"),
-                skip_auth_check,
+                None,
             )
             .await
             {
@@ -1352,7 +1359,24 @@ pub async fn switch_codex_account(
         }),
     );
     progress_guard.completed = true;
+    clear_codex_switch_cancel(&account_id);
     Ok(account)
+}
+
+/// 请求停止账号切换及其后续启动事务；不会修改账号凭据或授权状态。
+#[tauri::command]
+pub async fn codex_cancel_account_switch(app: AppHandle, account_id: String) -> Result<(), String> {
+    request_codex_switch_cancel(&account_id);
+    let _ = app.emit(
+        "codex:switch-progress",
+        serde_json::json!({
+            "accountId": account_id,
+            "type": "cancelled",
+            "error": "CODEX_START_CANCELLED",
+            "cancelled": true,
+        }),
+    );
+    Ok(())
 }
 
 async fn run_codex_post_refresh_checks(app: &AppHandle) {
@@ -1366,7 +1390,7 @@ async fn run_codex_post_refresh_checks(app: &AppHandle) {
     match codex_account::pick_auto_switch_target_if_needed() {
         Ok(Some(target)) => {
             let target_id = target.id.clone();
-            match switch_codex_account(app.clone(), target_id.clone(), None, None, None, None).await
+            match switch_codex_account(app.clone(), target_id.clone(), None, None, None).await
             {
                 Ok(switched_account) => {
                     logger::log_info(&format!(
