@@ -18,7 +18,7 @@
 ### 变更
 
 - **Codex 启动、切号和 OAuth 绑定统一使用同一套认证流程**：账号总览、默认实例、多开实例、API Service 绑定和 API Key 绑定 OAuth 均复用一致的凭据准备、Token 刷新、重新授权、进度展示和结果回写逻辑。
-- **Codex OAuth 授权流程对齐官方 app-server**：由本地官方 `app-server` 创建并维护登录会话、`localhost:1455` 回调和 Token 交换，授权地址使用官方 `chatgpt.com/codex/desktop-auth` 包装；授权完成后从官方凭据存储回读最新 Token，取消或失败时会安全结束对应会话。
+- **Codex OAuth 授权链接与官方桌面客户端对齐**：授权地址使用官方 `chatgpt.com/codex/desktop-auth` 页面及桌面客户端身份参数，同时由 Cockpit 自己维护 PKCE、`localhost:1455` 回调和 Token 交换；未安装官方客户端，或 Windows 无权执行 `WindowsApps` 内的 `codex.exe` 时，也可正常完成浏览器授权。
 - **Codex 客户端启动不再把本地 `id_token` 过期作为硬性门槛**：启动前仅在 `access_token` 确认过期时刷新 Token；客户端是否需要重新授权以官方运行态的实际观测结果为准，并可在统一流程中选择重新授权或继续。
 - **Codex API Service 的账号可用性改为以后端真实请求结果为准**：额度/API 请求明确返回 401、403 或 Token 被远端拒绝后，账号会从已准备缓存和候选池中移除，并进入统一重新授权状态；本地 JWT 尚未到期不再覆盖远端拒绝结果。
 - **Codex API Service 与多开实例的 provider gateway 按 profile 隔离**：API Service、账号绑定和多开实例使用各自的本地网关生命周期与端口，停止或重启一个 profile 不会影响其他实例。
