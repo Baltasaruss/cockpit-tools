@@ -337,6 +337,18 @@ fn apply_sidecar_account_pool_health(
         health.model_excluded_auths = event.model_excluded_auths;
         health.quota_reserved_auths = event.quota_reserved_auths;
         health.image_policy_blocked_auths = event.image_policy_blocked_auths;
+        health.account_statuses = event
+            .account_statuses
+            .iter()
+            .filter(|item| !item.account_id.trim().is_empty())
+            .map(|item| RuntimeAccountPoolMemberHealth {
+                account_id: item.account_id.trim().to_string(),
+                account_email: item.account_email.trim().to_string(),
+                available: item.available,
+                reason_code: item.reason_code.trim().to_string(),
+                reason_message: item.reason_message.trim().to_string(),
+            })
+            .collect();
     }
     health.last_failure_at = now;
 }

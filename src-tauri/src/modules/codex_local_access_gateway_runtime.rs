@@ -699,6 +699,17 @@ fn build_account_pool_health_snapshot(
             model_excluded_auths: health.model_excluded_auths,
             quota_reserved_auths: health.quota_reserved_auths,
             image_policy_blocked_auths: health.image_policy_blocked_auths,
+            account_statuses: health
+                .account_statuses
+                .iter()
+                .map(|item| CodexLocalAccessAccountPoolMemberHealth {
+                    account_id: item.account_id.clone(),
+                    account_email: item.account_email.clone(),
+                    available: item.available,
+                    reason_code: item.reason_code.clone(),
+                    reason_message: item.reason_message.clone(),
+                })
+                .collect(),
             last_failure_at: health.last_failure_at,
         })
         .collect::<Vec<_>>();

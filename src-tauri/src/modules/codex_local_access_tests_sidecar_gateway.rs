@@ -84,6 +84,13 @@
             candidate_auths: 2,
             scoped_auths: 2,
             unavailable_auths: 2,
+            account_statuses: vec![super::SidecarAccountStatus {
+                account_id: "account-1".to_string(),
+                account_email: "one@example.com".to_string(),
+                available: false,
+                reason_code: "auth_refresh_failed".to_string(),
+                reason_message: "invalid refresh token".to_string(),
+            }],
             ..Default::default()
         };
 
@@ -97,6 +104,8 @@
         assert!(health.diagnostic_available);
         assert_eq!(health.candidate_auths, 2);
         assert_eq!(health.unavailable_auths, 2);
+        assert_eq!(health.account_statuses.len(), 1);
+        assert_eq!(health.account_statuses[0].reason_code, "auth_refresh_failed");
         assert_eq!(health.last_failure_at, 1_000_000);
     }
 

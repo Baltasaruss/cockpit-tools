@@ -907,6 +907,68 @@ func TestAccountPoolFailureEmitsScopeDiagnosticsWithoutAccountID(t *testing.T) {
 	}
 }
 
+func TestAccountPoolFailureIncludesPerAccountUnavailableReason(t *testing.T) {
+	account := &accountSpec{ID: "account-1", Email: "one@example.com", AuthID: "account-1.json"}
+	selector := &cockpitSelector{
+		manifest: &manifest{
+			accountByAuthID: map[string]*accountSpec{"account-1.json": account},
+			accountByID:     map[string]*accountSpec{"account-1": account},
+		},
+		emitter: &eventEmitter{},
+	}
+	auths := []*coreauth.Auth{{
+		ID:        "account-1.json",
+		Provider:  "codex",
+		Status:    coreauth.StatusDisabled,
+		LastError: &coreauth.Error{Code: "invalid_refresh_token", Message: "refresh token is invalid"},
+	}}
+
+	out := captureStdout(t, func() {
+		if _, err := selector.Pick(context.Background(), "codex", "gpt-5.5", cliproxyexecutor.Options{}, auths); err == nil {
+			t.Fatal("expected unavailable auth selection to fail")
+		}
+	})
+
+	var payload requestDiagnosticPayload
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("pool diagnostic should be JSON: %v\n%s", err, out)
+	}
+	if len(payload.AccountStatuses) != 1 {
+		t.Fatalf("expected one account diagnostic, got %#v; raw=%s", payload.AccountStatuses, out)
+	}
+	status := payload.AccountStatuses[0]
+	if status.AccountID != "account-1" || status.AccountEmail != "one@example.com" || status.Available {
+		t.Fatalf("unexpected account identity/status: %#v", status)
+	}
+	if status.ReasonCode != "disabled" || !strings.Contains(status.ReasonMessage, "account is disabled") {
+		t.Fatalf("unexpected unavailable reason: %#v", status)
+	}
+}
+
+func TestAuthPoolUnavailableErrorUsesChineseOnlyForChineseRequests(t *testing.T) {
+	stats := authPoolSelectionStats{
+		candidateAuths:     3,
+		unavailableAuths:   1,
+		modelExcludedAuths: 1,
+		quotaReservedAuths: 1,
+	}
+
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ginContext.Request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	zhContext := context.WithValue(context.Background(), "gin", ginContext)
+	zhError := authPoolUnavailableError(zhContext, stats, "no auth available")
+	if !strings.Contains(zhError.Message, "账号池没有可用账号：候选 3 个") {
+		t.Fatalf("unexpected Chinese error message: %q", zhError.Message)
+	}
+
+	englishError := authPoolUnavailableError(context.Background(), stats, "no auth available")
+	if !strings.Contains(englishError.Message, "No available account: candidates=3") {
+		t.Fatalf("unexpected English error message: %q", englishError.Message)
+	}
+}
+
 func TestAPIKeyPriorityStateOrdersFallbackAccountsWithoutRestart(t *testing.T) {
 	tempDir := t.TempDir()
 	priorityPath := filepath.Join(tempDir, "api-key-priorities.json")

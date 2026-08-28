@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Codex API Service and managed-instance provider gateways are isolated by profile**: each API Service binding and managed instance uses its own local gateway lifecycle and port, so stopping or restarting one profile does not affect other instances.
 - **Codex quota refresh now avoids repeated runtime probing**: one process snapshot is reused per batch and quota requests use bounded concurrency, reducing Windows subprocess overhead and request contention during refresh bursts.
 - **OAuth authorization URLs now support a remotely controlled, locally cached client-version default**: authorization uses a fixed official client version; the default can be updated remotely and cached locally so authorization continues during temporary remote-config outages, while users can override it manually in Settings.
+- **Codex browser OAuth authorization now waits up to 10 minutes**: login, MFA, and callback handling have more time to complete, while the device-code authorization timeout remains unchanged.
 - **Subscription details are explicitly labeled as “Subscription validity”**: account cards and details no longer blur subscription expiry with Token expiry.
 
 ### Fixed

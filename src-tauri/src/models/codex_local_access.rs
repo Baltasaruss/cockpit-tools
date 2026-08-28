@@ -832,7 +832,19 @@ pub struct CodexLocalAccessAccountPoolHealth {
     pub model_excluded_auths: usize,
     pub quota_reserved_auths: usize,
     pub image_policy_blocked_auths: usize,
+    #[serde(default)]
+    pub account_statuses: Vec<CodexLocalAccessAccountPoolMemberHealth>,
     pub last_failure_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalAccessAccountPoolMemberHealth {
+    pub account_id: String,
+    pub account_email: String,
+    pub available: bool,
+    pub reason_code: String,
+    pub reason_message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

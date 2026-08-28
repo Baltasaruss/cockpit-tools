@@ -376,6 +376,44 @@ export function CodexAccountPoolHealthModal({
                         : health.errorMessage}
                     </code>
                   )}
+                  {(health.accountStatuses ?? []).length > 0 && (
+                    <div className="codex-account-pool-health-members">
+                      {(health.accountStatuses ?? []).map((member) => {
+                        const account = accounts.find((item) => item.id === member.accountId);
+                        const rawName = resolveIssueDisplayName(
+                          account,
+                          null,
+                          member.accountEmail || member.accountId,
+                        );
+                        const displayName = maskAccountText
+                          ? maskAccountText(rawName)
+                          : rawName;
+                        return (
+                          <div
+                            className={`codex-account-pool-health-member ${member.available ? "is-available" : "is-unavailable"}`}
+                            key={`${health.apiKeyId}:${member.accountId}`}
+                          >
+                            <div className="codex-account-pool-health-member-primary">
+                              <strong title={displayName}>{displayName}</strong>
+                              <span className="codex-account-pool-health-item-status">
+                                {member.available
+                                  ? t("codex.apiService.health.availableAccounts", "可用")
+                                  : t("codex.apiService.accountHealth.unavailable", "不可用")}
+                              </span>
+                              {member.reasonCode.trim() && (
+                                <code>{member.reasonCode}</code>
+                              )}
+                            </div>
+                            {member.reasonMessage.trim() && (
+                              <p className="codex-account-pool-health-member-detail">
+                                {member.reasonMessage}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
               {issues.map((issue) => (

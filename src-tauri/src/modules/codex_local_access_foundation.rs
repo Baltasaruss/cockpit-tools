@@ -3,7 +3,7 @@
 use crate::models::codex::{CodexAccount, CodexApiProviderMode, CodexAppSpeed, CodexAuthMode};
 use crate::models::codex_local_access::{
     CodexLocalAccessAccountCooldown, CodexLocalAccessAccountHealth,
-    CodexLocalAccessAccountPoolHealth,
+    CodexLocalAccessAccountPoolHealth, CodexLocalAccessAccountPoolMemberHealth,
     CodexLocalAccessAccountModelRule, CodexLocalAccessAccountStats,
     CodexLocalAccessAccountWindowQuery, CodexLocalAccessAccountWindowStats, CodexLocalAccessApiKey,
     CodexLocalAccessApiKeyStats, CodexLocalAccessAppendAccountSkipped,
@@ -636,7 +636,17 @@ struct RuntimeAccountPoolHealth {
     model_excluded_auths: usize,
     quota_reserved_auths: usize,
     image_policy_blocked_auths: usize,
+    account_statuses: Vec<RuntimeAccountPoolMemberHealth>,
     last_failure_at: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RuntimeAccountPoolMemberHealth {
+    account_id: String,
+    account_email: String,
+    available: bool,
+    reason_code: String,
+    reason_message: String,
 }
 
 #[derive(Debug, Clone)]

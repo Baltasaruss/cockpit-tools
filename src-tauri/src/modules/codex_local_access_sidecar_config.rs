@@ -205,6 +205,23 @@ struct SidecarAuthResultEvent {
     quota_reserved_auths: usize,
     #[serde(default)]
     image_policy_blocked_auths: usize,
+    #[serde(default)]
+    account_statuses: Vec<SidecarAccountStatus>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarAccountStatus {
+    #[serde(default)]
+    account_id: String,
+    #[serde(default)]
+    account_email: String,
+    #[serde(default)]
+    available: bool,
+    #[serde(default)]
+    reason_code: String,
+    #[serde(default)]
+    reason_message: String,
 }
 
 fn local_access_sidecar_dir() -> Result<PathBuf, String> {

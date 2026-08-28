@@ -372,10 +372,20 @@ func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts
 	requestKind, _ := ctx.Value(requestKindContextKey).(string)
 	if isImageRequestKind(requestKind) {
 		beforeImagePolicy := len(auths)
+		beforeImageAuths := append([]*coreauth.Auth(nil), auths...)
 		auths = s.filterAuthsForImageGeneration(auths)
 		selectionStats.imagePolicyBlockedAuths = beforeImagePolicy - len(auths)
+		allowed := make(map[*coreauth.Auth]struct{}, len(auths))
+		for _, auth := range auths {
+			allowed[auth] = struct{}{}
+		}
+		for _, auth := range beforeImageAuths {
+			if _, ok := allowed[auth]; !ok {
+				selectionStats.members = append(selectionStats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, "image_policy_blocked", "image generation is disabled for this account"))
+			}
+		}
 		if len(auths) == 0 {
-			err := fmt.Errorf("noAuthAvailable: image generation is disabled for all selected accounts")
+			err := authPoolUnavailableError(ctx, selectionStats, "image generation is disabled for all selected accounts")
 			s.emitAuthPoolUnavailable(ctx, provider, model, selectionStats, err)
 			return nil, err
 		}
@@ -386,22 +396,27 @@ func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts
 	for _, auth := range auths {
 		if !authAvailable(auth, model, now) {
 			selectionStats.unavailableAuths++
+			reasonCode, reasonMessage := unavailableAuthDiagnostic(auth, model, now)
+			selectionStats.members = append(selectionStats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, reasonCode, reasonMessage))
 			continue
 		}
 		if authModelExcluded(s.manifest, auth, model) {
 			selectionStats.modelExcludedAuths++
+			selectionStats.members = append(selectionStats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, "model_excluded", "model is excluded for this account"))
 			continue
 		}
 		if reason := quotaReserveBlockReasonWithState(s.accountForAuth(auth), s.quota, now); reason != "" {
 			selectionStats.quotaReservedAuths++
 			quotaReserveReasons = append(quotaReserveReasons, reason)
+			selectionStats.members = append(selectionStats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, "quota_reserved", reason))
 			continue
 		}
 		available = append(available, auth)
+		selectionStats.members = append(selectionStats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), true, "available", "account is eligible for routing"))
 	}
 	selectionStats.availableAuths = len(available)
 	if len(available) == 0 {
-		err := noAuthAvailableError(quotaReserveReasons)
+		err := authPoolUnavailableError(ctx, selectionStats, noAuthAvailableError(quotaReserveReasons).Error())
 		s.emitAuthPoolUnavailable(ctx, provider, model, selectionStats, err)
 		return nil, err
 	}
@@ -418,7 +433,7 @@ func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts
 		ordered = s.prioritizeAuthsForAPIKey(ctx, ordered)
 	}
 	if len(ordered) == 0 {
-		err := noAuthAvailableError(quotaReserveReasons)
+		err := authPoolUnavailableError(ctx, selectionStats, noAuthAvailableError(quotaReserveReasons).Error())
 		s.emitAuthPoolUnavailable(ctx, provider, model, selectionStats, err)
 		return nil, err
 	}
@@ -1015,6 +1030,54 @@ type authPoolSelectionStats struct {
 	modelExcludedAuths      int
 	quotaReservedAuths      int
 	imagePolicyBlockedAuths int
+	members                 []authPoolMemberDiagnostic
+}
+
+// authPoolMemberDiagnostic contains the selector's actual per-account decision.
+type authPoolMemberDiagnostic struct {
+	AccountID     string `json:"accountId"`
+	AccountEmail  string `json:"accountEmail,omitempty"`
+	Available     bool   `json:"available"`
+	ReasonCode    string `json:"reasonCode"`
+	ReasonMessage string `json:"reasonMessage"`
+}
+
+func poolMemberDiagnostic(auth *coreauth.Auth, account *accountSpec, available bool, code, message string) authPoolMemberDiagnostic {
+	item := authPoolMemberDiagnostic{Available: available, ReasonCode: code, ReasonMessage: message}
+	if account != nil {
+		item.AccountID = strings.TrimSpace(account.ID)
+		item.AccountEmail = strings.TrimSpace(account.Email)
+	}
+	if item.AccountID == "" && auth != nil {
+		item.AccountID = strings.TrimSpace(auth.ID)
+	}
+	return item
+}
+
+func authPoolUnavailableError(ctx context.Context, stats authPoolSelectionStats, detail string) *coreauth.Error {
+	detail = strings.TrimSpace(detail)
+	if detail == "" || detail == "no auth available" {
+		detail = "no auth available"
+	}
+	chinese := false
+	if ctx != nil {
+		if provider, ok := ctx.Value("gin").(interface{ GetHeader(string) string }); ok && provider != nil {
+			language := strings.ToLower(strings.TrimSpace(provider.GetHeader("Accept-Language")))
+			chinese = strings.HasPrefix(language, "zh")
+		}
+	}
+	var message string
+	if chinese {
+		message = fmt.Sprintf("账号池没有可用账号：候选 %d 个，不可用 %d 个，模型排除 %d 个，额度保留拦截 %d 个，生图策略拦截 %d 个。请前往 Cockpit Tools 查看账号池诊断详情。",
+			stats.candidateAuths, stats.unavailableAuths, stats.modelExcludedAuths, stats.quotaReservedAuths, stats.imagePolicyBlockedAuths)
+	} else {
+		message = fmt.Sprintf("No available account: candidates=%d, unavailable=%d, model_excluded=%d, quota_reserved=%d, image_policy_blocked=%d. Check account pool diagnostics in Cockpit Tools.",
+			stats.candidateAuths, stats.unavailableAuths, stats.modelExcludedAuths, stats.quotaReservedAuths, stats.imagePolicyBlockedAuths)
+	}
+	if detail != "no auth available" && !chinese {
+		message += " " + detail
+	}
+	return &coreauth.Error{Code: "auth_unavailable", Message: message, HTTPStatus: http.StatusServiceUnavailable, Retryable: true}
 }
 
 // emitAuthPoolUnavailable reports selection failures that happen before an auth is chosen.
@@ -1062,7 +1125,43 @@ func (s *cockpitSelector) emitAuthPoolUnavailable(
 		ModelExcludedAuths:      stats.modelExcludedAuths,
 		QuotaReservedAuths:      stats.quotaReservedAuths,
 		ImagePolicyBlockedAuths: stats.imagePolicyBlockedAuths,
+		AccountStatuses:         stats.members,
 	})
+}
+
+func unavailableAuthDiagnostic(auth *coreauth.Auth, model string, now time.Time) (string, string) {
+	if auth == nil {
+		return "auth_missing", "auth record is missing"
+	}
+	if auth.Disabled || auth.Status == coreauth.StatusDisabled {
+		return "disabled", "account is disabled"
+	}
+	if model != "" && len(auth.ModelStates) > 0 {
+		state := auth.ModelStates[model]
+		if state == nil {
+			state = auth.ModelStates[resolveBaseModelKey(model)]
+		}
+		if state != nil && state.Status == coreauth.StatusDisabled {
+			return "model_disabled", "model is disabled for this account"
+		}
+		if state != nil && state.Unavailable && !state.NextRetryAfter.IsZero() && state.NextRetryAfter.After(now) {
+			return "model_cooldown", fmt.Sprintf("model cooldown until %s", state.NextRetryAfter.UTC().Format(time.RFC3339))
+		}
+	}
+	if auth.Unavailable && !auth.NextRetryAfter.IsZero() && auth.NextRetryAfter.After(now) {
+		return "account_cooldown", fmt.Sprintf("account cooldown until %s", auth.NextRetryAfter.UTC().Format(time.RFC3339))
+	}
+	if auth.LastError != nil && auth.LastError.Message != "" {
+		code := strings.TrimSpace(auth.LastError.Code)
+		if code == "" {
+			code = "auth_error"
+		}
+		return code, auth.LastError.Message
+	}
+	if auth.StatusMessage != "" {
+		return "unavailable", auth.StatusMessage
+	}
+	return "unavailable", "account is temporarily unavailable"
 }
 
 func (s *cockpitSelector) rotatedIndex(account *accountSpec, start int) int {

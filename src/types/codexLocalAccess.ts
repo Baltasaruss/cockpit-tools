@@ -355,7 +355,16 @@ export interface CodexLocalAccessAccountPoolHealth {
   modelExcludedAuths: number;
   quotaReservedAuths: number;
   imagePolicyBlockedAuths: number;
+  accountStatuses: CodexLocalAccessAccountPoolMemberHealth[];
   lastFailureAt: number;
+}
+
+export interface CodexLocalAccessAccountPoolMemberHealth {
+  accountId: string;
+  accountEmail: string;
+  available: boolean;
+  reasonCode: string;
+  reasonMessage: string;
 }
 
 export interface CodexLocalAccessProfileAttachment {
