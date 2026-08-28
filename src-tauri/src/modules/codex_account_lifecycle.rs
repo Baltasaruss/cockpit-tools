@@ -421,14 +421,14 @@ fn upsert_account_with_hints_and_reauth_target(
         acc
     };
 
-    // OAuth 重新授权已经替换了整条凭据链；此前由旧客户端页面留下的
-    // login_required 只代表历史观测结果，不能阻止新凭据首次启动。
-    if has_reauth_target {
-        account.client_auth_status = None;
-        account.last_client_auth_observed_at = None;
-        account.last_client_login_redirect_at = None;
-        account.last_client_auth_instance_id = None;
-    }
+    // OAuth 成功已经替换了当前账号的凭据链；此前由旧客户端页面留下的
+    // login_required 只代表历史观测结果，不能继续污染这次授权后的状态。
+    // 这里不能只依赖 reauth_target：用户从 OAuth 入口重新授权时可能没有
+    // 携带旧卡片 ID，但仍然会复用同一个账号记录。
+    account.client_auth_status = None;
+    account.last_client_auth_observed_at = None;
+    account.last_client_login_redirect_at = None;
+    account.last_client_auth_instance_id = None;
 
     if has_reauth_target && generated_id != account.id {
         let removed_duplicate = index.accounts.iter().any(|item| item.id == generated_id);
