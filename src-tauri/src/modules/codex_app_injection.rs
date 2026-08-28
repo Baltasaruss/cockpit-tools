@@ -33,6 +33,7 @@ const CDP_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const INJECTION_INTERVAL: Duration = Duration::from_secs(2);
 const QUOTA_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 const AUTH_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
+const AUTH_IDENTITY_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const AUTH_NETWORK_CAPTURE_WINDOW: Duration = Duration::from_secs(4);
 const AUTH_NETWORK_BODY_PREVIEW_LIMIT: usize = 4096;
 
@@ -204,6 +205,138 @@ fn observed_oauth_account_id(bind_account_id: Option<&str>) -> Option<String> {
         None
     } else {
         Some(account.id)
+    }
+}
+
+/// 当前 profile 的官方 OAuth 身份核对结果。
+///
+/// `Matched` 才允许把 CDP 页面状态写回本地账号；`Mismatched` 和 `Unknown`
+/// 只用于诊断，避免 profile 串号或落盘尚未完成时污染账号状态。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProfileOAuthIdentityObservation {
+    Matched {
+        account_id: String,
+        observed: crate::modules::codex_account::CodexOfficialOAuthIdentity,
+    },
+    Mismatched {
+        account_id: String,
+        observed: crate::modules::codex_account::CodexOfficialOAuthIdentity,
+    },
+    Unknown {
+        account_id: Option<String>,
+        reason: &'static str,
+    },
+}
+
+/// 在阻塞线程读取官方 auth.json/Keychain，避免认证存储访问卡住 Tokio 任务。
+async fn observe_profile_oauth_identity(
+    profile_dir: PathBuf,
+    bind_account_id: Option<String>,
+) -> ProfileOAuthIdentityObservation {
+    let fallback_account_id = bind_account_id.as_deref().and_then(|bind| {
+        if bind.is_empty() || crate::modules::codex_instance::is_api_service_bind_account_id(bind) {
+            return None;
+        }
+        Some(
+            crate::modules::codex_instance::parse_provider_gateway_bind_account_id(bind)
+                .unwrap_or_else(|| bind.to_string()),
+        )
+    });
+    let result = timeout(
+        CDP_CONNECT_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            let Some(account_id) = observed_oauth_account_id(bind_account_id.as_deref()) else {
+                return ProfileOAuthIdentityObservation::Unknown {
+                    account_id: None,
+                    reason: "no_oauth_binding",
+                };
+            };
+            let Some(account) = codex_account::load_account(&account_id) else {
+                return ProfileOAuthIdentityObservation::Unknown {
+                    account_id: Some(account_id),
+                    reason: "local_account_missing",
+                };
+            };
+            let Some(identity) = codex_account::read_official_oauth_identity(&profile_dir) else {
+                return ProfileOAuthIdentityObservation::Unknown {
+                    account_id: Some(account_id),
+                    reason: "official_identity_unavailable",
+                };
+            };
+            match codex_account::compare_official_oauth_identity(&identity, &account) {
+                codex_account::CodexOfficialOAuthIdentityMatch::Matched => {
+                    ProfileOAuthIdentityObservation::Matched {
+                        account_id,
+                        observed: identity,
+                    }
+                }
+                codex_account::CodexOfficialOAuthIdentityMatch::Mismatched => {
+                    ProfileOAuthIdentityObservation::Mismatched {
+                        account_id,
+                        observed: identity,
+                    }
+                }
+                codex_account::CodexOfficialOAuthIdentityMatch::Unknown => {
+                    ProfileOAuthIdentityObservation::Unknown {
+                        account_id: Some(account_id),
+                        reason: "official_identity_incomplete",
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(observation)) => observation,
+        _ => ProfileOAuthIdentityObservation::Unknown {
+            account_id: fallback_account_id,
+            reason: "official_identity_read_timeout",
+        },
+    }
+}
+
+fn log_profile_oauth_identity_observation(
+    instance_id: &str,
+    profile_key: &str,
+    observation: &ProfileOAuthIdentityObservation,
+) {
+    match observation {
+        ProfileOAuthIdentityObservation::Matched {
+            account_id,
+            observed,
+        } => logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth Identity] matched: instance_id={}, profile={}, account_id={}, observed_account_id={}, observed_user_id={}, observed_email={}, observed_organization_id={}",
+            instance_id,
+            profile_key,
+            account_id,
+            observed.account_id.as_deref().unwrap_or(""),
+            observed.user_id.as_deref().unwrap_or(""),
+            observed.email,
+            observed.organization_id.as_deref().unwrap_or(""),
+        )),
+        ProfileOAuthIdentityObservation::Mismatched {
+            account_id,
+            observed,
+        } => logger::log_warn(&format!(
+            "[Codex Auth Identity] profile identity mismatched: instance_id={}, profile={}, expected_account_id={}, observed_account_id={}, observed_user_id={}, observed_email={}, observed_organization_id={}",
+            instance_id,
+            profile_key,
+            account_id,
+            observed.account_id.as_deref().unwrap_or(""),
+            observed.user_id.as_deref().unwrap_or(""),
+            observed.email,
+            observed.organization_id.as_deref().unwrap_or(""),
+        )),
+        ProfileOAuthIdentityObservation::Unknown { account_id, reason } => {
+            logger::log_codex_auth_diagnostic(&format!(
+                "[Codex Auth Identity] unknown: instance_id={}, profile={}, expected_account_id={}, reason={}",
+                instance_id,
+                profile_key,
+                account_id.as_deref().unwrap_or(""),
+                reason,
+            ));
+        }
     }
 }
 
@@ -2065,6 +2198,9 @@ async fn run_auth_diagnostic_loop(
     let client = Client::new();
     let mut previous: Option<AuthDiagnosticObservation> = None;
     let mut previous_app_server: Option<AppServerDiagnosticObservation> = None;
+    let mut previous_profile_identity: Option<ProfileOAuthIdentityObservation> = None;
+    let mut last_identity_check_at: Option<Instant> = None;
+    let mut last_identity_status: Option<String> = None;
     let mut login_streak = 0u8;
     let mut available_streak = 0u8;
     loop {
@@ -2140,32 +2276,52 @@ async fn run_auth_diagnostic_loop(
             previous = Some(observation.clone());
         }
 
+        let mut stable_status = None;
         if observation.login_signal() {
             login_streak = login_streak.saturating_add(1);
             available_streak = 0;
             if login_streak >= 2 {
-                if let Some(account_id) = observed_oauth_account_id(bind_account_id.as_deref()) {
-                    let _ = codex_account::update_client_auth_observation(
-                        &account_id,
-                        &instance_id,
-                        "login_required",
-                        true,
-                    )
-                    .await;
-                }
+                stable_status = Some(("login_required", true));
             }
         } else if observation.cdp_available {
             available_streak = available_streak.saturating_add(1);
             login_streak = 0;
             if available_streak >= 2 {
-                if let Some(account_id) = observed_oauth_account_id(bind_account_id.as_deref()) {
-                    let _ = codex_account::update_client_auth_observation(
-                        &account_id,
-                        &instance_id,
-                        "available",
-                        false,
-                    )
-                    .await;
+                stable_status = Some(("available", false));
+            }
+        }
+
+        if let Some((status, login_redirect)) = stable_status {
+            let status_changed = last_identity_status.as_deref() != Some(status);
+            let retry_due = last_identity_check_at
+                .map(|checked_at| checked_at.elapsed() >= AUTH_IDENTITY_RETRY_INTERVAL)
+                .unwrap_or(true);
+            if !status_changed && !retry_due {
+                tokio::time::sleep(AUTH_DIAGNOSTIC_INTERVAL).await;
+                continue;
+            }
+            last_identity_check_at = Some(Instant::now());
+            last_identity_status = Some(status.to_string());
+            let identity =
+                observe_profile_oauth_identity(profile_dir.clone(), bind_account_id.clone()).await;
+            if previous_profile_identity.as_ref() != Some(&identity) {
+                log_profile_oauth_identity_observation(&instance_id, &profile_key, &identity);
+                previous_profile_identity = Some(identity.clone());
+            }
+            if let ProfileOAuthIdentityObservation::Matched { account_id, .. } = identity {
+                match codex_account::update_client_auth_observation(
+                    &account_id,
+                    &instance_id,
+                    status,
+                    login_redirect,
+                )
+                .await
+                {
+                    Ok(()) => {}
+                    Err(error) => logger::log_warn(&format!(
+                        "[Codex Auth Identity] failed to persist observation: instance_id={}, profile={}, account_id={}, status={}, error={}",
+                        instance_id, profile_key, account_id, status, error,
+                    )),
                 }
             }
         }
@@ -2397,6 +2553,11 @@ mod tests {
         remote_debugging_port_from_command_line, sanitize_cdp_headers,
         selected_model_from_cdp_response, should_capture_cdp_response_body, supports_bind_account,
         AuthPageSnapshot, CdpTarget, QuotaPlanSummary, QuotaResponse,
+    };
+    use crate::models::codex::{CodexAccount, CodexTokens};
+    use crate::modules::codex_account::{
+        compare_official_oauth_identity, CodexOfficialOAuthIdentity,
+        CodexOfficialOAuthIdentityMatch,
     };
     use serde_json::json;
 
@@ -2672,6 +2833,52 @@ mod tests {
         assert_eq!(observed.route, "/login");
         assert!(observed.login_signal());
         assert!(!observed.auth_error_text);
+    }
+
+    #[test]
+    fn auth_diagnostic_profile_identity_uses_account_id_before_email() {
+        let mut account = CodexAccount::new(
+            "local-account".to_string(),
+            "expected@example.com".to_string(),
+            CodexTokens {
+                id_token: String::new(),
+                access_token: String::new(),
+                refresh_token: None,
+            },
+        );
+        account.account_id = Some("chatgpt-account".to_string());
+        account.user_id = Some("chatgpt-user".to_string());
+
+        let matching = CodexOfficialOAuthIdentity {
+            email: "different@example.com".to_string(),
+            user_id: Some("chatgpt-user".to_string()),
+            account_id: Some("chatgpt-account".to_string()),
+            organization_id: None,
+        };
+        assert_eq!(
+            compare_official_oauth_identity(&matching, &account),
+            CodexOfficialOAuthIdentityMatch::Matched
+        );
+
+        let mismatched = CodexOfficialOAuthIdentity {
+            account_id: Some("other-account".to_string()),
+            ..matching.clone()
+        };
+        assert_eq!(
+            compare_official_oauth_identity(&mismatched, &account),
+            CodexOfficialOAuthIdentityMatch::Mismatched
+        );
+
+        let incomplete = CodexOfficialOAuthIdentity {
+            email: "expected@example.com".to_string(),
+            user_id: None,
+            account_id: None,
+            organization_id: None,
+        };
+        assert_eq!(
+            compare_official_oauth_identity(&incomplete, &account),
+            CodexOfficialOAuthIdentityMatch::Unknown
+        );
     }
 
     #[test]

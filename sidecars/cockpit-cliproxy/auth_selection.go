@@ -79,6 +79,16 @@ func (s *imageRequestSelector) Stop() {
 	}
 }
 
+func (s *imageRequestSelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*coreauth.Auth, err error) error {
+	if reporter, ok := s.imageFallback.(coreauth.AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	if reporter, ok := s.fallback.(coreauth.AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
+}
+
 func (s *modelExclusionSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
 	if s == nil || s.fallback == nil {
 		return nil, fmt.Errorf("model exclusion selector is not initialized")
@@ -108,6 +118,13 @@ func (s *modelExclusionSelector) Stop() {
 	}
 }
 
+func (s *modelExclusionSelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*coreauth.Auth, err error) error {
+	if reporter, ok := s.fallback.(coreauth.AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
+}
+
 func (s *recordingSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
 	auth, err := s.inner.Pick(ctx, provider, model, opts, auths)
 	if err != nil || auth == nil || s.tracker == nil {
@@ -121,6 +138,13 @@ func (s *recordingSelector) Stop() {
 	if stoppable, ok := s.inner.(coreauth.StoppableSelector); ok {
 		stoppable.Stop()
 	}
+}
+
+func (s *recordingSelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*coreauth.Auth, err error) error {
+	if reporter, ok := s.inner.(coreauth.AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
 }
 
 type quotaReserveSelector struct {
@@ -296,6 +320,13 @@ func (s *quotaReserveSelector) Stop() {
 	}
 }
 
+func (s *quotaReserveSelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*coreauth.Auth, err error) error {
+	if reporter, ok := s.fallback.(coreauth.AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
+}
+
 func (s *backupAccountSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
 	if s == nil || s.fallback == nil {
 		return nil, fmt.Errorf("backup account selector is not initialized")
@@ -362,6 +393,13 @@ func (s *backupAccountSelector) Stop() {
 	if stoppable, ok := s.fallback.(coreauth.StoppableSelector); ok {
 		stoppable.Stop()
 	}
+}
+
+func (s *backupAccountSelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*coreauth.Auth, err error) error {
+	if reporter, ok := s.fallback.(coreauth.AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
 }
 
 func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*coreauth.Auth) (*coreauth.Auth, error) {
@@ -457,6 +495,89 @@ func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts
 	selected := ordered[0]
 	s.emitAuthSelected(ctx, selected, provider, model, len(auths), len(available))
 	return selected, nil
+}
+
+// ReportAuthSelectionFailure handles failures raised by the manager's
+// availability pass, which runs before cockpitSelector.Pick. It intentionally
+// reuses the same account-level policy checks as Pick so the UI receives a
+// useful diagnostic for the real request path as well.
+func (s *cockpitSelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*coreauth.Auth, err error) error {
+	if s == nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stats := authPoolSelectionStats{candidateAuths: len(candidates)}
+	auths := s.filterAuthsForAPIKeyScope(ctx, candidates)
+	stats.scopedAuths = len(auths)
+	requestKind, _ := ctx.Value(requestKindContextKey).(string)
+	if isImageRequestKind(requestKind) {
+		before := len(auths)
+		beforeImage := append([]*coreauth.Auth(nil), auths...)
+		auths = s.filterAuthsForImageGeneration(auths)
+		stats.imagePolicyBlockedAuths = before - len(auths)
+		allowed := make(map[*coreauth.Auth]struct{}, len(auths))
+		for _, auth := range auths {
+			allowed[auth] = struct{}{}
+		}
+		for _, auth := range beforeImage {
+			if _, ok := allowed[auth]; !ok {
+				stats.members = append(stats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, "image_policy_blocked", "image generation is disabled for this account"))
+			}
+		}
+	}
+	now := time.Now()
+	for _, auth := range auths {
+		if !authAvailable(auth, model, now) {
+			stats.unavailableAuths++
+			code, message := unavailableAuthDiagnostic(auth, model, now)
+			stats.members = append(stats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, code, message))
+			continue
+		}
+		if authModelExcluded(s.manifest, auth, model) {
+			stats.modelExcludedAuths++
+			stats.members = append(stats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, "model_excluded", "model is excluded for this account"))
+			continue
+		}
+		if reason := quotaReserveBlockReasonWithState(s.accountForAuth(auth), s.quota, now); reason != "" {
+			stats.quotaReservedAuths++
+			stats.members = append(stats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), false, "quota_reserved", reason))
+			continue
+		}
+		stats.availableAuths++
+		stats.members = append(stats.members, poolMemberDiagnostic(auth, s.accountForAuth(auth), true, "available", "account passed Cockpit policy checks; manager availability rejected it"))
+	}
+	// The manager may reject a candidate because of runtime cooldown state that
+	// is not represented in Cockpit's policy layer. Do not claim success for
+	// those entries; attach the manager's reason to make the discrepancy clear.
+	if stats.availableAuths > 0 && len(stats.members) > 0 {
+		managerReason := "manager availability check rejected this account"
+		if err != nil && strings.TrimSpace(err.Error()) != "" {
+			managerReason = strings.TrimSpace(err.Error())
+		}
+		for index := range stats.members {
+			member := &stats.members[index]
+			if member.Available {
+				member.Available = false
+				member.ReasonCode = "manager_unavailable"
+				member.ReasonMessage = managerReason
+				stats.unavailableAuths++
+				stats.availableAuths--
+			}
+		}
+	}
+	detail := "no auth available"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		detail = strings.TrimSpace(err.Error())
+	}
+	diagnosticErr := authPoolUnavailableError(ctx, stats, detail)
+	var authErr *coreauth.Error
+	if errors.As(err, &authErr) && authErr != nil && strings.TrimSpace(authErr.Code) != "" {
+		diagnosticErr.Code = authErr.Code
+	}
+	s.emitAuthPoolUnavailable(ctx, provider, model, stats, diagnosticErr)
+	return diagnosticErr
 }
 
 // filterAuthsForImageGeneration enforces the member-level policy after API Key
@@ -740,15 +861,26 @@ func authAvailable(auth *coreauth.Auth, model string, now time.Time) bool {
 			if state.Status == coreauth.StatusDisabled {
 				return false
 			}
-			if state.Unavailable && !state.NextRetryAfter.IsZero() && state.NextRetryAfter.After(now) {
+			if runtimeAvailabilityBlocked(state.Unavailable, state.Quota.Exceeded, state.NextRetryAfter, state.Quota.NextRecoverAt, now) {
 				return false
 			}
 		}
 	}
-	if auth.Unavailable && !auth.NextRetryAfter.IsZero() && auth.NextRetryAfter.After(now) {
+	if runtimeAvailabilityBlocked(auth.Unavailable, auth.Quota.Exceeded, auth.NextRetryAfter, auth.Quota.NextRecoverAt, now) {
 		return false
 	}
 	return true
+}
+
+func runtimeAvailabilityBlocked(unavailable, quotaExceeded bool, nextRetryAfter, nextRecoverAt, now time.Time) bool {
+	if !unavailable && !quotaExceeded {
+		return false
+	}
+	hasRecoveryTime := !nextRetryAfter.IsZero() || !nextRecoverAt.IsZero()
+	if nextRetryAfter.After(now) || nextRecoverAt.After(now) {
+		return true
+	}
+	return !hasRecoveryTime
 }
 
 func resolveBaseModelKey(model string) string {
@@ -1108,6 +1240,11 @@ func (s *cockpitSelector) emitAuthPoolUnavailable(
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		errorMessage = strings.TrimSpace(err.Error())
 	}
+	errorCode := "auth_unavailable"
+	var authErr *coreauth.Error
+	if errors.As(err, &authErr) && authErr != nil && strings.TrimSpace(authErr.Code) != "" {
+		errorCode = strings.TrimSpace(authErr.Code)
+	}
 	s.emitter.emit(requestDiagnosticPayload{
 		Type:                    "auth_pool_result",
 		RequestID:               internallogging.GetRequestID(ctx),
@@ -1116,7 +1253,7 @@ func (s *cockpitSelector) emitAuthPoolUnavailable(
 		APIKeyID:                stringFromAPIKey(spec, "id"),
 		APIKeyLabel:             stringFromAPIKey(spec, "label"),
 		Provider:                provider,
-		ErrorCode:               "auth_unavailable",
+		ErrorCode:               errorCode,
 		ErrorMessage:            errorMessage,
 		CandidateAuths:          stats.candidateAuths,
 		ScopedAuths:             stats.scopedAuths,
@@ -1141,15 +1278,35 @@ func unavailableAuthDiagnostic(auth *coreauth.Auth, model string, now time.Time)
 		if state == nil {
 			state = auth.ModelStates[resolveBaseModelKey(model)]
 		}
-		if state != nil && state.Status == coreauth.StatusDisabled {
-			return "model_disabled", "model is disabled for this account"
-		}
-		if state != nil && state.Unavailable && !state.NextRetryAfter.IsZero() && state.NextRetryAfter.After(now) {
-			return "model_cooldown", fmt.Sprintf("model cooldown until %s", state.NextRetryAfter.UTC().Format(time.RFC3339))
+		if state != nil {
+			if state.Status == coreauth.StatusDisabled {
+				return "model_disabled", "model is disabled for this account"
+			}
+			if runtimeAvailabilityBlocked(state.Unavailable, state.Quota.Exceeded, state.NextRetryAfter, state.Quota.NextRecoverAt, now) {
+				if !state.Quota.NextRecoverAt.IsZero() && state.Quota.NextRecoverAt.After(now) {
+					return "model_quota_cooldown", fmt.Sprintf("model quota cooldown until %s", state.Quota.NextRecoverAt.UTC().Format(time.RFC3339))
+				}
+				if !state.NextRetryAfter.IsZero() && state.NextRetryAfter.After(now) {
+					return "model_cooldown", fmt.Sprintf("model cooldown until %s", state.NextRetryAfter.UTC().Format(time.RFC3339))
+				}
+				if strings.TrimSpace(state.Quota.Reason) != "" {
+					return "model_quota_exceeded", state.Quota.Reason
+				}
+				return "model_unavailable", "model is temporarily unavailable"
+			}
 		}
 	}
 	if auth.Unavailable && !auth.NextRetryAfter.IsZero() && auth.NextRetryAfter.After(now) {
 		return "account_cooldown", fmt.Sprintf("account cooldown until %s", auth.NextRetryAfter.UTC().Format(time.RFC3339))
+	}
+	if auth.Quota.Exceeded {
+		if !auth.Quota.NextRecoverAt.IsZero() && auth.Quota.NextRecoverAt.After(now) {
+			return "quota_cooldown", fmt.Sprintf("quota cooldown until %s", auth.Quota.NextRecoverAt.UTC().Format(time.RFC3339))
+		}
+		if strings.TrimSpace(auth.Quota.Reason) != "" {
+			return "quota_exceeded", auth.Quota.Reason
+		}
+		return "quota_exceeded", "account quota is unavailable"
 	}
 	if auth.LastError != nil && auth.LastError.Message != "" {
 		code := strings.TrimSpace(auth.LastError.Code)
@@ -1498,4 +1655,11 @@ func (s *cockpitSessionAffinitySelector) Pick(ctx context.Context, provider, mod
 		opts.Metadata = metadata
 	}
 	return s.inner.Pick(ctx, provider, model, opts, auths)
+}
+
+func (s *cockpitSessionAffinitySelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*coreauth.Auth, err error) error {
+	if reporter, ok := s.inner.(coreauth.AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
 }

@@ -4,10 +4,30 @@
 struct LocalCodexOAuthSnapshot {
     tokens: CodexTokens,
     email: String,
+    user_id: Option<String>,
     subscription_active_until: Option<String>,
     account_id: Option<String>,
     organization_id: Option<String>,
     last_refresh_at: Option<i64>,
+}
+
+/// 官方 profile 持久化的 OAuth 身份，不包含任何 Token 内容。
+///
+/// 账号总览、默认实例和多开实例都通过 profile 的 auth.json/Keychain 读取此身份，
+/// 用于确认“当前实例实际落盘账号”后再写入 CDP 观测状态。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexOfficialOAuthIdentity {
+    pub(crate) email: String,
+    pub(crate) user_id: Option<String>,
+    pub(crate) account_id: Option<String>,
+    pub(crate) organization_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexOfficialOAuthIdentityMatch {
+    Matched,
+    Mismatched,
+    Unknown,
 }
 
 fn parse_auth_file_last_refresh(value: Option<&serde_json::Value>) -> Option<i64> {
@@ -47,18 +67,37 @@ fn parse_auth_file_last_refresh(value: Option<&serde_json::Value>) -> Option<i64
 }
 
 fn build_local_oauth_snapshot(tokens: CodexAuthTokens) -> Option<LocalCodexOAuthSnapshot> {
-    let (email, _, _, subscription_active_until, id_token_account_id, id_token_org_id) =
-        extract_user_info(&tokens.id_token).ok()?;
+    let id_token_info = extract_user_info(&tokens.id_token).ok();
+    let (
+        access_email,
+        access_user_id,
+        _,
+        access_subscription_active_until,
+        access_account_id,
+        access_organization_id,
+    ) = extract_access_token_identity(&tokens.access_token);
+    let email = id_token_info
+        .as_ref()
+        .map(|info| info.0.clone())
+        .or(access_email)?;
+    let user_id = id_token_info
+        .as_ref()
+        .and_then(|info| info.1.clone())
+        .or(access_user_id);
+    let subscription_active_until = id_token_info
+        .as_ref()
+        .and_then(|info| info.3.clone())
+        .or(access_subscription_active_until);
+    let id_token_account_id = id_token_info.as_ref().and_then(|info| info.4.clone());
+    let id_token_org_id = id_token_info.as_ref().and_then(|info| info.5.clone());
     let account_id = normalize_optional_value(
         tokens
             .account_id
             .clone()
-            .or_else(|| extract_chatgpt_account_id_from_access_token(&tokens.access_token))
+            .or(access_account_id)
             .or(id_token_account_id),
     );
-    let organization_id = normalize_optional_value(
-        extract_chatgpt_organization_id_from_access_token(&tokens.access_token).or(id_token_org_id),
-    );
+    let organization_id = normalize_optional_value(access_organization_id.or(id_token_org_id));
 
     Some(LocalCodexOAuthSnapshot {
         tokens: CodexTokens {
@@ -67,11 +106,78 @@ fn build_local_oauth_snapshot(tokens: CodexAuthTokens) -> Option<LocalCodexOAuth
             refresh_token: tokens.refresh_token,
         },
         email,
+        user_id,
         subscription_active_until,
         account_id,
         organization_id,
         last_refresh_at: None,
     })
+}
+
+/// 从官方认证存储读取当前 profile 的身份摘要。
+///
+/// 认证存储可能是 auth.json，也可能是配置指定的 macOS Keychain；两者均属于
+/// 官方持久化数据。读取失败返回 None，由调用方按 Unknown 处理，不能据此判定账号失效。
+pub(crate) fn read_official_oauth_identity(base_dir: &Path) -> Option<CodexOfficialOAuthIdentity> {
+    load_local_oauth_snapshot_from_official_store(base_dir).map(|snapshot| {
+        CodexOfficialOAuthIdentity {
+            email: snapshot.email,
+            user_id: snapshot.user_id,
+            account_id: snapshot.account_id,
+            organization_id: snapshot.organization_id,
+        }
+    })
+}
+
+/// 将官方 profile 身份与本地账号身份进行强字段优先匹配。
+///
+/// account ID、组织 ID 和 user ID 只要双方都有就必须一致；如果没有任何强字段，
+/// 才回退到不区分大小写的 email，避免 profile 串号时把错误状态写入绑定账号。
+pub(crate) fn compare_official_oauth_identity(
+    identity: &CodexOfficialOAuthIdentity,
+    account: &CodexAccount,
+) -> CodexOfficialOAuthIdentityMatch {
+    let account_id_pair = (
+        account.account_id.as_deref(),
+        identity.account_id.as_deref(),
+    );
+    let user_id_pair = (account.user_id.as_deref(), identity.user_id.as_deref());
+    let mut primary_identity_matched = false;
+
+    for (expected, observed) in [account_id_pair, user_id_pair] {
+        if let (Some(expected), Some(observed)) = (expected, observed) {
+            if !expected.trim().eq_ignore_ascii_case(observed.trim()) {
+                return CodexOfficialOAuthIdentityMatch::Mismatched;
+            }
+            primary_identity_matched = true;
+        }
+    }
+
+    if let (Some(expected), Some(observed)) = (
+        account.organization_id.as_deref(),
+        identity.organization_id.as_deref(),
+    ) {
+        if !expected.trim().eq_ignore_ascii_case(observed.trim()) {
+            return CodexOfficialOAuthIdentityMatch::Mismatched;
+        }
+    }
+
+    if primary_identity_matched {
+        return CodexOfficialOAuthIdentityMatch::Matched;
+    }
+
+    let has_one_sided_primary_identity =
+        matches!(account_id_pair, (Some(_), None) | (None, Some(_)))
+            || matches!(user_id_pair, (Some(_), None) | (None, Some(_)));
+    if has_one_sided_primary_identity {
+        return CodexOfficialOAuthIdentityMatch::Unknown;
+    }
+
+    if account.email.eq_ignore_ascii_case(&identity.email) {
+        CodexOfficialOAuthIdentityMatch::Matched
+    } else {
+        CodexOfficialOAuthIdentityMatch::Mismatched
+    }
 }
 
 fn read_codex_auth_file_from_dir(base_dir: &Path) -> Option<CodexAuthFile> {

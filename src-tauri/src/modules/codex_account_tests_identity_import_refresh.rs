@@ -3712,6 +3712,7 @@
                 "rt-new",
             ),
             email: "demo@example.com".to_string(),
+            user_id: Some("user-current".to_string()),
             subscription_active_until: None,
             account_id: Some("acc-current".to_string()),
             organization_id: Some("org-current".to_string()),
@@ -3761,6 +3762,7 @@
         let snapshot = LocalCodexOAuthSnapshot {
             tokens: snapshot_tokens,
             email: "demo@example.com".to_string(),
+            user_id: Some("user-current".to_string()),
             subscription_active_until: None,
             account_id: Some("acc-current".to_string()),
             organization_id: Some("org-current".to_string()),
@@ -3786,6 +3788,7 @@
         let older = LocalCodexOAuthSnapshot {
             tokens: older_tokens,
             email: "demo@example.com".to_string(),
+            user_id: Some("user-current".to_string()),
             subscription_active_until: None,
             account_id: Some("acc-current".to_string()),
             organization_id: Some("org-current".to_string()),

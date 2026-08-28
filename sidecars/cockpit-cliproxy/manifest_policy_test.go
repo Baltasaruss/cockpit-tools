@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"net/http"
@@ -966,6 +967,54 @@ func TestAuthPoolUnavailableErrorUsesChineseOnlyForChineseRequests(t *testing.T)
 	englishError := authPoolUnavailableError(context.Background(), stats, "no auth available")
 	if !strings.Contains(englishError.Message, "No available account: candidates=3") {
 		t.Fatalf("unexpected English error message: %q", englishError.Message)
+	}
+}
+
+func TestManagerAvailabilityFailureProducesPoolDiagnostics(t *testing.T) {
+	account := &accountSpec{ID: "account-1", Email: "one@example.com", AuthID: "account-1.json"}
+	selector := &cockpitSelector{
+		manifest: &manifest{
+			accountByAuthID: map[string]*accountSpec{"account-1.json": account},
+			accountByID:     map[string]*accountSpec{"account-1": account},
+		},
+		emitter: &eventEmitter{},
+	}
+	auth := &coreauth.Auth{
+		ID:             "account-1.json",
+		Provider:       "codex",
+		Status:         coreauth.StatusActive,
+		Unavailable:    true,
+		NextRetryAfter: time.Now().Add(time.Hour),
+		LastError:      &coreauth.Error{Code: "invalid_refresh_token", Message: "refresh token is invalid"},
+	}
+
+	var reportedErr error
+	out := captureStdout(t, func() {
+		reportedErr = selector.ReportAuthSelectionFailure(
+			context.Background(),
+			"codex",
+			"gpt-5.5",
+			[]*coreauth.Auth{auth},
+			&coreauth.Error{Code: "auth_unavailable", Message: "no auth available"},
+		)
+	})
+
+	var authErr *coreauth.Error
+	if !errors.As(reportedErr, &authErr) || authErr == nil {
+		t.Fatalf("expected detailed auth error, got %T %v", reportedErr, reportedErr)
+	}
+	if !strings.Contains(authErr.Message, "No available account: candidates=1, unavailable=1") {
+		t.Fatalf("error should contain account-pool statistics: %q", authErr.Message)
+	}
+	var payload requestDiagnosticPayload
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("pool diagnostic should be JSON: %v\n%s", err, out)
+	}
+	if payload.Type != "auth_pool_result" || payload.CandidateAuths != 1 || payload.UnavailableAuths != 1 {
+		t.Fatalf("unexpected manager-level pool diagnostic: %#v", payload)
+	}
+	if len(payload.AccountStatuses) != 1 || payload.AccountStatuses[0].AccountID != "account-1" {
+		t.Fatalf("missing account-level manager diagnostic: %#v", payload.AccountStatuses)
 	}
 }
 
