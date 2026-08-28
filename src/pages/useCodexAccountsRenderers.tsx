@@ -4,7 +4,7 @@ import { isCodexGroupQuotaRefreshInherit, resolveCodexGroupQuotaAutoRefreshMinut
 import { isCodexApiKeyAccount, isCodexAgentIdentityAccount, isCodexChatCompletionsApiKeyAccount, isCodexNewApiAccount } from "../types/codex";
 import { isVerboseCodexQuotaErrorMessage, summarizeCodexQuotaErrorMessage } from "../utils/codexQuotaError";
 import { CodexQuotaMiniRows } from "../components/codex/CodexQuotaMiniRows";
-import { isCodexApiOnlyAccessTokenUsable, isCodexClientReauthNoticeOnly, isCodexRefreshTokenNoticeOnly } from "../utils/codexSwitchAuthFailure";
+import { isCodexClientReauthNoticeOnly, isCodexRefreshTokenNoticeOnly } from "../utils/codexSwitchAuthFailure";
 import { DEFAULT_CODEX_INSTANCE_ID } from "../components/codex/CodexLaunchPreviewModal";
 import { isDeepSeekAccount, isCodexTokenPlanAccount, shouldShowCodexApiKeyUsagePanel } from "../utils/codexDeepSeekAccess";
 import { CodexSpeedSelect } from "../components/codex/CodexSpeedSelect";
@@ -626,13 +626,11 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
             )
           : accountIssueMeta.displayText;
         const accountIssueBadge = isRefreshTokenNotice
-          ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
+          ? t("codex.authError.badge", "授权异常")
           : isQuotaRefreshNotice
             ? t("codex.quotaError.refreshFailedBadge", "刷新失败")
             : reauthErrorMeta.rawMessage
-              ? isCodexApiOnlyAccessTokenUsable(account)
-                ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
-                : t("codex.authError.badge", "授权异常")
+              ? t("codex.authError.badge", "授权异常")
               : accountIssueMeta.statusCode ||
                 t("codex.quotaError.badge", "配额异常");
         const showReauthorizeAction =
@@ -2028,13 +2026,11 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
             )
           : accountIssueMeta.displayText;
         const accountIssueBadge = isRefreshTokenNotice
-          ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
+          ? t("codex.authError.badge", "授权异常")
           : isQuotaRefreshNotice
             ? t("codex.quotaError.refreshFailedBadge", "刷新失败")
             : reauthErrorMeta.rawMessage
-              ? isCodexApiOnlyAccessTokenUsable(account)
-                ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
-                : t("codex.authError.badge", "授权异常")
+              ? t("codex.authError.badge", "授权异常")
               : accountIssueMeta.statusCode ||
                 t("codex.quotaError.badge", "配额异常");
         const showReauthorizeAction =

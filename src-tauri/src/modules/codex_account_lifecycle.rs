@@ -113,6 +113,10 @@ pub fn upsert_agent_identity_account(identity: CodexAgentIdentity) -> Result<Cod
     account.requires_reauth = false;
     account.reauth_reason = None;
     account.authorization_status = None;
+    account.client_auth_status = None;
+    account.last_client_auth_observed_at = None;
+    account.last_client_login_redirect_at = None;
+    account.last_client_auth_instance_id = None;
     account.update_last_used();
     save_account_from_user_action(&mut account)?;
 
@@ -429,6 +433,13 @@ fn upsert_account_with_hints_and_reauth_target(
     account.last_client_auth_observed_at = None;
     account.last_client_login_redirect_at = None;
     account.last_client_auth_instance_id = None;
+
+    // 远端 API 鉴权拒绝描述的是旧 access_token。OAuth 已换入新凭据后继续
+    // 保留它，会让 sidecar 账号池错误地把新凭据当成仍被远端拒绝。
+    // 普通额度、限流和网络错误仍由额度状态独立保留和刷新。
+    if account_has_remote_api_auth_rejection(&account) {
+        account.quota_error = None;
+    }
 
     if has_reauth_target && generated_id != account.id {
         let removed_duplicate = index.accounts.iter().any(|item| item.id == generated_id);
