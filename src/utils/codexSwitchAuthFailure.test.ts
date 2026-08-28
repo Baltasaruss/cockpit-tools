@@ -8,6 +8,8 @@ import {
   isCodexClientReauthNoticeOnly,
   isCodexIdTokenReauthReason,
   isCodexRefreshTokenNoticeOnly,
+  isCodexRefreshTokenReauthReason,
+  isCodexRefreshTokenReusedAccount,
   isCodexServerRevokedReauth,
   normalizeCodexSwitchError,
   parseCodexSwitchAuthFailure,
@@ -70,7 +72,7 @@ test("reads OAuth JWT expiration for launch preview", () => {
   assert.equal(getCodexJwtExpiration("not-a-jwt"), null);
 });
 
-test("refresh token reuse stays a non-blocking notice while access token is usable", () => {
+test("refresh token reuse is not exposed as an account authorization notice", () => {
   const now = 2_000_000_000;
   const account = accountWithAccessToken(jwt(now + 3600));
   account.requires_reauth = true;
@@ -82,7 +84,12 @@ test("refresh token reuse stays a non-blocking notice while access token is usab
       "Token 刷新失败: status=401 Unauthorized, error_code=refresh_token_reused",
     timestamp: 1,
   };
-  assert.equal(isCodexRefreshTokenNoticeOnly(account, now), true);
+  assert.equal(isCodexRefreshTokenNoticeOnly(account, now), false);
+  assert.equal(isCodexRefreshTokenReusedAccount(account), true);
+  assert.equal(
+    isCodexRefreshTokenReauthReason(account.reauth_reason),
+    false,
+  );
 
   account.tokens.access_token = jwt(now + 120);
   assert.equal(isCodexRefreshTokenNoticeOnly(account, now), false);

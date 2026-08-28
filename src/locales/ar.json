@@ -2163,7 +2163,8 @@
       "forceRefreshUnavailable": "غير متاح لهذا النوع من الحسابات",
       "forceRefreshAction": "تحديث الآن",
       "forceRefreshRunning": "جارٍ تحديث Token…",
-      "forceRefreshSuccess": "تم تحديث Token بنجاح"
+      "forceRefreshSuccess": "تم تحديث Token بنجاح",
+      "forceRefreshRetry": "إعادة الفحص"
     },
     "switch": "تبديل",
     "switched": "تم التبديل إلى {{email}}",

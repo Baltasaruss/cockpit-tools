@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "此帳號類型無法使用",
       "forceRefreshAction": "立即重新整理",
       "forceRefreshRunning": "正在重新整理 Token…",
-      "forceRefreshSuccess": "Token 重新整理成功"
+      "forceRefreshSuccess": "Token 重新整理成功",
+      "forceRefreshRetry": "重新檢測"
     },
     "switch": "切換",
     "switched": "已切換至 {{email}}",

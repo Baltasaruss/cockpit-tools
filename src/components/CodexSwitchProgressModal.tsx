@@ -266,9 +266,7 @@ export function CodexSwitchProgressModal() {
     : null;
   const authFailure = isAuthRequired ? state.authFailure : null;
   const authReason = authFailure
-    ? authFailure.reasonCode === "refresh_token_reused"
-      ? t("codex.authError.refreshTokenReused")
-      : authFailure.reasonCode === "refresh_token_expired"
+    ? authFailure.reasonCode === "refresh_token_expired"
         ? t("codex.authError.refreshTokenExpired")
         : authFailure.reasonCode === "refresh_token_invalidated"
           ? t("codex.authError.refreshTokenInvalidated")

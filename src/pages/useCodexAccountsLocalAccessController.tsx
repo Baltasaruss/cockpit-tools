@@ -511,17 +511,14 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
   
         return (
           statusCode === "401" ||
-          errorCode === "refresh_token_reused" ||
           errorCode === "refresh_token_expired" ||
           errorCode === "refresh_token_invalidated" ||
           errorCode === "token_invalidated" ||
           errorCode === "invalid_grant" ||
           errorCode === "invalid_token" ||
-          rawMessage.includes("refresh_token_reused") ||
           rawMessage.includes("refresh_token_expired") ||
           rawMessage.includes("refresh_token_invalidated") ||
           rawMessage.includes("token_invalidated") ||
-          rawMessage.includes("refresh_token 已被其它客户端或实例使用过") ||
           rawMessage.includes("your authentication token has been invalidated") ||
           rawMessage.includes("401 unauthorized") ||
           rawMessage.includes("invalid_grant") ||

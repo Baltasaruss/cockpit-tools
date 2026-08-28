@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "Pro tento typ účtu není k dispozici",
       "forceRefreshAction": "Obnovit nyní",
       "forceRefreshRunning": "Obnovování Token…",
-      "forceRefreshSuccess": "Token byl úspěšně obnoven"
+      "forceRefreshSuccess": "Token byl úspěšně obnoven",
+      "forceRefreshRetry": "Zkontrolovat znovu"
     },
     "switch": "Přepnout",
     "switched": "Přepnuto na {{email}}",

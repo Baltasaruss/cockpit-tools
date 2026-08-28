@@ -100,6 +100,16 @@ async fn perform_managed_token_refresh(
                     "refresh_error_kind": format!("{:?}", classify_refresh_error(&err)),
                 }),
             );
+            if !force && is_refresh_token_reused_error(&err) {
+                // refresh_token_reused 只表示本次自动轮换没有成功，不再把账号写成
+                // requires_reauth，也不阻断切号/启动；让官方客户端和真实 API 请求
+                // 自己决定当前凭据是否仍可用。预览页 force=true 仍会把明确错误返回给用户。
+                logger::log_warn(&format!(
+                    "Codex 自动刷新遇到 refresh_token_reused，忽略账号状态与切号限制: account_id={}, reason={}",
+                    account.id, reason
+                ));
+                return Ok(account);
+            }
             if is_reauth_required_refresh_error(&err) {
                 let _ = mark_account_requires_reauth(&mut account, &user_error);
                 return Err(user_error);
@@ -168,6 +178,7 @@ async fn refresh_managed_account_locked(
             account.id, err
         ));
     }
+    clear_refresh_token_reused_state(&mut account)?;
     if let Err(err) = clear_stale_missing_refresh_token_reauth(&mut account) {
         logger::log_warn(&format!(
             "Codex 清理缺失 refresh_token 的过期重登标记失败，继续处理: account_id={}, error={}",
@@ -357,6 +368,7 @@ pub async fn keepalive_managed_account(
             account.id, err
         ));
     }
+    clear_refresh_token_reused_state(&mut account)?;
     if let Err(err) = clear_stale_missing_refresh_token_reauth(&mut account) {
         logger::log_warn(&format!(
             "Codex 保活清理缺失 refresh_token 的过期重登标记失败，继续处理: account_id={}, error={}",

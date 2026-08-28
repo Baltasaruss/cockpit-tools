@@ -362,8 +362,6 @@ export function CodexInstanceLaunchProgressModal() {
           "codex.switchAuth.apiOnlyDescription",
           "官方客户端上次运行时检测到需要登录，请重新授权后再启动。",
         )
-      : authFailure.reasonCode === "refresh_token_reused"
-      ? t("codex.authError.refreshTokenReused")
       : authFailure.reasonCode === "refresh_token_expired"
         ? t("codex.authError.refreshTokenExpired")
         : authFailure.reasonCode === "refresh_token_invalidated"

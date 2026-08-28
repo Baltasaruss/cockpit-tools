@@ -2163,7 +2163,8 @@
       "forceRefreshUnavailable": "Tidak tersedia untuk jenis akun ini",
       "forceRefreshAction": "Segarkan sekarang",
       "forceRefreshRunning": "Menyegarkan Token…",
-      "forceRefreshSuccess": "Token berhasil disegarkan"
+      "forceRefreshSuccess": "Token berhasil disegarkan",
+      "forceRefreshRetry": "Periksa lagi"
     },
     "switch": "Ganti",
     "switched": "Beralih ke {{email}}",

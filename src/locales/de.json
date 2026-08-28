@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "Für diesen Kontotyp nicht verfügbar",
       "forceRefreshAction": "Jetzt erneuern",
       "forceRefreshRunning": "Token wird erneuert…",
-      "forceRefreshSuccess": "Token erfolgreich erneuert"
+      "forceRefreshSuccess": "Token erfolgreich erneuert",
+      "forceRefreshRetry": "Erneut prüfen"
     },
     "switch": "Wechseln",
     "switched": "Gewechselt zu {{email}}",

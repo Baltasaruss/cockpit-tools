@@ -11,12 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **Codex OAuth tokens can now be force-refreshed manually**: the account overview can use the current `refresh_token` to obtain a new `access_token` and `id_token`, persist the result locally, and update the account state immediately.
+- **Codex OAuth tokens can now be force-refreshed manually**: the account overview can use the current `refresh_token` to obtain a new `access_token` and `id_token`, persist the result locally, and update the account state immediately; the result, failure reason, retry check, and reauthorization actions are handled in a dedicated dialog.
 - **Codex account pools now provide pool-level diagnostics**: when a request cannot select an available account, the account-pool dialog shows the model, candidate accounts, auth identity, proxy selection, scope matches, availability, quota reservations, and image-policy decisions, with an action to resynchronize the pool.
 - **API Service now supports per-account image-generation policies**: an account in a pool can be set to inherit, enable, or disable image generation, while text and image requests continue to route according to the selected account's capabilities.
 
 ### Changed
 
+- **Codex no longer treats `refresh_token_reused` as an automatic account failure or switching condition**: automatic flows no longer block switching or launching, or persist account failure state for this response; the launch preview still supports manual Token force-refresh, with failures shown only in the current dialog.
 - **Codex launch progress can now be cancelled and continued after skippable failures**: users can cancel the transaction at any time, or close the dialog to cancel and close it; when a skippable check, gateway preparation, or maintenance step fails, the dialog offers “Skip and launch” to continue starting the client.
 - **Codex client auth observation now uses less runtime overhead**: realtime login status uses a lightweight CDP page snapshot every 5 seconds, while full network diagnostics run in the background every 30 seconds without blocking status updates or continuously occupying the client's debugging channel.
 - **Codex client reauthorization notices now explain the detected login-page state**: users can reauthorize to restore client use, while API Service remains usable for now.

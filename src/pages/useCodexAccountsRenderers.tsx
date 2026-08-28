@@ -4,7 +4,7 @@ import { isCodexGroupQuotaRefreshInherit, resolveCodexGroupQuotaAutoRefreshMinut
 import { isCodexApiKeyAccount, isCodexAgentIdentityAccount, isCodexChatCompletionsApiKeyAccount, isCodexNewApiAccount } from "../types/codex";
 import { isVerboseCodexQuotaErrorMessage, summarizeCodexQuotaErrorMessage } from "../utils/codexQuotaError";
 import { CodexQuotaMiniRows } from "../components/codex/CodexQuotaMiniRows";
-import { isCodexClientReauthNoticeOnly, isCodexRefreshTokenNoticeOnly, isCodexServerRevokedReauth } from "../utils/codexSwitchAuthFailure";
+import { isCodexClientReauthNoticeOnly, isCodexRefreshTokenNoticeOnly, isCodexRefreshTokenReusedAccount, isCodexServerRevokedReauth } from "../utils/codexSwitchAuthFailure";
 import { DEFAULT_CODEX_INSTANCE_ID } from "../components/codex/CodexLaunchPreviewModal";
 import { isDeepSeekAccount, isCodexTokenPlanAccount, shouldShowCodexApiKeyUsagePanel } from "../utils/codexDeepSeekAccess";
 import { CodexSpeedSelect } from "../components/codex/CodexSpeedSelect";
@@ -317,8 +317,11 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
         const isSelected = selected.has(account.id);
         const isApiKeyAccount = isCodexApiKeyAccount(account);
         const serverRevokedReauth = isCodexServerRevokedReauth(account);
+        const refreshTokenReusedState = isCodexRefreshTokenReusedAccount(account);
         const reauthNoticeOnly =
-          !serverRevokedReauth && isCodexClientReauthNoticeOnly(account);
+          !serverRevokedReauth &&
+          !refreshTokenReusedState &&
+          isCodexClientReauthNoticeOnly(account);
         const clientAuthRequired =
           !isApiKeyAccount &&
           !account.requires_reauth &&
@@ -371,6 +374,7 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
               {maskAccountText(presentation.displayName)}
             </span>
             {!isApiKeyAccount &&
+              !refreshTokenReusedState &&
               (account.requires_reauth || serverRevokedReauth) && (
               <span
                 className={`codex-status-pill ${reauthNoticeOnly ? "quota-refresh" : "quota-error"} codex-client-auth-status-pill`}
@@ -564,9 +568,11 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
         const isCurrent = overviewCurrentAccountId === account.id;
         const isApiKeyAccount = isCodexApiKeyAccount(account);
         const serverRevokedReauth = isCodexServerRevokedReauth(account);
+        const refreshTokenReusedState = isCodexRefreshTokenReusedAccount(account);
         const clientAuthRequired =
           !isApiKeyAccount &&
           !account.requires_reauth &&
+          !refreshTokenReusedState &&
           account.client_auth_status === "login_required";
         const clientAuthNoticeText = t(
           "codex.switchAuth.apiOnlyDescription",
@@ -626,21 +632,25 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
           ),
         );
         const reauthErrorMeta = resolveQuotaErrorMeta(
-          account.requires_reauth && account.reauth_reason
+          !refreshTokenReusedState && account.requires_reauth && account.reauth_reason
             ? {
                 message: account.reauth_reason,
                 timestamp: account.token_updated_at || account.last_used,
               }
             : undefined,
         );
-        const quotaErrorMeta = resolveQuotaErrorMeta(account.quota_error);
+        const quotaErrorMeta = resolveQuotaErrorMeta(
+          refreshTokenReusedState ? undefined : account.quota_error,
+        );
         const accountIssueMeta = reauthErrorMeta.rawMessage
           ? reauthErrorMeta
           : quotaErrorMeta;
         const hasQuotaError = Boolean(accountIssueMeta.rawMessage);
         const isRefreshTokenNotice = isCodexRefreshTokenNoticeOnly(account);
         const isClientReauthNotice =
-          !serverRevokedReauth && isCodexClientReauthNoticeOnly(account);
+          !serverRevokedReauth &&
+          !refreshTokenReusedState &&
+          isCodexClientReauthNoticeOnly(account);
         const isQuotaRefreshNotice =
           isClientReauthNotice ||
           (!reauthErrorMeta.rawMessage &&
@@ -2010,6 +2020,7 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
         const isCurrent = overviewCurrentAccountId === account.id;
         const isApiKeyAccount = isCodexApiKeyAccount(account);
         const serverRevokedReauth = isCodexServerRevokedReauth(account);
+        const refreshTokenReusedState = isCodexRefreshTokenReusedAccount(account);
         const switchOrLaunchBlockedReason =
           getCodexSwitchOrLaunchBlockedReason(account);
         const isPendingOAuthAccount = isPendingOAuthCodexAccount(account);
@@ -2029,21 +2040,25 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
           ),
         );
         const reauthErrorMeta = resolveQuotaErrorMeta(
-          account.requires_reauth && account.reauth_reason
+          !refreshTokenReusedState && account.requires_reauth && account.reauth_reason
             ? {
                 message: account.reauth_reason,
                 timestamp: account.token_updated_at || account.last_used,
               }
             : undefined,
         );
-        const quotaErrorMeta = resolveQuotaErrorMeta(account.quota_error);
+        const quotaErrorMeta = resolveQuotaErrorMeta(
+          refreshTokenReusedState ? undefined : account.quota_error,
+        );
         const accountIssueMeta = reauthErrorMeta.rawMessage
           ? reauthErrorMeta
           : quotaErrorMeta;
         const hasQuotaError = Boolean(accountIssueMeta.rawMessage);
         const isRefreshTokenNotice = isCodexRefreshTokenNoticeOnly(account);
         const isClientReauthNotice =
-          !serverRevokedReauth && isCodexClientReauthNoticeOnly(account);
+          !serverRevokedReauth &&
+          !refreshTokenReusedState &&
+          isCodexClientReauthNoticeOnly(account);
         const isQuotaRefreshNotice =
           isClientReauthNotice ||
           (!reauthErrorMeta.rawMessage &&

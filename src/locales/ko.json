@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "이 계정 유형에서는 사용할 수 없음",
       "forceRefreshAction": "지금 새로 고침",
       "forceRefreshRunning": "Token 새로 고침 중…",
-      "forceRefreshSuccess": "Token이 성공적으로 새로 고쳐졌습니다"
+      "forceRefreshSuccess": "Token이 성공적으로 새로 고쳐졌습니다",
+      "forceRefreshRetry": "다시 확인"
     },
     "switch": "전환",
     "switched": "{{email}}(으)로 전환했습니다",

@@ -2315,7 +2315,8 @@
       "forceRefreshUnavailable": "当前账号类型不可用",
       "forceRefreshAction": "立即刷新",
       "forceRefreshRunning": "正在刷新 Token…",
-      "forceRefreshSuccess": "Token 刷新成功"
+      "forceRefreshSuccess": "Token 刷新成功",
+      "forceRefreshRetry": "重新检测"
     },
     "switch": "切换",
     "switched": "已切换至 {{email}}",

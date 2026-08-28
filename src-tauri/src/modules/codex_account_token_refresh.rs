@@ -43,11 +43,42 @@ fn classify_refresh_error(message: &str) -> CodexRefreshErrorKind {
 fn is_reauth_required_refresh_error(message: &str) -> bool {
     matches!(
         classify_refresh_error(message),
-        CodexRefreshErrorKind::RefreshTokenReused
-            | CodexRefreshErrorKind::RefreshTokenExpired
+        CodexRefreshErrorKind::RefreshTokenExpired
             | CodexRefreshErrorKind::RefreshTokenInvalidated
             | CodexRefreshErrorKind::InvalidGrant
     )
+}
+
+pub(crate) fn is_refresh_token_reused_error(message: &str) -> bool {
+    matches!(
+        classify_refresh_error(message),
+        CodexRefreshErrorKind::RefreshTokenReused
+    )
+}
+
+/// 清理旧版本留下的 refresh_token_reused 状态。
+///
+/// 该错误不再作为账号健康状态或切号条件；仅保留手动强制刷新时的即时错误结果。
+fn clear_refresh_token_reused_state(account: &mut CodexAccount) -> Result<(), String> {
+    let reauth_reused = account
+        .reauth_reason
+        .as_deref()
+        .is_some_and(is_refresh_token_reused_error);
+    let quota_reused = account.quota_error.as_ref().is_some_and(|error| {
+        error.code.as_deref().is_some_and(is_refresh_token_reused_error)
+            || is_refresh_token_reused_error(&error.message)
+    });
+    if !reauth_reused && !quota_reused {
+        return Ok(());
+    }
+    if reauth_reused {
+        account.requires_reauth = false;
+        account.reauth_reason = None;
+    }
+    if quota_reused {
+        account.quota_error = None;
+    }
+    save_account(account)
 }
 
 /// 服务端明确撤销授权是账号级终止状态，不能再降级为仅客户端需授权。
@@ -114,6 +145,13 @@ pub(crate) fn format_account_switch_error(account_id: &str, error: String) -> St
     let Some(account) = load_account(account_id) else {
         return error;
     };
+    if account
+        .reauth_reason
+        .as_deref()
+        .is_some_and(is_refresh_token_reused_error)
+    {
+        return error;
+    }
     // CDP 客户端登录页观测只用于账号卡片展示，不把任何普通切号/启动错误包装成
     // 授权失败弹框。只有 Token Authority 明确写入 requires_reauth 时才进入此状态。
     if !account.requires_reauth {
@@ -407,6 +445,8 @@ pub(crate) async fn prepare_account_for_quota_query_with_runtime_snapshot(
             account.id, error
         ));
     }
+
+    clear_refresh_token_reused_state(&mut account)?;
 
     if account
         .quota_error

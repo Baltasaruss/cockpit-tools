@@ -411,15 +411,6 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
           );
         }
         if (
-          lower.includes("refresh_token_reused") ||
-          raw.includes("refresh_token 已被其它客户端或实例使用过")
-        ) {
-          return t(
-            "codex.authError.refreshTokenReused",
-            "Codex 授权已失效：refresh_token 已被其它客户端或实例使用过。请重新登录，并避免官方 Codex、其它实例或外部工具同时刷新同一账号。",
-          );
-        }
-        if (
           lower.includes("refresh_token_expired") ||
           raw.includes("Codex 登录授权已过期")
         ) {

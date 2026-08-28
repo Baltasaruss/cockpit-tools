@@ -136,17 +136,40 @@ export function isCodexApiOnlyAccessTokenUsable(
 export function isCodexRefreshTokenReauthReason(reason?: string | null): boolean {
   const normalized = reason?.trim().toLowerCase() || "";
   if (!normalized) return false;
+  // refresh_token_reused 是一次刷新竞争结果，不代表当前账号或 access_token
+  // 已被服务端撤销；历史错误也不应重新触发账号级授权状态。
+  if (isCodexRefreshTokenReusedReason(normalized)) return false;
   return (
-    normalized.includes("refresh_token_reused") ||
     normalized.includes("refresh_token_expired") ||
     normalized.includes("refresh_token_invalidated") ||
     normalized.includes("invalid_grant") ||
     normalized.includes("invalid refresh token") ||
-    normalized.includes("refresh_token 已被其它客户端或实例使用过") ||
-    normalized.includes("refresh token has been reused") ||
     ((normalized.includes("status=401") ||
       normalized.includes("401 unauthorized")) &&
       (normalized.includes("refresh") || normalized.includes("刷新")))
+  );
+}
+
+/** 历史 refresh_token_reused 状态不再参与账号展示、切换或可用性判断。 */
+export function isCodexRefreshTokenReusedReason(
+  reason?: string | null,
+): boolean {
+  const normalized = reason?.trim().toLowerCase() || "";
+  return (
+    normalized.includes("refresh_token_reused") ||
+    normalized.includes("refresh token has been reused") ||
+    normalized.includes("refresh_token 已被其它客户端或实例使用过")
+  );
+}
+
+export function isCodexRefreshTokenReusedAccount(
+  account?: CodexAccount | null,
+): boolean {
+  if (!account) return false;
+  return (
+    isCodexRefreshTokenReusedReason(account.reauth_reason) ||
+    isCodexRefreshTokenReusedReason(account.quota_error?.code) ||
+    isCodexRefreshTokenReusedReason(account.quota_error?.message)
   );
 }
 

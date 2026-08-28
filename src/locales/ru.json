@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "Недоступно для этого типа аккаунта",
       "forceRefreshAction": "Обновить сейчас",
       "forceRefreshRunning": "Обновление Token…",
-      "forceRefreshSuccess": "Token успешно обновлён"
+      "forceRefreshSuccess": "Token успешно обновлён",
+      "forceRefreshRetry": "Проверить снова"
     },
     "switch": "Переключить",
     "switched": "Переключено на {{email}}",

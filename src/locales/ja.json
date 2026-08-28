@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "このアカウント種別では利用できません",
       "forceRefreshAction": "今すぐ更新",
       "forceRefreshRunning": "Tokenを更新中…",
-      "forceRefreshSuccess": "Tokenを更新しました"
+      "forceRefreshSuccess": "Tokenを更新しました",
+      "forceRefreshRetry": "再検出"
     },
     "switch": "切替",
     "switched": "{{email}} に切り替えました",

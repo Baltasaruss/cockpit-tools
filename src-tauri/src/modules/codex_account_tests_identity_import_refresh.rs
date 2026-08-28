@@ -3124,7 +3124,7 @@
     }
 
     #[test]
-    fn switch_auth_error_exposes_api_only_availability() {
+    fn switch_auth_error_does_not_wrap_refresh_token_reused() {
         let _lock = crate::modules::test_support::env_lock()
             .lock()
             .unwrap_or_else(|err| err.into_inner());
@@ -3142,16 +3142,10 @@
         ));
         save_account(&account).expect("save reauth account");
 
-        let encoded = format_account_switch_error(&account.id, "fallback".to_string());
-        let payload = encoded
-            .strip_prefix("CODEX_SWITCH_AUTH_REQUIRED:")
-            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
-            .expect("structured switch auth failure");
-
-        assert_eq!(payload["accountId"], account.id);
-        assert_eq!(payload["reasonCode"], "refresh_token_reused");
-        assert_eq!(payload["apiOnlyAvailable"], true);
-        assert!(payload["accessTokenExpiresAt"].is_number());
+        assert_eq!(
+            format_account_switch_error(&account.id, "fallback".to_string()),
+            "fallback"
+        );
     }
 
     #[test]
@@ -3459,7 +3453,7 @@
     }
 
     #[test]
-    fn id_token_within_refresh_lead_requires_runtime_refresh() {
+    fn id_token_within_refresh_lead_does_not_require_runtime_refresh() {
         let mut account = CodexAccount::new(
             "codex_id_token_refresh_lead".to_string(),
             "id-token-lead@example.com".to_string(),
@@ -3477,7 +3471,7 @@
         account.token_updated_at = Some(now_timestamp());
 
         assert!(!is_managed_auth_refresh_due(&account));
-        assert!(managed_account_runtime_tokens_need_refresh(&account));
+        assert!(!managed_account_runtime_tokens_need_refresh(&account));
     }
 
     #[test]
@@ -3576,7 +3570,9 @@
             .expect("repeated projection should preserve access_token-only validation");
         assert_eq!(repeated.id, account.id);
         let persisted = load_account(&account.id).expect("load persisted reused RT account");
-        assert!(persisted.requires_reauth);
+        assert!(!persisted.requires_reauth);
+        assert_eq!(persisted.reauth_reason, None);
+        assert!(persisted.quota_error.is_none());
         assert_eq!(persisted.tokens.id_token, account.tokens.id_token);
         assert_eq!(persisted.tokens.access_token, account.tokens.access_token);
         assert_eq!(persisted.tokens.refresh_token, account.tokens.refresh_token);
@@ -3614,8 +3610,8 @@
             .expect_err("expired access token must block projection");
 
         assert!(
-            error.contains("refresh_token_reused"),
-            "unexpected error: {error}"
+            !error.contains("refresh_token_reused"),
+            "refresh_token_reused must not be exposed as an account failure: {error}"
         );
         assert_eq!(
             fs::read_to_string(profile_dir.join("auth.json")).expect("read unchanged auth"),
@@ -3665,7 +3661,8 @@
             .expect("expired id_token alone must not block a valid access_token");
         assert_eq!(prepared.id, account.id);
         let persisted = load_account(&account.id).expect("load switched reused RT account");
-        assert!(persisted.requires_reauth);
+        assert!(!persisted.requires_reauth);
+        assert_eq!(persisted.reauth_reason, None);
         assert_eq!(persisted.tokens.id_token, account.tokens.id_token);
         assert_eq!(persisted.tokens.access_token, account.tokens.access_token);
         assert_eq!(persisted.tokens.refresh_token, account.tokens.refresh_token);

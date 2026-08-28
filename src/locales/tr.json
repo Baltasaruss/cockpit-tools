@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "Bu hesap türü için kullanılamaz",
       "forceRefreshAction": "Şimdi yenile",
       "forceRefreshRunning": "Token yenileniyor…",
-      "forceRefreshSuccess": "Token başarıyla yenilendi"
+      "forceRefreshSuccess": "Token başarıyla yenilendi",
+      "forceRefreshRetry": "Yeniden denetle"
     },
     "switch": "Değiştir",
     "switched": "{{email}} hesabına geçildi",

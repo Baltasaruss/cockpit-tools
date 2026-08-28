@@ -2116,7 +2116,8 @@
       "forceRefreshUnavailable": "Không khả dụng cho loại tài khoản này",
       "forceRefreshAction": "Làm mới ngay",
       "forceRefreshRunning": "Đang làm mới Token…",
-      "forceRefreshSuccess": "Đã làm mới Token thành công"
+      "forceRefreshSuccess": "Đã làm mới Token thành công",
+      "forceRefreshRetry": "Kiểm tra lại"
     },
     "switch": "Chuyển",
     "switched": "Đã chuyển sang {{email}}",
