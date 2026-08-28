@@ -113,6 +113,10 @@ pub fn upsert_agent_identity_account(identity: CodexAgentIdentity) -> Result<Cod
     account.requires_reauth = false;
     account.reauth_reason = None;
     account.authorization_status = None;
+    account.client_auth_status = None;
+    account.last_client_auth_observed_at = None;
+    account.last_client_login_redirect_at = None;
+    account.last_client_auth_instance_id = None;
     account.update_last_used();
     save_account_from_user_action(&mut account)?;
 
@@ -421,13 +425,20 @@ fn upsert_account_with_hints_and_reauth_target(
         acc
     };
 
-    // OAuth 重新授权已经替换了整条凭据链；此前由旧客户端页面留下的
-    // login_required 只代表历史观测结果，不能阻止新凭据首次启动。
-    if has_reauth_target {
-        account.client_auth_status = None;
-        account.last_client_auth_observed_at = None;
-        account.last_client_login_redirect_at = None;
-        account.last_client_auth_instance_id = None;
+    // OAuth 成功已经替换了当前账号的凭据链；此前由旧客户端页面留下的
+    // login_required 只代表历史观测结果，不能继续污染这次授权后的状态。
+    // 这里不能只依赖 reauth_target：用户从 OAuth 入口重新授权时可能没有
+    // 携带旧卡片 ID，但仍然会复用同一个账号记录。
+    account.client_auth_status = None;
+    account.last_client_auth_observed_at = None;
+    account.last_client_login_redirect_at = None;
+    account.last_client_auth_instance_id = None;
+
+    // 远端 API 鉴权拒绝描述的是旧 access_token。OAuth 已换入新凭据后继续
+    // 保留它，会让 sidecar 账号池错误地把新凭据当成仍被远端拒绝。
+    // 普通额度、限流和网络错误仍由额度状态独立保留和刷新。
+    if account_has_remote_api_auth_rejection(&account) {
+        account.quota_error = None;
     }
 
     if has_reauth_target && generated_id != account.id {
