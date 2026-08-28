@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Fixed account cards continuing to spin after a Codex switch was cancelled or closed**: cancellation now clears the matching card's switching state immediately while the backend transaction finishes cleanup at its safe checkpoints.
 - **Fixed client sign-in state being inferred from incidental page text**: “Client authorization required” is now recorded only from the official `/login` route or the complete LoginRoute UI signature used by the desktop `MemoryRouter`; ordinary login wording, auth hints, and non-Codex CDP targets no longer trigger reauthorization.
 - **Fixed delayed account-card updates after client sign-in observations were persisted**: once an official login-page or recovered-availability state passes consecutive confirmation and is saved, the account overview synchronizes it immediately without a manual refresh or waiting for the next polling cycle.
 - **Codex client login-page observations now include an instance timeline**: issue details show the instance launch time, login-page redirect time, detection time, and observed instance in a fixed order so it is clear when the client entered the login page.

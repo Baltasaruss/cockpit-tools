@@ -34,7 +34,7 @@ type SwitchStepStatus =
 type SwitchStepDetails = Record<string, unknown>;
 
 interface SwitchProgressPayload {
-  type?: "start" | "error" | "complete";
+  type?: "start" | "error" | "complete" | "cancelled";
   accountId?: string;
   stage?: SwitchStage;
   progress?: number;
@@ -45,6 +45,7 @@ interface SwitchProgressPayload {
   details?: SwitchStepDetails;
   launchAfterSwitch?: boolean;
   canRetry?: boolean;
+  cancelled?: boolean;
 }
 
 interface SwitchStepState {
@@ -128,6 +129,9 @@ export function CodexSwitchProgressModal() {
       setState((previous) => {
         if (detail.type === "start") {
           return createProgressState(accountId, detail.launchAfterSwitch);
+        }
+        if (detail.type === "cancelled" || detail.cancelled === true) {
+          return null;
         }
         const base =
           previous?.accountId === accountId

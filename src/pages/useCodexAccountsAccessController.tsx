@@ -212,6 +212,42 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
     validateApiKeyCredentialInputs,
     visibleApiKeyAccountIds,
   } = context;
+
+  useEffect(() => {
+    const clearCancelledSwitchingState = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          type?: string;
+          accountId?: string;
+          cancelled?: boolean;
+        }>
+      ).detail;
+      if (
+        !detail ||
+        (detail.type !== "cancelled" && detail.cancelled !== true) ||
+        !detail.accountId
+      ) {
+        return;
+      }
+      // 后端切换事务仍会在安全检查点继续收尾，但用户已经取消后，账号卡片不应
+      // 等待原 Promise 最终返回才停止旋转。只清理当前对应账号，避免影响其它操作。
+      setSwitching((currentAccountId) =>
+        currentAccountId === detail.accountId ? null : currentAccountId,
+      );
+    };
+
+    window.addEventListener(
+      "codex-switch-progress",
+      clearCancelledSwitchingState,
+    );
+    return () => {
+      window.removeEventListener(
+        "codex-switch-progress",
+        clearCancelledSwitchingState,
+      );
+    };
+  }, [setSwitching]);
+
   const resolveBoundOAuthAccount = useCallback(
       (account: CodexAccount) => {
         const boundId = (account.bound_oauth_account_id || "").trim();

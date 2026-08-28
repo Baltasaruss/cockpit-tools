@@ -600,6 +600,17 @@ export function CodexInstanceLaunchProgressModal() {
     setActionError(null);
     try {
       if (state.operation === "switch-and-start" && state.accountId) {
+        // 用户确认取消后立即结束页面卡片的 loading；后端命令继续负责在事务的
+        // 安全检查点停止，避免 UI 必须等待慢任务完全返回才恢复可操作状态。
+        window.dispatchEvent(
+          new CustomEvent("codex-switch-progress", {
+            detail: {
+              type: "cancelled",
+              accountId: state.accountId,
+              cancelled: true,
+            },
+          }),
+        );
         await invoke("codex_cancel_account_switch", { accountId: state.accountId });
       }
       await codexInstanceService.cancelInstanceStart(state.instanceId);
