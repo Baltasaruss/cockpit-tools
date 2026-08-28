@@ -1,6 +1,7 @@
 package live
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -151,29 +152,26 @@ func (h *Handler) HandleHangup(c *gin.Context) {
 	}
 	if activeSelection != nil && response.StatusCode == http.StatusUnauthorized {
 		h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", session.model)
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-		if errClose := response.Body.Close(); errClose != nil {
-			log.Errorf("codex realtime hangup: close unauthorized response body error: %v", errClose)
-		}
+		unauthorizedBody := readAndCloseUpstreamErrorBody(response, "codex realtime hangup unauthorized response")
 		refreshed, didRefresh, errRefresh := h.authManager.RefreshHomeSelectionAfterUnauthorized(ctx, activeSelection, selected)
-		if errRefresh != nil {
+		if errRefresh != nil && ctx.Err() != nil {
 			writeSelectionError(c, errRefresh)
 			return
 		}
-		if !didRefresh || refreshed == nil {
-			writeRealtimeError(c, http.StatusUnauthorized, "Codex credential unauthorized", "authentication_error", "realtime_upstream_unauthorized")
-			return
-		}
-		selected = refreshed
-		logging.SetGinCPATraceID(c, selected.EnsureIndex())
-		response, errRequest = performRequest(selected)
-		if errRequest != nil {
-			helps.RecordAPIResponseError(ctx, runtimeConfig, errRequest)
-			writeRealtimeError(c, clienterror.HTTPStatusFromErrorOr(errRequest, http.StatusBadGateway), errRequest.Error(), "api_error", "realtime_upstream_unavailable")
-			return
-		}
-		if response.StatusCode == http.StatusUnauthorized {
-			h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", session.model)
+		if errRefresh != nil || !didRefresh || refreshed == nil {
+			response.Body = io.NopCloser(bytes.NewReader(unauthorizedBody))
+		} else {
+			selected = refreshed
+			logging.SetGinCPATraceID(c, selected.EnsureIndex())
+			response, errRequest = performRequest(selected)
+			if errRequest != nil {
+				helps.RecordAPIResponseError(ctx, runtimeConfig, errRequest)
+				writeRealtimeError(c, clienterror.HTTPStatusFromErrorOr(errRequest, http.StatusBadGateway), errRequest.Error(), "api_error", "realtime_upstream_unavailable")
+				return
+			}
+			if response.StatusCode == http.StatusUnauthorized {
+				h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", session.model)
+			}
 		}
 	}
 	defer func() {

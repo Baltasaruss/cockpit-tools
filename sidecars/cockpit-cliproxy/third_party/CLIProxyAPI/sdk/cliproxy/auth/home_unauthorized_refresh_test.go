@@ -231,15 +231,15 @@ func TestHomeUnauthorizedRefreshIsAttemptedAtMostOnce(t *testing.T) {
 	}
 }
 
-func TestHomeNoCandidateAfterRefreshFailurePreservesRefreshError(t *testing.T) {
-	refreshErr := &Error{Code: "refresh_temporarily_unavailable", HTTPStatus: http.StatusServiceUnavailable, Message: "refresh unavailable"}
+func TestHomeNoCandidateAfterRefreshFailurePreservesUpstreamError(t *testing.T) {
+	upstreamErr := &Error{HTTPStatus: http.StatusUnauthorized, Message: "expired access token"}
 	noCandidate := &Error{Code: "auth_not_found", HTTPStatus: http.StatusServiceUnavailable, Message: "no auth available"}
-	if !shouldReturnLastErrorOnPickFailure(true, refreshErr, noCandidate) {
-		t.Fatal("Home no-candidate error would overwrite the original refresh error")
+	if !shouldReturnLastErrorOnPickFailure(true, upstreamErr, noCandidate) {
+		t.Fatal("Home no-candidate error would overwrite the original upstream error")
 	}
 }
 
-func TestHomeUnauthorizedTransientRefreshFailureIsReturned(t *testing.T) {
+func TestHomeUnauthorizedRefreshFailurePreservesUpstreamError(t *testing.T) {
 	dispatcher := &homeUnauthorizedRefreshDispatcher{}
 	executor := &homeUnauthorizedRefreshExecutor{
 		refreshErr: &Error{HTTPStatus: http.StatusServiceUnavailable, Message: "Home refresh temporarily unavailable"},
@@ -247,8 +247,8 @@ func TestHomeUnauthorizedTransientRefreshFailureIsReturned(t *testing.T) {
 	manager := newHomeUnauthorizedRefreshManager(dispatcher, executor)
 
 	_, errExecute := manager.Execute(context.Background(), []string{homeUnauthorizedRefreshProvider}, cliproxyexecutor.Request{Model: "model-a"}, cliproxyexecutor.Options{})
-	if statusCodeFromError(errExecute) != http.StatusServiceUnavailable {
-		t.Fatalf("Execute() error = %v, want transient 503", errExecute)
+	if statusCodeFromError(errExecute) != http.StatusUnauthorized || errExecute == nil || errExecute.Error() != "expired access token" {
+		t.Fatalf("Execute() error = %v, want original upstream 401", errExecute)
 	}
 	if got := executor.executeCalls.Load(); got != 1 {
 		t.Fatalf("execute calls = %d, want 1", got)

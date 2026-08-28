@@ -952,8 +952,6 @@
       "codexAppUiInjectionPoolLabel": "账号",
       "codexAppUiInjectionWeeklyLabel": "周",
       "codexAppUiInjectionFiveHourLabel": "5h",
-      "codexLoginPageGuard": "登录页守卫",
-      "codexLoginPageGuardDesc": "重启受管 Codex 实例后，通过 CDP 保留可用的对话页面，阻止外壳 OAuth 状态将页面切换到登录页。仅阻止页面切换，不修复失效的 OAuth 凭据。",
       "codexWslConfigDir": "WSL Codex 目录",
       "codexWslConfigDirDesc": "填写 WSL 中的 .codex 目录，支持 \\\\wsl.localhost\\ 形式。",
       "codexWslConfigDirPlaceholder": "例如：\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\.codex",
@@ -968,6 +966,9 @@
       "commonTitle": "通用",
       "antigravitySettingsTitle": "Antigravity IDE 设置",
       "codexSettingsTitle": "Codex 设置",
+      "codexOAuthAppVersion": "OAuth 客户端版本",
+      "codexOAuthAppVersionDesc": "留空跟随远端默认值 {{version}}；填写后仅覆盖 OAuth 授权链接中的版本字段。",
+      "codexOAuthAppVersionPlaceholder": "留空使用 {{version}}",
       "codexClientPolicyTitle": "允许第三方客户端使用 Codex",
       "codexClientPolicyDesc": "开启后，启用“仅允许官方客户端”的 Codex OAuth 账号也可以被第三方客户端使用；关闭时，仍可在账号策略中单独放行。",
       "codexAccountPolicies": "Codex OAuth 账号策略",
@@ -2306,6 +2307,13 @@
       "applyModelConfig": "应用配置",
       "defaultModel": "默认模型",
       "repairCompleted": "会话可见性修复完成"
+      ,"forceRefreshTitle": "强制刷新 Token",
+      "forceRefreshReady": "可手动刷新 OAuth Token",
+      "forceRefreshDescription": "使用 refresh_token 获取新的 access_token 和 id_token；当前 refresh_token 可能会被轮换。",
+      "forceRefreshUnavailable": "当前账号类型不可用",
+      "forceRefreshAction": "立即刷新",
+      "forceRefreshRunning": "正在刷新 Token…",
+      "forceRefreshSuccess": "Token 刷新成功"
     },
     "switch": "切换",
     "switched": "已切换至 {{email}}",
@@ -2322,7 +2330,11 @@
     "switchAuth": {
       "apiOnlyTitle": "客户端需授权",
       "reauthorizeTitle": "Codex 授权已失效",
-      "apiOnlyDescription": "当前 access_token 仍可暂时用于 API 服务，但客户端登录所需凭据无法自动更新，因此本次未切入官方 Codex/ChatGPT 客户端。",
+      "apiOnlyDescription": "检测到当前账号的客户端需要重新授权，API 服务仍可用。",
+      "observationStatus": "最近一次检测到当前账号的客户端需要重新授权。",
+      "observationTime": "最近一次检测时间：{{time}}",
+      "loginRedirectTime": "最近一次跳转登录页：{{time}}",
+      "observationInstance": "检测实例：{{instance}}",
       "reauthorizeDescription": "当前登录凭据无法自动更新，且 access_token 已不可用于 API 服务。请重新授权后继续使用。",
       "idTokenUnavailable": "客户端身份凭据已过期，自动更新后仍未获得有效的 id_token。",
       "reasonLabel": "原因",
@@ -2335,15 +2347,12 @@
       "startingInstanceAfterReauth": "授权成功，正在重新启动实例...",
       "startInstanceAfterReauthFailed": "授权已更新，但实例启动失败：{{error}}",
       "reauthorizedAndStartedInstance": "重新授权并启动实例成功",
-      "apiOnlyBadge": "客户端需授权"
+      "apiOnlyBadge": "客户端需授权",
+      "skipAuthCheck": "跳过检查并继续"
     },
     "switchProgress": {
       "completed": "切换完成",
       "needsAttention": "需要处理",
-      "skipOfficialCheck": "跳过官方检查",
-      "skipOfficialCheckTitle": "跳过官方在线检查并继续",
-      "skipOfficialCheckDescription": "当前 access_token 尚未在本地判定为过期，但官方账号检查未完成。继续后可能因账号状态未知而跳转登录页面。",
-      "skipOfficialCheckConfirm": "确认继续",
       "steps": {
         "credentials": "读取账号凭据",
         "accessToken": "检查 access_token",
@@ -2373,8 +2382,6 @@
         "notApplicable": "当前账号无需检查此项",
         "refreshNeeded": "已过期或进入安全刷新窗口，需要更新",
         "tokenValid": "当前有效，无需更新",
-        "officialCheckPassed": "官方账号检查已通过",
-        "officialCheckSkipped": "已跳过官方在线检查",
         "stoppingRuntime": "正在安全停止 ChatGPT/Codex 与 app-server...",
         "runtimeStopped": "旧客户端运行态已安全停止",
         "waiting": "等待前序步骤完成",
@@ -2721,15 +2728,19 @@
         "title": "账号池",
         "allAvailable": "全部可用 {{count}}",
         "availableRatio": "可用 {{available}}/{{total}}",
-        "issueSummary": "异常 {{abnormal}} · 冷却 {{cooldown}}",
-        "detail": "可用 {{available}}/{{total}}，异常 {{abnormal}}，冷却 {{cooldown}}，缺失 {{missing}}，鉴权 {{authError}}，额度 {{quotaLimited}}",
-        "openDetails": "查看异常账号详情",
+        "issueSummary": "异常 {{abnormal}} · 池异常 {{poolUnavailable}} · 冷却 {{cooldown}}",
+        "detail": "可用 {{available}}/{{total}}，异常 {{abnormal}}，池异常 {{poolUnavailable}}，冷却 {{cooldown}}，缺失 {{missing}}，鉴权 {{authError}}，额度 {{quotaLimited}}",
+        "openDetails": "查看账号池异常详情",
         "recover": "恢复账号状态",
         "recoverSuccess": "已提交 {{count}} 个账号的恢复操作",
         "dialog": {
-          "title": "异常账号",
-          "description": "以下状态来自 Sidecar 账号调度器。恢复操作会清除调度冷却并重新尝试账号。",
-          "noIssues": "当前没有异常账号",
+          "title": "账号池异常",
+          "description": "以下状态来自 Sidecar 账号调度器，包括账号异常和请求尚未选中账号时的池级异常。",
+          "noIssues": "账号池当前无异常",
+          "unscopedApiKey": "当前 API Key",
+          "poolUnavailable": "账号池无可用账号",
+          "poolUnavailableDetail": "模型 {{model}} 的请求没有选出可用账号",
+          "poolDiagnosticDetail": "模型 {{model}}：候选 {{candidate}}，范围匹配 {{scoped}}，可用 {{available}}，不可用 {{unavailable}}，模型排除 {{modelExcluded}}，额度保留 {{quotaReserved}}，生图策略拦截 {{imageBlocked}}",
           "missing": "账号缺失",
           "cooldown": "冷却中",
           "quota": "额度受限",
@@ -2745,7 +2756,8 @@
           "unavailableDetail": "Sidecar 当前未将该账号列为可调度账号",
           "recover": "恢复",
           "recovering": "恢复中…",
-          "recoverAll": "全部恢复"
+          "recoverAll": "全部恢复",
+          "resyncPool": "重新同步账号池"
         }
       },
       "memberTitle": "集合成员",
@@ -2754,6 +2766,12 @@
       "memberPriorityNormal": "正常",
       "memberPriorityHighest": "最高",
       "memberPriorityDesc": "最高优先使用，正常按当前规则调度，最低仅在其他账号不可用时使用。",
+      "imagePolicy": {
+        "label": "生图策略",
+        "inherit": "生图：自动",
+        "enabled": "生图：启用",
+        "disabled": "生图：禁用"
+      },
       "routingStrategy": {
         "auto": "自动（推荐）",
         "singleAccount": "固定首个账号",
@@ -3452,7 +3470,7 @@
       "dateTime": "{{date}} {{time}}"
     },
     "subscription": {
-      "label": "有效期",
+      "label": "订阅有效期",
       "column": "订阅信息",
       "unknown": "未获得订阅信息",
       "missingDetail": "未获得订阅信息",

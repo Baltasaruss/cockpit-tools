@@ -428,18 +428,16 @@ func (h *Handler) HandleSideband(c *gin.Context) {
 	if errDial != nil && selection != nil && handshakeResponse != nil && handshakeResponse.StatusCode == http.StatusUnauthorized {
 		h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", session.model)
 		helps.RecordAPIWebsocketHandshake(ctx, runtimeConfig, handshakeResponse.StatusCode, callResponseHeaders(handshakeResponse.Header))
-		if handshakeResponse.Body != nil {
-			if errClose := handshakeResponse.Body.Close(); errClose != nil {
-				log.Errorf("codex live sideband: close unauthorized handshake body error: %v", errClose)
-			}
-		}
+		unauthorizedBody := readAndCloseUpstreamErrorBody(handshakeResponse, "codex live sideband unauthorized response")
 		refreshed, didRefresh, errRefresh := h.authManager.RefreshHomeSelectionAfterUnauthorized(ctx, selection, selected)
-		if errRefresh != nil {
+		if errRefresh != nil && ctx.Err() != nil {
 			writeSelectionError(c, errRefresh)
 			return
 		}
-		if !didRefresh || refreshed == nil {
-			writeLiveError(c, http.StatusUnauthorized, "Codex credential unauthorized")
+		if errRefresh != nil || !didRefresh || refreshed == nil {
+			if !writeUpstreamHandshakeResponse(c, handshakeResponse, unauthorizedBody) {
+				writeLiveError(c, http.StatusUnauthorized, "Codex credential unauthorized")
+			}
 			return
 		}
 		selected = refreshed

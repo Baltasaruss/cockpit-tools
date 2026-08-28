@@ -581,6 +581,47 @@ fn is_callback_navigation(url: &Url, callback_port: u16) -> bool {
 }
 
 pub fn open_incognito_oauth_window(app: &AppHandle, auth_url: &str) -> Result<(), String> {
+    // 官方 app-server 自己监听固定的 localhost:1455 回调；此时不再要求
+    // 本地 OAuthState/callback server，只校验该地址确实由当前官方会话生成。
+    if crate::modules::codex_official_app_server::official_login_matches(auth_url.trim()) {
+        if let Some(window) = app.get_webview_window(OAUTH_WINDOW_LABEL) {
+            window
+                .destroy()
+                .map_err(|error| format!("重置 Codex OAuth 无痕窗口失败: {}", error))?;
+        }
+        WebviewWindowBuilder::new(
+            app,
+            OAUTH_WINDOW_LABEL,
+            WebviewUrl::External(
+                Url::parse(auth_url.trim())
+                    .map_err(|error| format!("Codex OAuth 授权地址无效: {}", error))?,
+            ),
+        )
+        .title("Codex OAuth")
+        .inner_size(920.0, 720.0)
+        .min_inner_size(640.0, 560.0)
+        .center()
+        .incognito(true)
+        .on_navigation(|url| {
+            let allowed = matches!(url.scheme(), "https" | "about")
+                || (url.scheme() == "http"
+                    && url.host_str() == Some("localhost")
+                    && url.port().unwrap_or(80) == 1455
+                    && url.path() == "/auth/callback");
+            if !allowed {
+                logger::log_warn(&format!(
+                    "Codex OAuth 无痕窗口已阻止非 HTTP(S) 导航: scheme={}",
+                    url.scheme()
+                ));
+            }
+            allowed
+        })
+        .build()
+        .map_err(|error| format!("创建 Codex OAuth 无痕窗口失败: {}", error))?;
+        logger::log_info("Codex OAuth 已打开官方 app-server 授权地址");
+        return Ok(());
+    }
+
     hydrate_oauth_state_if_missing();
     let parsed = Url::parse(auth_url.trim())
         .map_err(|error| format!("Codex OAuth 授权地址无效: {}", error))?;
@@ -676,6 +717,26 @@ fn clear_oauth_state_for_login_id(expected_login_id: &str) {
 pub async fn start_oauth_login(
     app_handle: AppHandle,
 ) -> Result<CodexOAuthLoginStartResponse, String> {
+    // OAuth 主流程与官方客户端一致：由 app-server 生成授权 URL、持有回调并交换 Token。
+    // 旧的自建 callback 流程保留给历史/设备授权兼容路径，不再作为默认入口。
+    // 丢弃旧版自建 callback 的 pending 状态，避免旧会话在新官方会话完成后再次被复用。
+    set_oauth_state(None);
+    let codex_home = crate::modules::codex_account::get_codex_home();
+    let (login_id, auth_url) = tokio::task::spawn_blocking(move || {
+        crate::modules::codex_official_app_server::start_official_login_session(
+            &codex_home,
+            &app_handle,
+        )
+    })
+    .await
+    .map_err(|error| format!("官方 app-server OAuth 启动任务失败: {}", error))??;
+    logger::log_info(&format!(
+        "Codex OAuth 使用官方 app-server 登录会话: login_id={}",
+        login_id
+    ));
+    return Ok(CodexOAuthLoginStartResponse { login_id, auth_url });
+
+    #[allow(unreachable_code)]
     hydrate_oauth_state_if_missing();
     {
         let oauth_state = OAUTH_STATE.lock().unwrap();
@@ -1066,6 +1127,28 @@ fn resolve_exchange_redirect_uri(port: u16, exchange_redirect_uri: Option<&str>)
 }
 
 pub async fn complete_oauth_login(login_id: &str) -> Result<CodexTokens, String> {
+    // 官方 app-server 完成回调和 Token 交换后，从官方凭据存储回读最新链。
+    if crate::modules::codex_official_app_server::official_login_matches_login_id(login_id) {
+        tokio::task::spawn_blocking({
+            let login_id = login_id.to_string();
+            move || crate::modules::codex_official_app_server::complete_official_login(&login_id)
+        })
+        .await
+        .map_err(|error| format!("官方 app-server OAuth 完成任务失败: {}", error))??;
+        let tokens = crate::modules::codex_account::read_official_oauth_tokens(
+            &crate::modules::codex_account::get_codex_home(),
+        )
+        .ok_or("官方 OAuth 已完成，但未能从官方凭据存储读取 Token")?;
+        crate::modules::codex_auth_diagnostic::log_event(
+            "oauth_login_tokens_received_from_official_app_server",
+            serde_json::json!({
+                "login_id": login_id,
+                "tokens": crate::modules::codex_auth_diagnostic::tokens_summary(&tokens),
+            }),
+        );
+        return Ok(tokens);
+    }
+
     hydrate_oauth_state_if_missing();
     let attempt_id = COMPLETE_ATTEMPT_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -1148,6 +1231,13 @@ pub async fn complete_oauth_login(login_id: &str) -> Result<CodexTokens, String>
 }
 
 pub fn cancel_oauth_flow_for(login_id: Option<&str>) -> Result<(), String> {
+    if crate::modules::codex_official_app_server::cancel_official_login(login_id)? {
+        logger::log_info(&format!(
+            "Codex 官方 app-server OAuth 流程已取消: login_id={}",
+            login_id.unwrap_or("<none>")
+        ));
+        return Ok(());
+    }
     hydrate_oauth_state_if_missing();
     let port = {
         let oauth_state = OAUTH_STATE.lock().unwrap();

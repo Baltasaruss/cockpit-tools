@@ -396,7 +396,12 @@ func (m *Manager) tryRefreshExecutionAuthAfterUnauthorized(ctx context.Context, 
 	updated, errRefresh := executor.Refresh(ctx, target)
 	if errRefresh != nil {
 		log.Debugf("Home credential refresh before redispatch failed for %s (%s)", auth.Provider, auth.ID)
-		return auth, false, errRefresh
+		if ctx != nil && ctx.Err() != nil {
+			return auth, false, ctx.Err()
+		}
+		// Refresh is auxiliary to the failed upstream request in Home mode. Keep
+		// the original upstream error so callers retain its status and details.
+		return auth, false, nil
 	}
 	if updated == nil {
 		updated = target

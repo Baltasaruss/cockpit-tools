@@ -102,13 +102,18 @@ export async function refreshCodexAccountProfile(accountId: string): Promise<Cod
   return await invoke('refresh_codex_account_profile', { accountId });
 }
 
+/** 使用 OAuth refresh_token 手动强制获取新的 access_token/id_token。 */
+export async function forceRefreshCodexTokens(accountId: string): Promise<CodexAccount> {
+  return await invoke<CodexAccount>('force_refresh_codex_tokens', { accountId });
+}
+
 /** 切换 Codex 账号 */
 export async function switchCodexAccount(
   accountId: string,
   options?: {
     reauthTokenGeneration?: number;
     launchAfterSwitch?: boolean;
-    skipOfficialAccountCheck?: boolean;
+    skipAuthCheck?: boolean;
   },
 ): Promise<CodexAccount> {
   const startedAt = performance.now();
@@ -124,10 +129,25 @@ export async function switchCodexAccount(
           stage: 'preparing',
           progress: 4,
           launchAfterSwitch: options?.launchAfterSwitch,
-          skipOfficialAccountCheck: options?.skipOfficialAccountCheck,
         },
       }),
     );
+    if (options?.launchAfterSwitch === true) {
+      window.dispatchEvent(
+        new CustomEvent('codex:instance-launch-progress', {
+          detail: {
+            type: 'start',
+            instanceId: '__default__',
+            instanceName: '',
+            isDefault: true,
+            accountId,
+            operation: 'switch-and-start',
+            source: 'switch-service',
+            progress: 4,
+          },
+        }),
+      );
+    }
     const account = await invoke<CodexAccount>('switch_codex_account', {
       accountId,
       autoRepairMode: null,
@@ -135,7 +155,7 @@ export async function switchCodexAccount(
         typeof options?.reauthTokenGeneration === 'number' ? options.reauthTokenGeneration : null,
       launchAfterSwitch:
         typeof options?.launchAfterSwitch === 'boolean' ? options.launchAfterSwitch : null,
-      skipOfficialAccountCheck: options?.skipOfficialAccountCheck === true ? true : null,
+      skipAuthCheck: options?.skipAuthCheck === true ? true : null,
     });
     window.dispatchEvent(
       new CustomEvent('codex-switch-progress', {
@@ -147,6 +167,21 @@ export async function switchCodexAccount(
         },
       }),
     );
+    if (options?.launchAfterSwitch === true) {
+      window.dispatchEvent(
+        new CustomEvent('codex:instance-launch-progress', {
+          detail: {
+            type: 'complete',
+            instanceId: '__default__',
+            instanceName: '',
+            isDefault: true,
+            accountId,
+            operation: 'switch-and-start',
+            progress: 100,
+          },
+        }),
+      );
+    }
     return account;
   } catch (error) {
     const normalizedError = normalizeCodexSwitchError(error);
@@ -160,6 +195,23 @@ export async function switchCodexAccount(
         },
       }),
     );
+    if (options?.launchAfterSwitch === true) {
+      window.dispatchEvent(
+        new CustomEvent('codex:instance-launch-progress', {
+          detail: {
+            type: 'error',
+            instanceId: '__default__',
+            instanceName: '',
+            isDefault: true,
+            accountId,
+            operation: 'switch-and-start',
+            error: normalizedError.message,
+            authFailure: normalizedError.authFailure,
+            canRetry: true,
+          },
+        }),
+      );
+    }
     throw normalizedError;
   } finally {
     console.info('[Codex Switch][Service] invoke switch_codex_account finished', {

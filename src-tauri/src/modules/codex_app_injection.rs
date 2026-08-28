@@ -78,11 +78,6 @@ fn new_document_scripts() -> &'static Mutex<HashSet<String>> {
     INSTALLED.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn login_guard_new_document_script_ids() -> &'static Mutex<HashMap<String, String>> {
-    static SCRIPT_IDS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-    SCRIPT_IDS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 fn should_install_new_document_script(websocket_url: &str) -> bool {
     let Ok(installed) = new_document_scripts().lock() else {
         return true;
@@ -93,32 +88,6 @@ fn should_install_new_document_script(websocket_url: &str) -> bool {
 fn mark_new_document_script_installed(websocket_url: &str) {
     if let Ok(mut installed) = new_document_scripts().lock() {
         installed.insert(websocket_url.to_string());
-    }
-}
-
-fn should_install_login_guard_new_document_script(websocket_url: &str) -> bool {
-    let Ok(script_ids) = login_guard_new_document_script_ids().lock() else {
-        return true;
-    };
-    !script_ids.contains_key(websocket_url)
-}
-
-fn remember_login_guard_new_document_script_id(websocket_url: &str, script_id: &str) {
-    if let Ok(mut script_ids) = login_guard_new_document_script_ids().lock() {
-        script_ids.insert(websocket_url.to_string(), script_id.to_string());
-    }
-}
-
-fn login_guard_new_document_script_id(websocket_url: &str) -> Option<String> {
-    login_guard_new_document_script_ids()
-        .lock()
-        .ok()
-        .and_then(|script_ids| script_ids.get(websocket_url).cloned())
-}
-
-fn forget_login_guard_new_document_script_id(websocket_url: &str) {
-    if let Ok(mut script_ids) = login_guard_new_document_script_ids().lock() {
-        script_ids.remove(websocket_url);
     }
 }
 
@@ -184,20 +153,10 @@ pub fn enabled_for_app() -> bool {
     config::get_user_config().codex_app_ui_injection_enabled
 }
 
-pub fn login_page_guard_enabled() -> bool {
-    // CDP 登录页守卫验证后仍无法可靠覆盖官方 renderer 的完整认证状态机。
-    // 暂时保留实现便于后续定位，但所有运行入口强制关闭。
-    false
-}
-
-/// dev 环境下为认证排障保留实例级 CDP。这里只开启 loopback 调试端口和
-/// 观测日志，不注入登录页守卫，也不改变官方认证结果。
-fn auth_diagnostics_enabled() -> bool {
-    cfg!(debug_assertions) && crate::modules::account::is_dev_profile()
-}
-
-fn should_enable_login_page_guard(bind_account_id: Option<&str>) -> bool {
-    login_page_guard_enabled() && bind_account_id.is_some_and(|value| !value.trim().is_empty())
+/// 实例级 CDP 只读观察始终开启；它记录官方客户端实际是否进入登录页，
+/// 不注入脚本、不拦截事件，也不改变官方认证状态机。
+fn auth_observation_enabled(bind_account_id: Option<&str>) -> bool {
+    observed_oauth_account_id(bind_account_id).is_some()
 }
 
 pub fn supports_bind_account(bind_account_id: Option<&str>) -> bool {
@@ -226,11 +185,26 @@ pub fn should_enable_injection(bind_account_id: Option<&str>) -> bool {
         || bind_uses_deepseek_cdp_injection(bind_account_id)
 }
 
-/// 额度注入、登录页守卫和 DeepSeek 模型适配都依赖实例自己的 loopback CDP。
+/// 额度注入、认证页面观察和 DeepSeek 模型适配都依赖实例自己的 loopback CDP。
 pub fn should_enable_cdp(bind_account_id: Option<&str>) -> bool {
-    auth_diagnostics_enabled()
-        || should_enable_injection(bind_account_id)
-        || should_enable_login_page_guard(bind_account_id)
+    auth_observation_enabled(bind_account_id) || should_enable_injection(bind_account_id)
+}
+
+fn observed_oauth_account_id(bind_account_id: Option<&str>) -> Option<String> {
+    let bind = bind_account_id?.trim();
+    if bind.is_empty() || crate::modules::codex_instance::is_api_service_bind_account_id(bind) {
+        return None;
+    }
+    let account_id = crate::modules::codex_instance::parse_provider_gateway_bind_account_id(bind)
+        .unwrap_or_else(|| bind.to_string());
+    let account = codex_account::load_account(&account_id)?;
+    if account.is_api_key_auth() {
+        account.bound_oauth_account_id
+    } else if account.is_agent_identity_auth() || account.is_web_session_auth() {
+        None
+    } else {
+        Some(account.id)
+    }
 }
 
 fn bind_account_id_value(bind_account_id: Option<&str>) -> Option<String> {
@@ -355,7 +329,6 @@ pub fn restore_running_profiles(app: AppHandle) -> Result<usize, String> {
             continue;
         };
         let injection_enabled = should_enable_injection(bind_account_id.as_deref());
-        let login_guard_enabled = should_enable_login_page_guard(bind_account_id.as_deref());
         start_for_profile(
             app.clone(),
             instance_id.clone(),
@@ -365,12 +338,12 @@ pub fn restore_running_profiles(app: AppHandle) -> Result<usize, String> {
         );
         restored += 1;
         logger::log_info(&format!(
-            "[Codex CDP] 已恢复运行中实例: instance_id={}, pid={}, port={}, injection_enabled={}, login_guard_enabled={}",
+            "[Codex CDP] 已恢复运行中实例: instance_id={}, pid={}, port={}, injection_enabled={}, auth_observation_enabled={}",
             instance_id,
             pid,
             port,
             injection_enabled,
-            login_guard_enabled,
+            auth_observation_enabled(bind_account_id.as_deref()),
         ));
     }
 
@@ -455,15 +428,13 @@ pub fn start_for_profile(
     bind_account_id: Option<String>,
 ) {
     let Some(port) = port else { return };
-    if auth_diagnostics_enabled() {
+    if auth_observation_enabled(bind_account_id.as_deref()) {
         start_auth_diagnostics_for_profile(
             &instance_id,
             &profile_dir,
             port,
             bind_account_id.as_deref(),
         );
-    } else {
-        stop_auth_diagnostics_for_profile(&profile_dir);
     }
     if !should_enable_injection(bind_account_id.as_deref()) {
         return;
@@ -638,18 +609,6 @@ struct AuthPageSnapshot {
     login_text: bool,
     #[serde(default)]
     auth_error_text: bool,
-    #[serde(default)]
-    login_guard_installed: bool,
-    #[serde(default)]
-    login_guard_enabled: bool,
-    #[serde(default)]
-    login_guard_blocked_count: u64,
-    #[serde(default)]
-    login_guard_last_blocked_type: String,
-    #[serde(default)]
-    account_info_override_count: u64,
-    #[serde(default)]
-    last_account_info_override_at: u64,
 }
 
 impl AuthPageSnapshot {
@@ -668,12 +627,6 @@ struct AuthDiagnosticObservation {
     login_route: bool,
     login_text: bool,
     auth_error_text: bool,
-    login_guard_installed: bool,
-    login_guard_enabled: bool,
-    login_guard_blocked_count: u64,
-    login_guard_last_blocked_type: String,
-    account_info_override_count: u64,
-    last_account_info_override_at: u64,
 }
 
 impl AuthDiagnosticObservation {
@@ -687,12 +640,6 @@ impl AuthDiagnosticObservation {
             login_route: false,
             login_text: false,
             auth_error_text: false,
-            login_guard_installed: false,
-            login_guard_enabled: false,
-            login_guard_blocked_count: 0,
-            login_guard_last_blocked_type: String::new(),
-            account_info_override_count: 0,
-            last_account_info_override_at: 0,
         }
     }
 
@@ -716,258 +663,8 @@ const AUTH_DIAGNOSTIC_SCRIPT: &str = r#"
     loginRoute: /(^|[\/#])(login|signin|auth)([/?#]|$)/i.test(routeText),
     loginText: /\b(log[ -]?in|sign[ -]?in|login required)\b|登录|重新登录/i.test(text),
     authErrorText: /cloud[ _-]?(requirements|config[ _-]?bundle)|relogin|auth[ _-]?error/i.test(text),
-    loginGuardInstalled: Boolean(window.__cockpitCodexLoginGuard?.installed),
-    loginGuardEnabled: Boolean(window.__cockpitCodexLoginGuard?.enabled),
-    loginGuardBlockedCount: Number(window.__cockpitCodexLoginGuard?.blockedCount || 0),
-    loginGuardLastBlockedType: String(window.__cockpitCodexLoginGuard?.lastBlockedType || "").slice(0, 120),
-    accountInfoOverrideCount: Number(window.__cockpitCodexLoginGuard?.accountInfoOverrideCount || 0),
-    lastAccountInfoOverrideAt: Number(window.__cockpitCodexLoginGuard?.lastAccountInfoOverrideAt || 0),
     pageKind: href.startsWith("app://-/") ? "codex-app" : "other",
   };
-})()
-"#;
-
-const LOGIN_PAGE_GUARD_SCRIPT: &str = r#"
-(() => {
-  const key = "__cockpitCodexLoginGuard";
-  const existing = window[key];
-  if (existing?.installed && typeof existing.setEnabled === "function") {
-    existing.setEnabled(true);
-    existing.installTransportGuard?.();
-    return {
-      installed: true,
-      enabled: Boolean(existing.enabled),
-      blockedCount: Number(existing.blockedCount || 0),
-      lastBlockedType: String(existing.lastBlockedType || ""),
-      accountInfoOverrideCount: Number(existing.accountInfoOverrideCount || 0),
-      lastAccountInfoOverrideAt: Number(existing.lastAccountInfoOverrideAt || 0),
-    };
-  }
-
-  const state = {
-    installed: true,
-    enabled: true,
-    blockedCount: 0,
-    lastBlockedAt: 0,
-    lastBlockedType: "",
-    accountInfoOverrideCount: 0,
-    lastAccountInfoOverrideAt: 0,
-    transportGuardInstalled: false,
-    setEnabled(enabled) {
-      this.enabled = Boolean(enabled);
-    },
-    patchAccountInfoPayload(data) {
-      if (!this.enabled || typeof data !== "string" || !data.includes("hasChatGptToken")) {
-        return data;
-      }
-
-      let patched = data;
-      let changed = false;
-      const patchValue = (value) => {
-        if (Array.isArray(value)) {
-          value.forEach((item, index) => {
-            const next = patchValue(item);
-            if (next !== item) value[index] = next;
-          });
-          return value;
-        }
-        if (!value || typeof value !== "object") return value;
-        Object.keys(value).forEach((name) => {
-          if (name === "hasChatGptToken" && value[name] === false) {
-            value[name] = true;
-            changed = true;
-            return;
-          }
-          const next = patchValue(value[name]);
-          if (next !== value[name]) value[name] = next;
-        });
-        return value;
-      };
-
-      // Cap'n Web currently transports JSON-shaped RPC frames. Handle both a
-      // direct frame and a JSON string nested in a frame, without touching
-      // tokens or any other account fields.
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          const parsed = JSON.parse(patched);
-          patchValue(parsed);
-          const serialized = JSON.stringify(parsed);
-          if (serialized !== patched) {
-            patched = serialized;
-          }
-        } catch {
-          break;
-        }
-      }
-      if (!changed) {
-        patched = patched.replace(
-          /(hasChatGptToken[^:]{0,32}:\s*)false\b/g,
-          "$1true",
-        );
-        changed = patched !== data;
-      }
-      if (changed) {
-        this.accountInfoOverrideCount += 1;
-        this.lastAccountInfoOverrideAt = Date.now();
-      }
-      return patched;
-    },
-    patchHostFetchResponse(data) {
-      if (
-        !this.enabled ||
-        data?.type !== "fetch-response" ||
-        typeof data?.bodyJsonString !== "string"
-      ) {
-        return false;
-      }
-      const patched = this.patchAccountInfoPayload(data.bodyJsonString);
-      if (patched === data.bodyJsonString) return false;
-      // Electron's structured-cloned host message is a mutable plain object.
-      // Mutate only the account-info response body before the renderer's
-      // window message listener receives it.
-      data.bodyJsonString = patched;
-      return true;
-    },
-    wrapPort(port) {
-      if (!port || port.__cockpitCodexLoginGuardWrapped) return;
-      const nativeAddEventListener = port.addEventListener.bind(port);
-      let onmessageListener = null;
-      let onmessageOwner = port;
-      let nativeOnmessage = null;
-      while (onmessageOwner && nativeOnmessage == null) {
-        nativeOnmessage = Object.getOwnPropertyDescriptor(onmessageOwner, "onmessage") || null;
-        onmessageOwner = Object.getPrototypeOf(onmessageOwner);
-      }
-      const patchMessageEvent = (event) => {
-        const patchedData = state.patchAccountInfoPayload(event?.data);
-        if (patchedData === event?.data) return event;
-        return new Proxy(event, {
-          get(target, property) {
-            if (property === "data") return patchedData;
-            return Reflect.get(target, property, target);
-          },
-        });
-      };
-      Object.defineProperty(port, "__cockpitCodexLoginGuardWrapped", {
-        configurable: false,
-        enumerable: false,
-        value: true,
-      });
-      Object.defineProperty(port, "addEventListener", {
-        configurable: true,
-        enumerable: false,
-        writable: true,
-        value: (type, listener, options) => {
-          if (type !== "message" || typeof listener !== "function") {
-            return nativeAddEventListener(type, listener, options);
-          }
-          return nativeAddEventListener(
-            type,
-            (event) => {
-              return listener.call(port, patchMessageEvent(event));
-            },
-            options,
-          );
-        },
-      });
-      // The current Cap'n Web renderer bridge assigns MessagePort.onmessage
-      // directly. Wrapping addEventListener alone misses account-info replies.
-      Object.defineProperty(port, "onmessage", {
-        configurable: true,
-        enumerable: true,
-        get: () => onmessageListener,
-        set: (listener) => {
-          onmessageListener = typeof listener === "function" ? listener : null;
-          const wrapped = onmessageListener == null
-            ? null
-            : (event) => onmessageListener?.call(port, patchMessageEvent(event));
-          if (typeof nativeOnmessage?.set === "function") {
-            nativeOnmessage.set.call(port, wrapped);
-          }
-        },
-      });
-    },
-    installTransportGuard() {
-      if (this.transportGuardInstalled || typeof window.MessageChannel !== "function") return;
-      const NativeMessageChannel = window.MessageChannel;
-      const WrappedMessageChannel = function (...args) {
-        const channel = new NativeMessageChannel(...args);
-        state.wrapPort(channel.port1);
-        state.wrapPort(channel.port2);
-        return channel;
-      };
-      WrappedMessageChannel.prototype = NativeMessageChannel.prototype;
-      try {
-        Object.setPrototypeOf(WrappedMessageChannel, NativeMessageChannel);
-        Object.defineProperty(window, "MessageChannel", {
-          configurable: true,
-          enumerable: true,
-          writable: true,
-          value: WrappedMessageChannel,
-        });
-        this.transportGuardInstalled = true;
-      } catch {
-        this.transportGuardInstalled = false;
-      }
-    },
-  };
-
-  state.installTransportGuard();
-
-  const isLoginRequiredConnection = (data) =>
-    data?.type === "codex-app-server-connection-changed" &&
-    (data?.hostId == null || data.hostId === "local") &&
-    data?.state === "error" &&
-    data?.error?.code === "login-required";
-
-  const isLogoutAccountUpdate = (data) =>
-    data?.type === "mcp-notification" &&
-    data?.method === "account/updated" &&
-    (data?.hostId == null || data.hostId === "local") &&
-    data?.params &&
-    data?.params?.authMode == null;
-
-  const shouldBlock = (data) =>
-    isLogoutAccountUpdate(data) ||
-    isLoginRequiredConnection(data) ||
-    data?.type === "chatgpt-auth-token-unavailable";
-
-  window.addEventListener(
-    "message",
-    (event) => {
-      state.patchHostFetchResponse(event.data);
-      if (!state.enabled || !shouldBlock(event.data)) return;
-      state.blockedCount += 1;
-      state.lastBlockedAt = Date.now();
-      state.lastBlockedType =
-        event.data?.type === "mcp-notification"
-          ? `${event.data.type}:${event.data.method || "unknown"}`
-          : String(event.data?.type || "unknown");
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    },
-    true,
-  );
-
-  window[key] = state;
-  return {
-    installed: true,
-    enabled: true,
-    blockedCount: 0,
-    lastBlockedType: "",
-    accountInfoOverrideCount: 0,
-    lastAccountInfoOverrideAt: 0,
-  };
-})()
-"#;
-
-const LOGIN_PAGE_GUARD_DISABLE_SCRIPT: &str = r#"
-(() => {
-  const guard = window.__cockpitCodexLoginGuard;
-  if (guard?.installed && typeof guard.setEnabled === "function") {
-    guard.setEnabled(false);
-  }
-  return Boolean(guard?.installed);
 })()
 "#;
 
@@ -1907,7 +1604,6 @@ async fn monitor_cdp_target(
     instance_id: &str,
     profile_key: &str,
     target: &CdpTarget,
-    login_page_guard_enabled: bool,
 ) -> Option<AuthPageSnapshot> {
     let websocket_url = target.websocket_url.as_deref()?;
     let Ok(Ok((mut socket, _))) = timeout(CDP_CONNECT_TIMEOUT, connect_async(websocket_url)).await
@@ -1982,62 +1678,10 @@ async fn monitor_cdp_target(
                 .into(),
             ))
             .await;
-        if login_page_guard_enabled && should_install_login_guard_new_document_script(websocket_url)
-        {
-            let _ = socket
-                .send(Message::Text(
-                    json!({
-                        "id": 6,
-                        "method": "Page.addScriptToEvaluateOnNewDocument",
-                        "params": {"source": LOGIN_PAGE_GUARD_SCRIPT}
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await;
-        } else if !login_page_guard_enabled {
-            if let Some(identifier) = login_guard_new_document_script_id(websocket_url) {
-                let removed = socket
-                    .send(Message::Text(
-                        json!({
-                            "id": 6,
-                            "method": "Page.removeScriptToEvaluateOnNewDocument",
-                            "params": {"identifier": identifier}
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await
-                    .is_ok();
-                if removed {
-                    forget_login_guard_new_document_script_id(websocket_url);
-                }
-            }
-        }
-        let guard_script = if login_page_guard_enabled {
-            LOGIN_PAGE_GUARD_SCRIPT
-        } else {
-            LOGIN_PAGE_GUARD_DISABLE_SCRIPT
-        };
         let _ = socket
             .send(Message::Text(
                 json!({
-                    "id": 7,
-                    "method": "Runtime.evaluate",
-                    "params": {
-                        "expression": guard_script,
-                        "returnByValue": true,
-                        "awaitPromise": false
-                    }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await;
-        let _ = socket
-            .send(Message::Text(
-                json!({
-                    "id": 8,
+                    "id": 6,
                     "method": "Runtime.evaluate",
                     "params": {
                         "expression": AUTH_DIAGNOSTIC_SCRIPT,
@@ -2070,32 +1714,11 @@ async fn monitor_cdp_target(
         };
 
         if let Some(command_id) = value.get("id").and_then(Value::as_i64) {
-            if command_id == 8 {
+            if command_id == 6 {
                 snapshot = value
                     .pointer("/result/result/value")
                     .cloned()
                     .and_then(|result| serde_json::from_value::<AuthPageSnapshot>(result).ok());
-            } else if command_id == 6 && login_page_guard_enabled {
-                if let Some(identifier) =
-                    value.pointer("/result/identifier").and_then(Value::as_str)
-                {
-                    remember_login_guard_new_document_script_id(websocket_url, identifier);
-                    // The current document may already have created the official
-                    // MessageChannel before CDP attached. Reload once after the
-                    // document-start hook is installed so the transport guard
-                    // can wrap the channel before account-info is queried.
-                    let _ = socket
-                        .send(Message::Text(
-                            json!({
-                                "id": 9,
-                                "method": "Page.reload",
-                                "params": {"ignoreCache": false}
-                            })
-                            .to_string()
-                            .into(),
-                        ))
-                        .await;
-                }
             } else if let Some((request_id, url)) = pending_body_requests.remove(&command_id) {
                 let body =
                     cdp_body_preview(&value).unwrap_or_else(|| "body_unavailable=true".to_string());
@@ -2429,12 +2052,6 @@ fn auth_diagnostic_observation(
         login_route: snapshot.login_route,
         login_text: snapshot.login_text,
         auth_error_text: snapshot.auth_error_text,
-        login_guard_installed: snapshot.login_guard_installed,
-        login_guard_enabled: snapshot.login_guard_enabled,
-        login_guard_blocked_count: snapshot.login_guard_blocked_count,
-        login_guard_last_blocked_type: snapshot.login_guard_last_blocked_type,
-        account_info_override_count: snapshot.account_info_override_count,
-        last_account_info_override_at: snapshot.last_account_info_override_at,
     }
 }
 
@@ -2448,25 +2065,20 @@ async fn run_auth_diagnostic_loop(
     let client = Client::new();
     let mut previous: Option<AuthDiagnosticObservation> = None;
     let mut previous_app_server: Option<AppServerDiagnosticObservation> = None;
+    let mut login_streak = 0u8;
+    let mut available_streak = 0u8;
     loop {
         if app_lifecycle::is_shutdown_started() {
             return;
         }
 
         let targets = query_targets(&client, port).await;
-        let login_page_guard_enabled = should_enable_login_page_guard(bind_account_id.as_deref());
         let mut network_tasks = JoinSet::new();
         for target in targets.iter().cloned() {
             let instance_id = instance_id.clone();
             let profile_key = profile_key.clone();
             network_tasks.spawn(async move {
-                monitor_cdp_target(
-                    &instance_id,
-                    &profile_key,
-                    &target,
-                    login_page_guard_enabled,
-                )
-                .await
+                monitor_cdp_target(&instance_id, &profile_key, &target).await
             });
         }
         let mut selected_snapshot = None;
@@ -2500,18 +2112,10 @@ async fn run_auth_diagnostic_loop(
             }
         }
         let observation = auth_diagnostic_observation(&targets, selected_snapshot);
-        let previous_guard_blocked_count = previous
-            .as_ref()
-            .map(|value| value.login_guard_blocked_count)
-            .unwrap_or(0);
-        let previous_account_info_override_count = previous
-            .as_ref()
-            .map(|value| value.account_info_override_count)
-            .unwrap_or(0);
         let changed = previous.as_ref() != Some(&observation);
         if changed {
             logger::log_codex_auth_diagnostic(&format!(
-                "[Codex Auth CDP] 页面认证状态变化: instance_id={}, profile={}, bind_account_id={}, cdp_available={}, target_count={}, route={}, title={}, ready_state={}, login_route={}, login_text={}, auth_error_text={}, login_guard_installed={}, login_guard_enabled={}, login_guard_blocked_count={}, login_guard_last_blocked_type={}, account_info_override_count={}, last_account_info_override_at={}",
+                "[Codex Auth CDP] 页面认证状态变化: instance_id={}, profile={}, bind_account_id={}, cdp_available={}, target_count={}, route={}, title={}, ready_state={}, login_route={}, login_text={}, auth_error_text={}",
                 instance_id,
                 profile_key,
                 bind_account_id.as_deref().unwrap_or(""),
@@ -2523,31 +2127,7 @@ async fn run_auth_diagnostic_loop(
                 observation.login_route,
                 observation.login_text,
                 observation.auth_error_text,
-                observation.login_guard_installed,
-                observation.login_guard_enabled,
-                observation.login_guard_blocked_count,
-                observation.login_guard_last_blocked_type,
-                observation.account_info_override_count,
-                observation.last_account_info_override_at,
             ));
-            if observation.login_guard_blocked_count > previous_guard_blocked_count {
-                logger::log_warn(&format!(
-                    "[Codex Login Guard] 已拦截登录页状态切换: instance_id={}, profile={}, blocked_count={}, event_type={}",
-                    instance_id,
-                    profile_key,
-                    observation.login_guard_blocked_count,
-                    observation.login_guard_last_blocked_type,
-                ));
-            }
-            if observation.account_info_override_count > previous_account_info_override_count {
-                logger::log_warn(&format!(
-                    "[Codex Login Guard] 已覆盖 account-info 登录门禁: instance_id={}, profile={}, override_count={}, last_override_at={}",
-                    instance_id,
-                    profile_key,
-                    observation.account_info_override_count,
-                    observation.last_account_info_override_at,
-                ));
-            }
             if observation.login_signal() || observation.auth_error_text {
                 logger::log_warn(&format!(
                     "[Codex Auth CDP] 检测到登录/认证异常页面: instance_id={}, route={}, login_signal={}, auth_error_text={}",
@@ -2557,7 +2137,37 @@ async fn run_auth_diagnostic_loop(
                     observation.auth_error_text,
                 ));
             }
-            previous = Some(observation);
+            previous = Some(observation.clone());
+        }
+
+        if observation.login_signal() {
+            login_streak = login_streak.saturating_add(1);
+            available_streak = 0;
+            if login_streak >= 2 {
+                if let Some(account_id) = observed_oauth_account_id(bind_account_id.as_deref()) {
+                    let _ = codex_account::update_client_auth_observation(
+                        &account_id,
+                        &instance_id,
+                        "login_required",
+                        true,
+                    )
+                    .await;
+                }
+            }
+        } else if observation.cdp_available {
+            available_streak = available_streak.saturating_add(1);
+            login_streak = 0;
+            if available_streak >= 2 {
+                if let Some(account_id) = observed_oauth_account_id(bind_account_id.as_deref()) {
+                    let _ = codex_account::update_client_auth_observation(
+                        &account_id,
+                        &instance_id,
+                        "available",
+                        false,
+                    )
+                    .await;
+                }
+            }
         }
 
         tokio::time::sleep(AUTH_DIAGNOSTIC_INTERVAL).await;
@@ -2787,7 +2397,6 @@ mod tests {
         remote_debugging_port_from_command_line, sanitize_cdp_headers,
         selected_model_from_cdp_response, should_capture_cdp_response_body, supports_bind_account,
         AuthPageSnapshot, CdpTarget, QuotaPlanSummary, QuotaResponse,
-        LOGIN_PAGE_GUARD_DISABLE_SCRIPT, LOGIN_PAGE_GUARD_SCRIPT,
     };
     use serde_json::json;
 
@@ -2926,7 +2535,9 @@ mod tests {
         assert!(script.contains("data-cockpit-quota-close"));
         assert!(script.contains("const plans = [{\"plan\":\"PLUS\",\"count\":14"));
         assert!(script.contains("const availableText = \"可用 12/14\""));
-        assert!(script.contains("const issueText = \"异常 2 · 冷却 0\""));
+        assert!(
+            script.contains("const issueText = \"异常 2 · 池异常 {{poolUnavailable}} · 冷却 0\"")
+        );
         assert!(script.contains("var(--color-token-main-surface-primary"));
         assert!(script.contains("var(--color-token-text-secondary"));
         assert!(script.contains("const planColor"));
@@ -3061,29 +2672,6 @@ mod tests {
         assert_eq!(observed.route, "/login");
         assert!(observed.login_signal());
         assert!(!observed.auth_error_text);
-    }
-
-    #[test]
-    fn login_page_guard_only_blocks_renderer_login_state_events() {
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("account/updated"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("authMode == null"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("login-required"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("chatgpt-auth-token-unavailable"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("stopImmediatePropagation"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("addEventListener"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("MessageChannel"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("onmessage"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("hasChatGptToken"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("accountInfoOverrideCount"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("patchAccountInfoPayload"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("fetch-response"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("bodyJsonString"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("patchHostFetchResponse(event.data)"));
-        assert!(LOGIN_PAGE_GUARD_SCRIPT.contains("true,"));
-        assert!(!LOGIN_PAGE_GUARD_SCRIPT.contains("access_token"));
-        assert!(!LOGIN_PAGE_GUARD_SCRIPT.contains("id_token"));
-        assert!(!LOGIN_PAGE_GUARD_SCRIPT.contains("refresh_token"));
-        assert!(LOGIN_PAGE_GUARD_DISABLE_SCRIPT.contains("setEnabled(false)"));
     }
 
     #[test]

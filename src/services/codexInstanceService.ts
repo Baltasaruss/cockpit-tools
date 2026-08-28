@@ -36,7 +36,7 @@ export async function startInstance(
   instanceId: string,
   options?: {
     transferConflictingAccount?: boolean;
-    skipOfficialAccountCheck?: boolean;
+    skipAuthCheck?: boolean;
   },
 ): Promise<InstanceProfile> {
   const startedAt = performance.now();
@@ -48,8 +48,7 @@ export async function startInstance(
       instanceId,
       transferConflictingAccount:
         options?.transferConflictingAccount === true ? true : null,
-      skipOfficialAccountCheck:
-        options?.skipOfficialAccountCheck === true ? true : null,
+      skipAuthCheck: options?.skipAuthCheck === true ? true : null,
     });
   } finally {
     console.info(

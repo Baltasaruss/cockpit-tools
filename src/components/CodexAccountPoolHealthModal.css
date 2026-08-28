@@ -156,6 +156,23 @@
   color: var(--text-secondary);
 }
 
+.codex-account-pool-health-item.is-pool {
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 36%, var(--border-light));
+  background: color-mix(in srgb, var(--danger, #dc2626) 5%, var(--bg-card));
+}
+
+.codex-account-pool-health-pool-error {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .codex-account-pool-health-item-primary > .btn {
   flex-shrink: 0;
 }

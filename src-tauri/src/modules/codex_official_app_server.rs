@@ -1,10 +1,12 @@
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value as JsonValue};
+use uuid::Uuid;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -16,6 +18,350 @@ const CODEX_APP_SERVER_MACOS_EXECUTABLES: &[&str] = &[
 ];
 const CODEX_APP_SERVER_EXECUTABLE_ENV: &str = "CODEX_APP_SERVER_EXECUTABLE";
 const APP_SERVER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
+const OFFICIAL_LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const OFFICIAL_HOSTED_AUTH_ENDPOINT: &str = "https://chatgpt.com/codex/desktop-auth";
+const OFFICIAL_CLIENT_IDENTITY_FILE: &str = "codex-official-client-identity.txt";
+
+lazy_static::lazy_static! {
+    static ref OFFICIAL_CLIENT_STABLE_ID: std::sync::Mutex<Option<String>> =
+        std::sync::Mutex::new(None);
+}
+
+struct OfficialLoginSession {
+    login_id: String,
+    auth_url: String,
+    completion: std::sync::Arc<(
+        std::sync::Mutex<Option<Result<(), String>>>,
+        std::sync::Condvar,
+    )>,
+    // 持有 stdin，保持 app-server JSON-RPC 会话存活直到回调完成。
+    stdin: ChildStdin,
+    child: Child,
+}
+
+/// 将 app-server 返回的内层授权地址包装成官方桌面使用的 hosted login 地址。
+///
+/// 官方桌面会在交给 `chatgpt.com/codex/desktop-auth` 前补充客户端身份字段；
+/// 这里保持 PKCE/state/redirect_uri 等动态参数原样，只规范化这些固定字段。
+fn hosted_auth_url(auth_url: &str) -> String {
+    let enriched_auth_url = enrich_official_authorize_url(auth_url);
+    format!(
+        "{}?authorize_url={}&codex_streamlined_login=true&no_universal_links=1",
+        OFFICIAL_HOSTED_AUTH_ENDPOINT,
+        urlencoding::encode(&enriched_auth_url)
+    )
+}
+
+fn enrich_official_authorize_url(auth_url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(auth_url) else {
+        return auth_url.to_string();
+    };
+
+    let mut query_pairs = parsed
+        .query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "originator"
+                    | "codex_app_version"
+                    | "source_surface_stable_id"
+                    | "codex_origin_stable_id"
+            )
+        })
+        .collect::<Vec<_>>();
+    let stable_id = official_client_stable_id();
+    query_pairs.push(("originator".to_string(), "Codex Desktop".to_string()));
+    query_pairs.push(("codex_app_version".to_string(), official_client_version()));
+    query_pairs.push(("source_surface_stable_id".to_string(), stable_id.clone()));
+    query_pairs.push(("codex_origin_stable_id".to_string(), stable_id));
+
+    {
+        let mut query = parsed.query_pairs_mut();
+        query.clear();
+        for (key, value) in query_pairs {
+            query.append_pair(&key, &value);
+        }
+    }
+    parsed.to_string()
+}
+
+/// 用户设置优先；留空时使用远端配置缓存，并在无缓存时回退内置默认值。
+fn official_client_version() -> String {
+    let configured = crate::modules::config::get_user_config().codex_oauth_app_version;
+    if let Some(version) =
+        crate::modules::remote_config::normalize_codex_oauth_app_version(&configured)
+    {
+        return version;
+    }
+    crate::modules::remote_config::cached_codex_oauth_app_version()
+}
+
+/// 为两个 stable ID 提供同一个持久化值；它们用于官方登录包装的客户端关联标识。
+fn official_client_stable_id() -> String {
+    if let Ok(mut cached) = OFFICIAL_CLIENT_STABLE_ID.lock() {
+        if let Some(value) = cached.as_ref() {
+            return value.clone();
+        }
+
+        let path = crate::modules::account::get_data_dir()
+            .ok()
+            .map(|dir| dir.join(OFFICIAL_CLIENT_IDENTITY_FILE));
+        if let Some(path) = path.as_ref() {
+            if let Ok(value) = fs::read_to_string(path) {
+                let value = value.trim();
+                if !value.is_empty() {
+                    let value = value.to_string();
+                    *cached = Some(value.clone());
+                    return value;
+                }
+            }
+        }
+
+        let value = Uuid::new_v4().to_string();
+        if let Some(path) = path {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(path, &value);
+        }
+        *cached = Some(value.clone());
+        return value;
+    }
+
+    Uuid::new_v4().to_string()
+}
+
+lazy_static::lazy_static! {
+    static ref OFFICIAL_LOGIN_SESSION: std::sync::Mutex<Option<OfficialLoginSession>> =
+        std::sync::Mutex::new(None);
+}
+
+/// 启动官方 app-server 的 ChatGPT OAuth 会话，并返回官方生成的 loginId/authUrl。
+/// app-server 会继续持有 localhost 回调和 Token 交换，调用方只负责打开 authUrl。
+pub fn start_official_login_session(
+    codex_home: &Path,
+    app_handle: &tauri::AppHandle,
+) -> Result<(String, String), String> {
+    if let Some(existing) = OFFICIAL_LOGIN_SESSION
+        .lock()
+        .map_err(|_| "获取官方 OAuth 会话锁失败".to_string())?
+        .as_ref()
+    {
+        return Ok((existing.login_id.clone(), existing.auth_url.clone()));
+    }
+
+    let executable = official_app_server_executable()?;
+    let mut child = build_app_server_command(&executable, codex_home)
+        .spawn()
+        .map_err(|error| format!("启动官方 app-server OAuth 会话失败: {}", error))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("无法读取官方 app-server OAuth stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("无法读取官方 app-server OAuth stderr")?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or("无法写入官方 app-server OAuth stdin")?;
+    let (sender, receiver) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = sender.send(line);
+        }
+    });
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            crate::modules::logger::log_warn(&format!(
+                "[Codex Official AppServer][oauth stderr] {}",
+                line
+            ));
+        }
+    });
+
+    let startup = (|| -> Result<(String, String), String> {
+        send_request(
+            &mut stdin,
+            json!({
+                "method": "initialize",
+                "id": 1,
+                "params": {
+                    "clientInfo": {"name": "cockpit-tools", "version": env!("CARGO_PKG_VERSION")},
+                    "capabilities": null,
+                },
+            }),
+        )?;
+        wait_for_response(&receiver, 1)?;
+        send_request(&mut stdin, json!({"method": "initialized", "params": {}}))?;
+        send_request(
+            &mut stdin,
+            json!({
+                "method": "account/login/start",
+                "id": 2,
+                "params": {
+                    "type": "chatgpt",
+                    "codexStreamlinedLogin": true,
+                    "appBrand": "chatgpt",
+                    "useHostedLoginSuccessPage": true,
+                },
+            }),
+        )?;
+        let response = wait_for_response_value(&receiver, 2)?;
+        let result = response
+            .get("result")
+            .ok_or("官方 app-server OAuth 响应缺少 result")?;
+        let login_id = result
+            .get("loginId")
+            .and_then(JsonValue::as_str)
+            .ok_or("官方 app-server OAuth 响应缺少 loginId")?
+            .to_string();
+        let auth_url = result
+            .get("authUrl")
+            .and_then(JsonValue::as_str)
+            .ok_or("官方 app-server OAuth 响应缺少 authUrl")?
+            .to_string();
+        Ok((login_id, auth_url))
+    })();
+
+    let (login_id, auth_url) = match startup {
+        Ok(value) => value,
+        Err(error) => {
+            finish_child(&mut child);
+            return Err(error);
+        }
+    };
+    let auth_url = hosted_auth_url(&auth_url);
+    let completion = std::sync::Arc::new((std::sync::Mutex::new(None), std::sync::Condvar::new()));
+    let completion_for_reader = completion.clone();
+    let app_for_reader = app_handle.clone();
+    let login_id_for_reader = login_id.clone();
+    std::thread::spawn(move || {
+        while let Ok(line) = receiver.recv() {
+            let Ok(value) = serde_json::from_str::<JsonValue>(&line) else {
+                continue;
+            };
+            if value.get("method").and_then(JsonValue::as_str) != Some("account/login/completed") {
+                continue;
+            }
+            let params = value.get("params").cloned().unwrap_or_else(|| json!({}));
+            if params.get("loginId").and_then(JsonValue::as_str)
+                != Some(login_id_for_reader.as_str())
+            {
+                continue;
+            }
+            let result = if params.get("success").and_then(JsonValue::as_bool) == Some(true) {
+                Ok(())
+            } else {
+                Err(params
+                    .get("error")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or("官方 OAuth 登录失败")
+                    .to_string())
+            };
+            if let Ok(mut guard) = completion_for_reader.0.lock() {
+                *guard = Some(result.clone());
+                completion_for_reader.1.notify_all();
+            }
+            let _ = tauri::Emitter::emit(
+                &app_for_reader,
+                "codex-oauth-login-completed",
+                serde_json::json!({"loginId": login_id_for_reader}),
+            );
+            let _ = tauri::Emitter::emit(
+                &app_for_reader,
+                "ghcp-oauth-login-completed",
+                serde_json::json!({"loginId": login_id_for_reader}),
+            );
+            break;
+        }
+        if let Ok(mut guard) = completion_for_reader.0.lock() {
+            if guard.is_none() {
+                *guard = Some(Err("官方 app-server OAuth 会话已断开".to_string()));
+                completion_for_reader.1.notify_all();
+            }
+        }
+    });
+    crate::modules::logger::log_info(&format!(
+        "[Codex Official AppServer] OAuth 会话已启动: login_id={}, pid={}, codex_home={}",
+        login_id,
+        child.id(),
+        codex_home.display()
+    ));
+    OFFICIAL_LOGIN_SESSION
+        .lock()
+        .map_err(|_| "获取官方 OAuth 会话锁失败".to_string())?
+        .replace(OfficialLoginSession {
+            login_id: login_id.clone(),
+            auth_url: auth_url.clone(),
+            completion,
+            stdin,
+            child,
+        });
+    Ok((login_id, auth_url))
+}
+
+pub fn official_login_matches(auth_url: &str) -> bool {
+    OFFICIAL_LOGIN_SESSION
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|s| s.auth_url == auth_url))
+        .unwrap_or(false)
+}
+
+pub fn official_login_matches_login_id(login_id: &str) -> bool {
+    OFFICIAL_LOGIN_SESSION
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|s| s.login_id == login_id))
+        .unwrap_or(false)
+}
+
+/// 等待官方 app-server 发出的 account/login/completed，并在成功后结束子进程。
+pub fn complete_official_login(login_id: &str) -> Result<(), String> {
+    let mut session = OFFICIAL_LOGIN_SESSION
+        .lock()
+        .map_err(|_| "获取官方 OAuth 会话锁失败".to_string())?
+        .take()
+        .ok_or("官方 OAuth 会话不存在，请重新发起授权")?;
+    if session.login_id != login_id {
+        finish_child(&mut session.child);
+        return Err("官方 OAuth loginId 不匹配".to_string());
+    }
+    let result = {
+        let (lock, condvar) = &*session.completion;
+        let guard = lock
+            .lock()
+            .map_err(|_| "获取官方 OAuth 完成状态锁失败".to_string())?;
+        let (guard, _) = condvar
+            .wait_timeout_while(guard, OFFICIAL_LOGIN_TIMEOUT, |value| value.is_none())
+            .map_err(|_| "等待官方 OAuth 完成状态失败".to_string())?;
+        guard
+            .clone()
+            .unwrap_or_else(|| Err("等待官方 OAuth 登录完成超时".to_string()))
+    };
+    finish_child(&mut session.child);
+    result
+}
+
+pub fn cancel_official_login(login_id: Option<&str>) -> Result<bool, String> {
+    let mut session = OFFICIAL_LOGIN_SESSION
+        .lock()
+        .map_err(|_| "获取官方 OAuth 会话锁失败".to_string())?;
+    let Some(mut current) = session.take() else {
+        return Ok(false);
+    };
+    if let Some(expected) = login_id {
+        if current.login_id != expected {
+            *session = Some(current);
+            return Err("官方 OAuth loginId 不匹配".to_string());
+        }
+    }
+    finish_child(&mut current.child);
+    Ok(true)
+}
 
 pub fn rebuild_thread_metadata(codex_home: &Path) -> Result<(), String> {
     let flow_started = Instant::now();
@@ -331,6 +677,13 @@ fn send_request(stdin: &mut impl Write, request: JsonValue) -> Result<(), String
 }
 
 fn wait_for_response(receiver: &mpsc::Receiver<String>, request_id: i64) -> Result<(), String> {
+    wait_for_response_value(receiver, request_id).map(|_| ())
+}
+
+fn wait_for_response_value(
+    receiver: &mpsc::Receiver<String>,
+    request_id: i64,
+) -> Result<JsonValue, String> {
     loop {
         let line = receiver
             .recv_timeout(APP_SERVER_RESPONSE_TIMEOUT)
@@ -352,7 +705,7 @@ fn wait_for_response(receiver: &mpsc::Receiver<String>, request_id: i64) -> Resu
             ));
         }
         if value.get("result").is_some() {
-            return Ok(());
+            return Ok(value);
         }
         return Err(format!(
             "官方 app-server 响应缺少 result (id={}): {}",
@@ -372,6 +725,67 @@ fn finish_child(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wraps_app_server_authorize_url_like_desktop_client() {
+        let authorize_url = "https://auth.openai.com/oauth/authorize?response_type=code&state=a+b";
+        let wrapped = hosted_auth_url(authorize_url);
+        let parsed = url::Url::parse(&wrapped).expect("parse hosted auth url");
+
+        assert_eq!(parsed.host_str(), Some("chatgpt.com"));
+        assert_eq!(parsed.path(), "/codex/desktop-auth");
+        let params = parsed
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        let inner = params.get("authorize_url").expect("wrapped authorize_url");
+        let inner = url::Url::parse(inner).expect("parse inner authorize url");
+        let inner_params = inner
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            inner_params.get("response_type").map(|v| v.as_ref()),
+            Some("code")
+        );
+        assert_eq!(inner_params.get("state").map(|v| v.as_ref()), Some("a b"));
+        assert_eq!(
+            params.get("codex_streamlined_login").map(|v| v.as_ref()),
+            Some("true")
+        );
+        assert_eq!(
+            params.get("no_universal_links").map(|v| v.as_ref()),
+            Some("1")
+        );
+
+        assert_eq!(
+            inner_params.get("originator").map(|v| v.as_ref()),
+            Some("Codex Desktop")
+        );
+        assert!(inner_params.contains_key("codex_app_version"));
+        let source_id = inner_params
+            .get("source_surface_stable_id")
+            .expect("source stable id");
+        assert_eq!(inner_params.get("codex_origin_stable_id"), Some(source_id));
+    }
+
+    #[test]
+    fn enriches_authorize_url_without_replacing_dynamic_parameters() {
+        let original = "https://auth.openai.com/oauth/authorize?response_type=code&state=a%2Bb&code_challenge=x&originator=cockpit-tools";
+        let enriched = enrich_official_authorize_url(original);
+        let parsed = url::Url::parse(&enriched).expect("parse enriched authorize url");
+        let params = parsed
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            params.get("response_type").map(|v| v.as_ref()),
+            Some("code")
+        );
+        assert_eq!(params.get("state").map(|v| v.as_ref()), Some("a+b"));
+        assert_eq!(params.get("code_challenge").map(|v| v.as_ref()), Some("x"));
+        assert_eq!(
+            params.get("originator").map(|v| v.as_ref()),
+            Some("Codex Desktop")
+        );
+    }
 
     #[test]
     fn maps_macos_launch_binary_to_resources_app_server() {

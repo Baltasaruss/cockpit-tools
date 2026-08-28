@@ -5,7 +5,7 @@ use crate::models::grok::{
 use crate::modules::{account, atomic_write, config, grok_oauth, logger, provider_current_state};
 use chrono::{DateTime, Utc};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;

@@ -80,11 +80,48 @@ export function getCodexJwtExpiration(token: string): number | null {
   }
 }
 
+/**
+ * 额度/API 请求已经得到远端鉴权拒绝时，本地 JWT exp 不能再作为“API 可用”的依据。
+ * 仅匹配 API 请求错误，避免把 refresh_token 自身失效误判成 access_token 已失效。
+ */
+export function isCodexApiServiceAuthRejected(
+  account?: CodexAccount | null,
+): boolean {
+  const quotaError = account?.quota_error;
+  if (!quotaError) return false;
+  const raw = String(quotaError.message || "").trim();
+  const lower = raw.toLowerCase();
+  const code = String(quotaError.code || "").trim().toLowerCase();
+  const refreshFailure =
+    lower.includes("刷新 token") ||
+    lower.includes("token 刷新") ||
+    lower.includes("refresh_token") ||
+    lower.includes("refresh token");
+  const apiRequestUnauthorized =
+    /api 返回错误\s+(401|403)\b/i.test(raw) ||
+    /(?:api|quota|usage)[^\n]{0,80}\b(401|403)\s+(?:unauthorized|forbidden)\b/i.test(
+      raw,
+    );
+  if (apiRequestUnauthorized) return true;
+  if (
+    lower.includes("token_invalidated") ||
+    lower.includes("invalid_token") ||
+    lower.includes("your authentication token has been invalidated")
+  ) {
+    return !refreshFailure;
+  }
+  return (
+    !refreshFailure &&
+    (code === "token_invalidated" || code === "invalid_token")
+  );
+}
+
 /** 与后端 API 服务的 5 分钟安全窗口保持一致。 */
 export function isCodexApiOnlyAccessTokenUsable(
   account?: CodexAccount | null,
   nowSeconds = Math.floor(Date.now() / 1000),
 ): boolean {
+  if (isCodexApiServiceAuthRejected(account)) return false;
   const token = account?.tokens?.access_token?.trim() || "";
   if (!token) return false;
   if (token.startsWith("at-")) return true;

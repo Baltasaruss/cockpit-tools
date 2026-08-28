@@ -831,6 +831,7 @@ pub fn run() {
             commands::codex::save_codex_api_service_app_speed,
             commands::codex::update_codex_account_app_speed,
             commands::codex::refresh_codex_account_profile,
+            commands::codex::force_refresh_codex_tokens,
             commands::codex::switch_codex_account,
             commands::codex::delete_codex_account,
             commands::codex::delete_codex_accounts,

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +48,22 @@ pub enum CodexLocalAccessImageGenerationMode {
     Enabled,
     ImagesOnly,
     Disabled,
+}
+
+/// API Service 成员账号的生图策略。`Inherit` 对 OAuth 账号表示按官方账号能力，
+/// 对 API Key 账号表示默认禁用托管 image_generation。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexLocalAccessImageGenerationPolicy {
+    Inherit,
+    Enabled,
+    Disabled,
+}
+
+impl Default for CodexLocalAccessImageGenerationPolicy {
+    fn default() -> Self {
+        Self::Inherit
+    }
 }
 
 impl Default for CodexLocalAccessImageGenerationMode {
@@ -460,6 +477,8 @@ pub struct CodexLocalAccessCollection {
     #[serde(default)]
     pub image_generation_mode: CodexLocalAccessImageGenerationMode,
     #[serde(default)]
+    pub image_generation_account_policies: HashMap<String, CodexLocalAccessImageGenerationPolicy>,
+    #[serde(default)]
     pub gateway_mode: CodexLocalAccessGatewayMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_proxy_url: Option<String>,
@@ -797,6 +816,27 @@ pub struct CodexLocalAccessAccountHealth {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexLocalAccessAccountPoolHealth {
+    pub api_key_id: String,
+    pub api_key_label: String,
+    pub provider: String,
+    pub model: String,
+    pub request_kind: String,
+    pub error_code: String,
+    pub error_message: String,
+    pub diagnostic_available: bool,
+    pub candidate_auths: usize,
+    pub scoped_auths: usize,
+    pub available_auths: usize,
+    pub unavailable_auths: usize,
+    pub model_excluded_auths: usize,
+    pub quota_reserved_auths: usize,
+    pub image_policy_blocked_auths: usize,
+    pub last_failure_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexLocalAccessProfileAttachment {
     pub profile_dir: String,
     pub attached: bool,
@@ -829,6 +869,7 @@ pub struct CodexLocalAccessState {
     pub member_count: usize,
     pub stats: CodexLocalAccessStats,
     pub account_health: Vec<CodexLocalAccessAccountHealth>,
+    pub account_pool_health: Vec<CodexLocalAccessAccountPoolHealth>,
     pub quota_reserve_status: Option<CodexLocalAccessQuotaReserveStatus>,
 }
 

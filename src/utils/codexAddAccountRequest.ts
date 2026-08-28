@@ -3,6 +3,13 @@ export const CODEX_SUITE_ENSURE_MOUNTED_EVENT = 'codex-suite-ensure-mounted';
 
 export type CodexAddAccountTab = 'oauth' | 'token' | 'apikey' | 'import';
 
+/** OAuth 重新授权成功后，继续完成原绑定目标所需的上下文。 */
+export type CodexOAuthBindingRetryDetail = {
+  targetKind: 'local_access' | 'api_key_account';
+  targetAccountId?: string;
+  quotaReserve?: { hourlyPercent: number; weeklyPercent: number } | null;
+};
+
 export type CodexOpenAddAccountDetail = {
   autoJoinApiService?: boolean;
   targetAccountId?: string;
@@ -10,6 +17,7 @@ export type CodexOpenAddAccountDetail = {
   retrySwitchLaunchAfterSwitch?: boolean;
   retryInstanceLaunchAfterOAuth?: boolean;
   retryInstanceId?: string;
+  retryOAuthBinding?: CodexOAuthBindingRetryDetail;
   tab?: CodexAddAccountTab;
 };
 
@@ -32,6 +40,13 @@ export function requestCodexOpenAddAccount(detail: CodexOpenAddAccountDetail = {
       : undefined;
   const retryInstanceLaunchAfterOAuth = detail.retryInstanceLaunchAfterOAuth === true;
   const retryInstanceId = detail.retryInstanceId?.trim() || undefined;
+  const retryOAuthBinding = detail.retryOAuthBinding
+    ? {
+        targetKind: detail.retryOAuthBinding.targetKind,
+        targetAccountId: detail.retryOAuthBinding.targetAccountId?.trim() || undefined,
+        quotaReserve: detail.retryOAuthBinding.quotaReserve ?? null,
+      }
+    : undefined;
   const tab = detail.tab ?? 'oauth';
   const normalized = {
     autoJoinApiService,
@@ -40,6 +55,7 @@ export function requestCodexOpenAddAccount(detail: CodexOpenAddAccountDetail = {
     retrySwitchLaunchAfterSwitch,
     retryInstanceLaunchAfterOAuth,
     retryInstanceId,
+    retryOAuthBinding,
     tab,
   } satisfies CodexOpenAddAccountDetail;
   pendingOpenRequest = normalized;

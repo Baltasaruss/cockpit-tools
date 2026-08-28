@@ -952,8 +952,6 @@
       "codexAppUiInjectionPoolLabel": "Accounts",
       "codexAppUiInjectionWeeklyLabel": "Week",
       "codexAppUiInjectionFiveHourLabel": "5h",
-      "codexLoginPageGuard": "Login page guard",
-      "codexLoginPageGuardDesc": "After restarting a managed Codex instance, use CDP to keep a working conversation page from being replaced by the login screen when the shell OAuth state changes. This only blocks the page switch; it does not repair expired OAuth credentials.",
       "codexWslConfigDir": "WSL Codex Directory",
       "codexWslConfigDirDesc": "Enter the .codex directory inside WSL. \\\\wsl.localhost\\ paths are supported.",
       "codexWslConfigDirPlaceholder": "Example: \\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\.codex",
@@ -968,6 +966,9 @@
       "commonTitle": "Common",
       "antigravitySettingsTitle": "Antigravity IDE Settings",
       "codexSettingsTitle": "Codex Settings",
+      "codexOAuthAppVersion": "OAuth client version",
+      "codexOAuthAppVersionDesc": "Leave empty to follow the remote default {{version}}; a value only overrides the version field in OAuth authorization URLs.",
+      "codexOAuthAppVersionPlaceholder": "Leave empty to use {{version}}",
       "codexClientPolicyTitle": "Allow third-party clients to use Codex",
       "codexClientPolicyDesc": "When enabled, Codex OAuth accounts restricted to official clients can also be used by third-party clients; individual accounts can still opt in when this is off.",
       "codexAccountPolicies": "Codex OAuth account policies",
@@ -2306,6 +2307,13 @@
       "applyModelConfig": "Apply settings",
       "defaultModel": "Default model",
       "repairCompleted": "Session visibility repair completed"
+      ,"forceRefreshTitle": "Force-refresh Token",
+      "forceRefreshReady": "OAuth tokens can be refreshed manually",
+      "forceRefreshDescription": "Use refresh_token to obtain new access_token and id_token values. This may rotate the current refresh token.",
+      "forceRefreshUnavailable": "Unavailable for this account type",
+      "forceRefreshAction": "Refresh now",
+      "forceRefreshRunning": "Refreshing Token…",
+      "forceRefreshSuccess": "Token refreshed successfully"
     },
     "switch": "Switch",
     "switched": "Switched to {{email}}",
@@ -2322,7 +2330,11 @@
     "switchAuth": {
       "apiOnlyTitle": "Client Sign-in Needed",
       "reauthorizeTitle": "Codex Authorization Expired",
-      "apiOnlyDescription": "The current access_token can still be used temporarily by the API service, but the client login credentials could not be refreshed, so the official Codex/ChatGPT client was not switched.",
+      "apiOnlyDescription": "The client for this account needs authorization again. The API service is still available.",
+      "observationStatus": "The latest check found that this account's client needs authorization again.",
+      "observationTime": "Latest check: {{time}}",
+      "loginRedirectTime": "Latest login-page redirect: {{time}}",
+      "observationInstance": "Observed instance: {{instance}}",
       "reauthorizeDescription": "The login credentials could not be refreshed and the access_token is no longer available to the API service. Reauthorize the account to continue.",
       "idTokenUnavailable": "The client identity credential expired and automatic refresh did not return a valid id_token.",
       "reasonLabel": "Reason",
@@ -2335,15 +2347,12 @@
       "startingInstanceAfterReauth": "Authorization updated. Restarting the instance...",
       "startInstanceAfterReauthFailed": "Authorization was updated, but the instance failed to start: {{error}}",
       "reauthorizedAndStartedInstance": "Reauthorized and started the instance",
-      "apiOnlyBadge": "Sign-in Needed"
+      "apiOnlyBadge": "Sign-in Needed",
+      "skipAuthCheck": "Skip check and continue"
     },
     "switchProgress": {
       "completed": "Switch complete",
       "needsAttention": "Action required",
-      "skipOfficialCheck": "Skip official check",
-      "skipOfficialCheckTitle": "Skip official online check and continue",
-      "skipOfficialCheckDescription": "The access_token is not locally considered expired, but the official account check did not finish. Continuing may lead to a login page if the account status is unknown.",
-      "skipOfficialCheckConfirm": "Continue anyway",
       "steps": {
         "credentials": "Read account credentials",
         "accessToken": "Check access_token",
@@ -2373,8 +2382,6 @@
         "notApplicable": "This check does not apply to the account",
         "refreshNeeded": "Expired or inside the safety window; an update is required",
         "tokenValid": "Valid; no update required",
-        "officialCheckPassed": "Official account check passed",
-        "officialCheckSkipped": "Official online check skipped",
         "stoppingRuntime": "Safely stopping ChatGPT/Codex and app-server...",
         "runtimeStopped": "The previous client runtime stopped safely",
         "waiting": "Waiting for the previous step",
@@ -2721,15 +2728,19 @@
         "title": "Account Pool",
         "allAvailable": "All OK {{count}}",
         "availableRatio": "OK {{available}}/{{total}}",
-        "issueSummary": "Bad {{abnormal}} · Cool {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, bad {{abnormal}}, cooldown {{cooldown}}, missing {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
-        "openDetails": "View problem accounts",
+        "issueSummary": "Bad {{abnormal}} · Pool {{poolUnavailable}} · Cool {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, bad {{abnormal}}, pool {{poolUnavailable}}, cooldown {{cooldown}}, missing {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
+        "openDetails": "View account pool issues",
         "recover": "Recover account status",
         "recoverSuccess": "Recovery requested for {{count}} account(s)",
         "dialog": {
-          "title": "Problem Accounts",
-          "description": "These states come from the Sidecar scheduler. Recovery clears scheduler cooldowns and retries the account.",
-          "noIssues": "No problem accounts",
+          "title": "Account Pool Issues",
+          "description": "These Sidecar scheduler states include account issues and pool-level failures that happen before an account is selected.",
+          "noIssues": "No account pool issues",
+          "unscopedApiKey": "Current API Key",
+          "poolUnavailable": "No available pool account",
+          "poolUnavailableDetail": "No available account was selected for model {{model}}",
+          "poolDiagnosticDetail": "Model {{model}}: {{candidate}} candidates, {{scoped}} in scope, {{available}} available, {{unavailable}} unavailable, {{modelExcluded}} model-excluded, {{quotaReserved}} quota-reserved, {{imageBlocked}} image-policy blocked",
           "missing": "Missing account",
           "cooldown": "Cooling down",
           "quota": "Quota limited",
@@ -2745,7 +2756,8 @@
           "unavailableDetail": "Sidecar does not currently consider this account schedulable.",
           "recover": "Recover",
           "recovering": "Recovering…",
-          "recoverAll": "Recover all"
+          "recoverAll": "Recover all",
+          "resyncPool": "Resync account pool"
         }
       },
       "memberTitle": "Collection Members",
@@ -2754,6 +2766,12 @@
       "memberPriorityNormal": "Normal",
       "memberPriorityHighest": "Highest",
       "memberPriorityDesc": "Highest is used first; Normal follows the current routing rules; Lowest is used only when other accounts are unavailable.",
+      "imagePolicy": {
+        "label": "Image policy",
+        "inherit": "Image: Auto",
+        "enabled": "Image: Enabled",
+        "disabled": "Image: Disabled"
+      },
       "routingStrategy": {
         "auto": "Auto (Recommended)",
         "singleAccount": "Single Account",
@@ -3452,7 +3470,7 @@
       "dateTime": "{{date}} {{time}}"
     },
     "subscription": {
-      "label": "Term",
+      "label": "Subscription validity",
       "column": "Subscription info",
       "unknown": "No subscription info",
       "missingDetail": "No subscription info",

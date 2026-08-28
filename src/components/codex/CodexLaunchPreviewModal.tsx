@@ -4,6 +4,7 @@ import {
   CircleAlert,
   KeyRound,
   Play,
+  RefreshCw,
   Save,
   Server,
   SlidersHorizontal,
@@ -24,6 +25,7 @@ import {
   saveCodexInstanceQuickConfig,
   getCodexInstanceQuickConfig,
 } from "../../services/codexInstanceService";
+import { forceRefreshCodexTokens } from "../../services/codexService";
 import type {
   CodexAccount,
   CodexExperimentalModelDefinition,
@@ -39,6 +41,7 @@ import {
 import { getCodexJwtExpiration } from "../../utils/codexSwitchAuthFailure";
 import type { UnifiedQuotaMetric } from "../../presentation/platformAccountPresentation";
 import { buildCodexAccountPresentation } from "../../presentation/platformAccountPresentation";
+import { useCodexAccountStore } from "../../stores/useCodexAccountStore";
 import { ModalErrorMessage, useModalErrorState } from "../ModalErrorMessage";
 import {
   SingleSelectDropdown,
@@ -141,6 +144,9 @@ export function CodexLaunchPreviewModal({
   const [executing, setExecuting] = useState<"switch" | "launch" | null>(null);
   const [repairOpen, setRepairOpen] = useState(false);
   const [modelConfigOpen, setModelConfigOpen] = useState(false);
+  const [forceRefreshing, setForceRefreshing] = useState(false);
+  const [manualRefreshedAccount, setManualRefreshedAccount] =
+    useState<CodexAccount | null>(null);
   const [modelConfigSnapshot, setModelConfigSnapshot] =
     useState<ModelConfigSnapshot | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -155,6 +161,7 @@ export function CodexLaunchPreviewModal({
     saving ||
     changingInstance ||
     runningActionId !== null ||
+    forceRefreshing ||
     executing !== null;
   const requestClose = useCallback(() => {
     const hasStackedModal = Array.from(
@@ -164,7 +171,10 @@ export function CodexLaunchPreviewModal({
     );
     if (!hasStackedModal) onClose();
   }, [onClose]);
-  useEscClose(!busy && !repairOpen && !modelConfigOpen, requestClose);
+  useEscClose(
+    !busy && !repairOpen && !modelConfigOpen,
+    requestClose,
+  );
 
   const applyLoadedConfig = useCallback((config: CodexQuickConfig) => {
     setLoadedConfig(config);
@@ -185,6 +195,7 @@ export function CodexLaunchPreviewModal({
     setDefaultModelId(null);
     setModelsError(null);
     setNotice(null);
+    setManualRefreshedAccount(null);
     void getCodexInstanceQuickConfig(instanceId)
       .then((config) => {
         if (active) applyLoadedConfig(config);
@@ -402,7 +413,8 @@ export function CodexLaunchPreviewModal({
     ];
   }, [account, accountAuthMetadata, accountSubscription, isApiKeySubject, t]);
   const tokenExpiryFacts = useMemo<CodexLaunchPreviewFact[]>(() => {
-    if (!account || !isStandardCodexOAuthAccount(account)) return [];
+    const tokenAccount = manualRefreshedAccount ?? account;
+    if (!tokenAccount || !isStandardCodexOAuthAccount(tokenAccount)) return [];
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const locale = i18n.resolvedLanguage || i18n.language;
@@ -452,10 +464,10 @@ export function CodexLaunchPreviewModal({
     };
 
     return [
-      buildFact("access_token", account.tokens?.access_token, 5 * 60),
-      buildFact("id_token", account.tokens?.id_token, 10 * 60),
+      buildFact("access_token", tokenAccount.tokens?.access_token, 5 * 60),
+      buildFact("id_token", tokenAccount.tokens?.id_token, 10 * 60),
     ];
-  }, [account, i18n.language, i18n.resolvedLanguage, t]);
+  }, [account, i18n.language, i18n.resolvedLanguage, manualRefreshedAccount, t]);
   const displayFacts = [
     ...(summary?.facts ?? fallbackFacts),
     ...tokenExpiryFacts,
@@ -559,6 +571,25 @@ export function CodexLaunchPreviewModal({
     },
     [busy, setError],
   );
+
+  const handleForceRefresh = useCallback(async () => {
+    if (!account || !isStandardCodexOAuthAccount(account) || forceRefreshing) {
+      return;
+    }
+    setForceRefreshing(true);
+    setNotice(null);
+    setError(null);
+    try {
+      const refreshed = await forceRefreshCodexTokens(account.id);
+      useCodexAccountStore.getState().applyAccountSnapshot(refreshed);
+      setManualRefreshedAccount(refreshed);
+      setNotice(t("codex.launchPreview.forceRefreshSuccess"));
+    } catch (refreshError) {
+      setError(String(refreshError).replace(/^Error:\s*/, ""));
+    } finally {
+      setForceRefreshing(false);
+    }
+  }, [account, forceRefreshing, setError, t]);
 
   const renderFooterAction = (action: CodexLaunchPreviewAction) => (
     <div
@@ -793,6 +824,33 @@ export function CodexLaunchPreviewModal({
             </section>
 
             <div className="codex-launch-preview-tool-list">
+              <section className="codex-launch-preview-tool-row">
+                <div className="codex-launch-preview-tool-icon">
+                  <RefreshCw size={16} />
+                </div>
+                <div className="codex-launch-preview-tool-copy">
+                  <h3>{t("codex.launchPreview.forceRefreshTitle")}</h3>
+                  <p>{t("codex.launchPreview.forceRefreshDescription")}</p>
+                  <div className="codex-launch-preview-tool-meta">
+                    <span>
+                      {notice ||
+                        (account && isStandardCodexOAuthAccount(account)
+                          ? t("codex.launchPreview.forceRefreshReady")
+                          : t("codex.launchPreview.forceRefreshUnavailable"))}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm codex-launch-preview-tool-action"
+                  onClick={() => void handleForceRefresh()}
+                  disabled={busy || !account || !isStandardCodexOAuthAccount(account)}
+                >
+                  {forceRefreshing
+                    ? t("codex.launchPreview.forceRefreshRunning")
+                    : t("codex.launchPreview.forceRefreshAction")}
+                </button>
+              </section>
               <section className="codex-launch-preview-tool-row">
                 <div className="codex-launch-preview-tool-icon">
                   <SlidersHorizontal size={16} />
@@ -1033,6 +1091,7 @@ export function CodexLaunchPreviewModal({
           </div>
         </div>
       )}
+
     </>
   );
 }

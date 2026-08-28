@@ -57,6 +57,7 @@ struct CodexInstanceStartTarget {
     user_data_dir: PathBuf,
     bind_account_id: Option<String>,
     is_default: bool,
+    launch_operation: Option<String>,
 }
 
 fn emit_codex_instance_launch_progress(
@@ -81,6 +82,9 @@ fn emit_codex_instance_launch_progress(
         "isDefault".to_string(),
         serde_json::json!(target.is_default),
     );
+    if let Some(operation) = target.launch_operation.as_deref() {
+        payload.insert("operation".to_string(), serde_json::json!(operation));
+    }
     let _ = app.emit(
         CODEX_INSTANCE_LAUNCH_PROGRESS_EVENT,
         serde_json::Value::Object(payload),
@@ -120,6 +124,7 @@ fn resolve_codex_instance_start_target(
             user_data_dir: modules::codex_instance::get_default_codex_home()?,
             bind_account_id: resolve_default_account_id(&settings),
             is_default: true,
+            launch_operation: None,
         });
     }
 
@@ -135,6 +140,7 @@ fn resolve_codex_instance_start_target(
         user_data_dir: PathBuf::from(instance.user_data_dir),
         bind_account_id: instance.bind_account_id,
         is_default: false,
+        launch_operation: None,
     })
 }
 
@@ -1806,16 +1812,22 @@ pub async fn codex_delete_instance(instance_id: String) -> Result<(), String> {
     modules::codex_instance::delete_instance(&instance_id)
 }
 
+/// 执行默认实例和多开实例共用的完整启动事务。
+///
+/// 调用方传入实例 ID、profile 是否已经由上游准备、启动来源等差异参数；本方法统一完成
+/// Token 预检/刷新、profile 写入、provider gateway 准备和客户端启动，并按需发出统一进度事件。
 async fn codex_start_instance_internal(
     app: AppHandle,
     instance_id: String,
     skip_default_bind_account_injection: bool,
     _transfer_conflicting_account: bool,
-    _skip_official_account_check: bool,
     emit_launch_progress: bool,
+    launch_operation: Option<&str>,
+    skip_auth_check: bool,
 ) -> Result<CodexInstanceProfileView, String> {
     let _start_guard = CodexInstanceStartGuard::acquire(&instance_id)?;
-    let launch_target = resolve_codex_instance_start_target(&instance_id)?;
+    let mut launch_target = resolve_codex_instance_start_target(&instance_id)?;
+    launch_target.launch_operation = launch_operation.map(str::to_owned);
     emit_codex_instance_launch_progress(
         &app,
         emit_launch_progress,
@@ -1880,11 +1892,7 @@ async fn codex_start_instance_internal(
     let oauth_access_token_refresh_due = oauth_account.as_ref().is_some_and(|account| {
         modules::codex_oauth::is_token_expired(&account.tokens.access_token)
     });
-    let oauth_id_token_refresh_due = oauth_account.as_ref().is_some_and(|account| {
-        modules::codex_account::account_has_refresh_token(account)
-            && modules::codex_oauth::is_id_token_refresh_due(&account.tokens.id_token)
-    });
-    let oauth_refresh_required = oauth_access_token_refresh_due || oauth_id_token_refresh_due;
+    let oauth_refresh_required = oauth_access_token_refresh_due;
     let oauth_token_generation_before = oauth_account
         .as_ref()
         .map(|account| account.token_generation)
@@ -1913,15 +1921,10 @@ async fn codex_start_instance_internal(
                     &account.tokens.access_token,
                 )
             }),
-            "idTokenExpiresAt": oauth_account.as_ref().and_then(|account| {
-                modules::codex_oauth::jwt_token_expiration_timestamp(&account.tokens.id_token)
-            }),
             "accessTokenRefreshDue": oauth_access_token_refresh_due,
-            "idTokenRefreshDue": oauth_id_token_refresh_due,
             "refreshRequired": oauth_refresh_required,
             "hasRefreshToken": oauth_has_refresh_token,
             "tokenGenerationBefore": oauth_token_generation_before,
-            "remoteCheckPending": oauth_account.is_some(),
         }),
     );
     if let Some(account_id) = oauth_account_id.as_deref() {
@@ -1941,15 +1944,7 @@ async fn codex_start_instance_internal(
                 "accessTokenExpiresAt": modules::codex_oauth::jwt_token_expiration_timestamp(
                     &checked_account.tokens.access_token,
                 ),
-                "idTokenExpiresAt": modules::codex_oauth::jwt_token_expiration_timestamp(
-                    &checked_account.tokens.id_token,
-                ),
                 "accessTokenRefreshDue": false,
-                "idTokenRefreshDue": modules::codex_account::account_has_refresh_token(
-                    &checked_account,
-                ) && modules::codex_oauth::is_id_token_refresh_due(
-                    &checked_account.tokens.id_token,
-                ),
                 "refreshRequired": oauth_refresh_required,
                 "hasRefreshToken": modules::codex_account::account_has_refresh_token(
                     &checked_account,
@@ -1958,8 +1953,24 @@ async fn codex_start_instance_internal(
                 "tokenGenerationChanged": checked_account.token_generation
                     > oauth_token_generation_before,
                 "localCredentialsValidated": true,
+                "clientAuthStatus": checked_account.client_auth_status.clone(),
             }),
         );
+        if !skip_auth_check
+            && modules::codex_account::client_auth_status_requires_reauthorization(&checked_account)
+        {
+            // 这是 CDP 对官方客户端实际页面的历史观测结果，不是本地 id_token
+            // 过期判断；启动前给用户明确的重新授权/跳过选择，避免启动后才跳登录页。
+            let auth_error = modules::codex_account::format_account_switch_error(
+                account_id,
+                "官方客户端上次运行时检测到需要登录，请重新授权后再启动。".to_string(),
+            );
+            modules::logger::log_warn(&format!(
+                "[Codex Start] client auth observation requires reauthorization: instance_id={}, account_id={}",
+                instance_id, account_id
+            ));
+            return Err(auth_error);
+        }
     }
     emit_codex_instance_launch_step(
         &app,
@@ -2064,7 +2075,6 @@ async fn codex_start_instance_internal(
             serde_json::json!({
                 "refreshRequired": oauth_refresh_required,
                 "accessTokenRefreshDue": oauth_access_token_refresh_due,
-                "idTokenRefreshDue": oauth_id_token_refresh_due,
                 "hasRefreshToken": oauth_has_refresh_token,
                 "tokenGenerationBefore": oauth_token_generation_before,
             }),
@@ -2106,14 +2116,6 @@ async fn codex_start_instance_internal(
                 "refreshRequired": oauth_refresh_required,
                 "tokenGenerationChanged": refreshed_oauth_account.as_ref().is_some_and(|account| {
                     account.token_generation > oauth_token_generation_before
-                }),
-                "accessTokenExpiresAt": refreshed_oauth_account.as_ref().and_then(|account| {
-                    modules::codex_oauth::jwt_token_expiration_timestamp(
-                        &account.tokens.access_token,
-                    )
-                }),
-                "idTokenExpiresAt": refreshed_oauth_account.as_ref().and_then(|account| {
-                    modules::codex_oauth::jwt_token_expiration_timestamp(&account.tokens.id_token)
                 }),
             }),
         );
@@ -2333,7 +2335,6 @@ async fn codex_start_instance_internal(
         serde_json::json!({
             "refreshRequired": oauth_refresh_required,
             "accessTokenRefreshDue": oauth_access_token_refresh_due,
-            "idTokenRefreshDue": oauth_id_token_refresh_due,
             "hasRefreshToken": oauth_has_refresh_token,
             "tokenGenerationBefore": oauth_token_generation_before,
         }),
@@ -2369,14 +2370,6 @@ async fn codex_start_instance_internal(
             "refreshRequired": oauth_refresh_required,
             "tokenGenerationChanged": refreshed_oauth_account.as_ref().is_some_and(|account| {
                 account.token_generation > oauth_token_generation_before
-            }),
-            "accessTokenExpiresAt": refreshed_oauth_account.as_ref().and_then(|account| {
-                modules::codex_oauth::jwt_token_expiration_timestamp(
-                    &account.tokens.access_token,
-                )
-            }),
-            "idTokenExpiresAt": refreshed_oauth_account.as_ref().and_then(|account| {
-                modules::codex_oauth::jwt_token_expiration_timestamp(&account.tokens.id_token)
             }),
         }),
     );
@@ -2530,35 +2523,68 @@ async fn codex_start_instance_internal(
     ))
 }
 
-/// 调用方必须在整个“凭据写入 + 默认实例启动”事务期间持有默认 profile 写入租约。
-/// 同一 OAuth 可继续由其它 profile 使用；启动预检只把最新运行态凭据回收到账号库。
+/// 启动已经由账号切换或 API 服务激活流程准备好 profile 的默认实例。
+///
+/// 本方法调用 `codex_start_instance_internal` 复用多开实例的启动事务；调用方必须在整个
+/// “凭据写入 + 默认实例启动”期间持有默认 profile 写入租约。`launch_operation` 仅用于标识
+/// 启动来源并关联前端进度状态，不改变 Token Authority 和 profile 落盘规则。
 pub(crate) async fn codex_start_default_with_prepared_profile(
     app: AppHandle,
-    skip_official_account_check: bool,
     emit_launch_progress: bool,
+    launch_operation: Option<&str>,
+    skip_auth_check: bool,
 ) -> Result<CodexInstanceProfileView, String> {
-    let launch_target = emit_launch_progress
-        .then(|| resolve_codex_instance_start_target(DEFAULT_INSTANCE_ID))
-        .transpose()?;
+    let mut launch_target = resolve_codex_instance_start_target(DEFAULT_INSTANCE_ID)?;
+    launch_target.launch_operation = launch_operation.map(str::to_owned);
     let result = codex_start_instance_internal(
         app.clone(),
         DEFAULT_INSTANCE_ID.to_string(),
         true,
         false,
-        skip_official_account_check,
         emit_launch_progress,
+        launch_operation,
+        skip_auth_check,
     )
     .await;
-    if let (Some(target), Err(error)) = (&launch_target, &result) {
+    let result = match result {
+        Ok(profile) => Ok(profile),
+        Err(error) => {
+            let auth_account_id = if launch_target
+                .bind_account_id
+                .as_deref()
+                .is_some_and(modules::codex_instance::is_api_service_bind_account_id)
+            {
+                modules::codex_local_access::bound_oauth_account_id_for_instance_start()
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                modules::codex_account::oauth_account_id_for_runtime_binding(
+                    launch_target.bind_account_id.as_deref(),
+                )
+                .or_else(|| {
+                    modules::codex_account::oauth_account_id_for_runtime_dir(
+                        &launch_target.user_data_dir,
+                    )
+                })
+            };
+            Err(auth_account_id
+                .as_deref()
+                .map(|account_id| {
+                    modules::codex_account::format_account_switch_error(account_id, error.clone())
+                })
+                .unwrap_or(error))
+        }
+    };
+    if let Err(error) = &result {
         emit_codex_instance_launch_progress(
             &app,
-            true,
-            target,
+            emit_launch_progress,
+            &launch_target,
             serde_json::json!({
                 "type": "error",
                 "error": error,
-                "canRetry": true,
-                "canSkipOfficialCheck": false,
+                "canRetry": !error.starts_with("CODEX_SWITCH_AUTH_REQUIRED:"),
             }),
         );
     }
@@ -2570,7 +2596,7 @@ pub async fn codex_start_instance(
     app: AppHandle,
     instance_id: String,
     transfer_conflicting_account: Option<bool>,
-    skip_official_account_check: Option<bool>,
+    skip_auth_check: Option<bool>,
 ) -> Result<CodexInstanceProfileView, String> {
     let launch_target = resolve_codex_instance_start_target(&instance_id)?;
     let _profile_lease = modules::codex_account::try_acquire_profile_mutation_lease(
@@ -2582,8 +2608,9 @@ pub async fn codex_start_instance(
         instance_id,
         false,
         transfer_conflicting_account.unwrap_or(false),
-        skip_official_account_check.unwrap_or(false),
         true,
+        None,
+        skip_auth_check.unwrap_or(false),
     )
     .await;
     if let Err(error) = &result {
@@ -2616,7 +2643,6 @@ pub async fn codex_start_instance(
                 "type": "error",
                 "error": error_for_ui,
                 "canRetry": true,
-                "canSkipOfficialCheck": false,
                 "oauthRuntimePolicy": "latest-runtime-wins",
             }),
         );

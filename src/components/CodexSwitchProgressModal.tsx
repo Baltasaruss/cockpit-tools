@@ -44,8 +44,6 @@ interface SwitchProgressPayload {
   details?: SwitchStepDetails;
   launchAfterSwitch?: boolean;
   canRetry?: boolean;
-  canSkipOfficialCheck?: boolean;
-  skipOfficialAccountCheck?: boolean;
 }
 
 interface SwitchStepState {
@@ -63,7 +61,6 @@ interface SwitchProgressState {
   authFailure?: CodexSwitchAuthFailure | null;
   launchAfterSwitch?: boolean;
   canRetry?: boolean;
-  canSkipOfficialCheck?: boolean;
 }
 
 const EVENT_NAME = "codex-switch-progress";
@@ -109,7 +106,6 @@ export function CodexSwitchProgressModal() {
   const [state, setState] = useState<SwitchProgressState | null>(null);
   const [actionBusy, setActionBusy] = useState<"api" | null>(null);
   const [retryBusy, setRetryBusy] = useState<"retry" | "skip" | null>(null);
-  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const accounts = useCodexAccountStore((store) => store.accounts);
 
@@ -126,7 +122,6 @@ export function CodexSwitchProgressModal() {
         setActionBusy(null);
         setActionError(null);
         setRetryBusy(null);
-        setSkipConfirmOpen(false);
       }
 
       setState((previous) => {
@@ -177,12 +172,6 @@ export function CodexSwitchProgressModal() {
               detail.canRetry ??
               (detail.details?.canRetry === true ? true : undefined) ??
               base.canRetry,
-            canSkipOfficialCheck:
-              detail.canSkipOfficialCheck ??
-              (detail.details?.canSkipOfficialCheck === true
-                ? true
-                : undefined) ??
-              base.canSkipOfficialCheck,
           };
         }
         if (detail.type === "complete" || detail.stage === "completed") {
@@ -263,6 +252,8 @@ export function CodexSwitchProgressModal() {
   );
 
   if (!state) return null;
+  // “切号并启动”统一由实例启动弹框展示；本组件仅保留纯切号流程。
+  if (state.launchAfterSwitch) return null;
 
   const account = accounts.find((item) => item.id === state.accountId);
   const accountLabel =
@@ -358,15 +349,9 @@ export function CodexSwitchProgressModal() {
             optionalBoolean(details.present),
             details.opaque === true,
           ),
-          details.remoteCheckPending === true
-            ? t("instances.accountLease.detail.checkingAccount")
-            : details.remoteCheckSkipped === true
-              ? t("codex.switchProgress.detail.officialCheckSkipped")
-              : details.remoteValidated === true
-                ? t("codex.switchProgress.detail.officialCheckPassed")
-                : details.refreshDue === true
-                  ? t("codex.switchProgress.detail.refreshNeeded")
-                  : t("codex.switchProgress.detail.tokenValid"),
+          details.refreshDue === true
+            ? t("codex.switchProgress.detail.refreshNeeded")
+            : t("codex.switchProgress.detail.tokenValid"),
         ];
       case "stopRuntime":
         return [
@@ -501,15 +486,29 @@ export function CodexSwitchProgressModal() {
     }
   };
 
-  const retrySwitch = async (skipOfficialAccountCheck = false) => {
+  const retrySwitch = async () => {
     if (retryBusy) return;
-    setRetryBusy(skipOfficialAccountCheck ? "skip" : "retry");
+    setRetryBusy("retry");
     setActionError(null);
-    setSkipConfirmOpen(false);
     try {
       await useCodexAccountStore.getState().switchAccount(state.accountId, {
         launchAfterSwitch: state.launchAfterSwitch,
-        skipOfficialAccountCheck,
+      });
+    } catch (error) {
+      setActionError(String(error).replace(/^Error:\s*/, ""));
+    } finally {
+      setRetryBusy(null);
+    }
+  };
+
+  const skipAuthCheckAndSwitch = async () => {
+    if (retryBusy || !authFailure?.apiOnlyAvailable) return;
+    setRetryBusy("skip");
+    setActionError(null);
+    try {
+      await useCodexAccountStore.getState().switchAccount(state.accountId, {
+        launchAfterSwitch: state.launchAfterSwitch,
+        skipAuthCheck: true,
       });
     } catch (error) {
       setActionError(String(error).replace(/^Error:\s*/, ""));
@@ -691,48 +690,31 @@ export function CodexSwitchProgressModal() {
                   : t("codex.localAccess.entryAction", "添加至 API 服务")}
               </button>
             )}
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleReauthorize}
-              disabled={actionBusy !== null}
-            >
-              {t("common.reauthorize", "重新授权")}
-            </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleReauthorize}
+                  disabled={actionBusy !== null || retryBusy !== null}
+                >
+                  {t("common.reauthorize", "重新授权")}
+                </button>
+                {authFailure.apiOnlyAvailable && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => void skipAuthCheckAndSwitch()}
+                    disabled={actionBusy !== null || retryBusy !== null}
+                  >
+                    {retryBusy === "skip"
+                      ? t("common.loading", "加载中...")
+                      : t("codex.switchAuth.skipAuthCheck", "跳过检查并继续")}
+                  </button>
+                )}
           </div>
         )}
 
         {isError && !authFailure && (
           <div className="codex-switch-progress-footer">
-            {skipConfirmOpen ? (
-              <div className="codex-switch-skip-confirm" role="alertdialog">
-                <strong>
-                  {t("codex.switchProgress.skipOfficialCheckTitle")}
-                </strong>
-                <p>{t("codex.switchProgress.skipOfficialCheckDescription")}</p>
-                <div className="codex-switch-skip-confirm-actions">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setSkipConfirmOpen(false)}
-                    disabled={retryBusy !== null}
-                  >
-                    {t("common.back", "返回")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => void retrySwitch(true)}
-                    disabled={retryBusy !== null}
-                  >
-                    {retryBusy === "skip"
-                      ? t("common.loading", "加载中...")
-                      : t("codex.switchProgress.skipOfficialCheckConfirm")}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -741,16 +723,6 @@ export function CodexSwitchProgressModal() {
                 >
                   {t("common.close", "关闭")}
                 </button>
-                {state.canSkipOfficialCheck && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setSkipConfirmOpen(true)}
-                    disabled={retryBusy !== null}
-                  >
-                    {t("codex.switchProgress.skipOfficialCheck")}
-                  </button>
-                )}
                 {state.canRetry !== false && (
                   <button
                     type="button"
@@ -764,8 +736,6 @@ export function CodexSwitchProgressModal() {
                     {t("common.retry", "重试")}
                   </button>
                 )}
-              </>
-            )}
           </div>
         )}
       </div>
