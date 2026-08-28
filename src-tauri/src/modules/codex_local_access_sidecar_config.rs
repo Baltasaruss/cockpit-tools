@@ -2182,7 +2182,9 @@ fn prepare_sidecar_launch_config_in_dir_sync(
     remove_stale_sidecar_auth_files(&auths_dir, &expected_auth_files)?;
 
     let model_ids = visible_codex_model_ids_for_collection(collection, Some(&health_snapshot));
+    let app_locale = crate::modules::config::get_user_config().language;
     let manifest = json!({
+        "locale": app_locale,
         "apiKeys": sidecar_api_key_manifest_values(collection),
         "accounts": manifest_accounts,
         "modelIds": model_ids,
@@ -2228,7 +2230,6 @@ fn prepare_sidecar_launch_config_in_dir_sync(
         "api-key-account-ids".to_string(),
         sidecar_api_key_account_scope_values(collection, &account_overrides),
     );
-    let app_locale = crate::modules::config::get_user_config().language;
     config.insert(
         "auth-error-localization".to_string(),
         json!({

@@ -13,7 +13,7 @@ import { buildCodexAccountPresentation } from "../presentation/platformAccountPr
 import { type CodexWindowStats } from "../utils/codexWindowStats";
 import { readCodexImportSyncApiService, writeCodexImportSyncApiService } from "../utils/codexImportPreferences";
 import { CODEX_OPEN_ADD_ACCOUNT_EVENT, takePendingCodexOpenAddAccountRequest, type CodexOAuthBindingRetryDetail, type CodexOpenAddAccountDetail } from "../utils/codexAddAccountRequest";
-import { UnlistenFn } from "@tauri-apps/api/event";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -1321,6 +1321,25 @@ export function useCodexAccountsBaseController() {
           "codex-local-access-state-updated",
           handleLocalAccessUpdated,
         );
+      };
+    }, [reloadLocalAccessLaunchCurrent, reloadLocalAccessState]);
+
+    useEffect(() => {
+      let disposed = false;
+      let unlisten: (() => void) | null = null;
+      void listen("codex-local-access-state-updated", () => {
+        void reloadLocalAccessState();
+        void reloadLocalAccessLaunchCurrent();
+      }).then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      });
+      return () => {
+        disposed = true;
+        unlisten?.();
       };
     }, [reloadLocalAccessLaunchCurrent, reloadLocalAccessState]);
   

@@ -946,7 +946,7 @@ func TestAccountPoolFailureIncludesPerAccountUnavailableReason(t *testing.T) {
 	}
 }
 
-func TestAuthPoolUnavailableErrorUsesChineseOnlyForChineseRequests(t *testing.T) {
+func TestAuthPoolUnavailableErrorUsesCockpitLocale(t *testing.T) {
 	stats := authPoolSelectionStats{
 		candidateAuths:     3,
 		unavailableAuths:   1,
@@ -954,19 +954,33 @@ func TestAuthPoolUnavailableErrorUsesChineseOnlyForChineseRequests(t *testing.T)
 		quotaReservedAuths: 1,
 	}
 
-	recorder := httptest.NewRecorder()
-	ginContext, _ := gin.CreateTestContext(recorder)
-	ginContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	ginContext.Request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
-	zhContext := context.WithValue(context.Background(), "gin", ginContext)
-	zhError := authPoolUnavailableError(zhContext, stats, "no auth available")
+	zhError := authPoolUnavailableError("zh-CN", stats, "no auth available")
 	if !strings.Contains(zhError.Message, "账号池没有可用账号：候选 3 个") {
 		t.Fatalf("unexpected Chinese error message: %q", zhError.Message)
 	}
 
-	englishError := authPoolUnavailableError(context.Background(), stats, "no auth available")
+	englishError := authPoolUnavailableError("ja", stats, "no auth available")
 	if !strings.Contains(englishError.Message, "No available account: candidates=3") {
 		t.Fatalf("unexpected English error message: %q", englishError.Message)
+	}
+}
+
+func TestCockpitLocaleIgnoresRequestAcceptLanguage(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ginContext.Request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+
+	selector := &cockpitSelector{locale: "en-US"}
+	_, err := selector.Pick(
+		context.WithValue(context.Background(), "gin", ginContext),
+		"codex",
+		"gpt-5.5",
+		cliproxyexecutor.Options{},
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "No available account") {
+		t.Fatalf("request language must not override Cockpit locale: %v", err)
 	}
 }
 

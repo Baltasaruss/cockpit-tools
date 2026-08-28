@@ -85,6 +85,7 @@ type accountModelRule struct {
 }
 
 type manifest struct {
+	Locale                     string              `json:"locale"`
 	APIKeys                    []apiKeySpec        `json:"apiKeys"`
 	Accounts                   []accountSpec       `json:"accounts"`
 	ModelIDs                   []string            `json:"modelIds"`

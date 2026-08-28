@@ -80,6 +80,14 @@ func monitorParentProcess(ctx context.Context, parentPID int, cancel context.Can
 	monitorParentProcessPlatform(ctx, parentPID, cancel, emitter)
 }
 
+func normalizeCockpitLocale(locale string) string {
+	locale = strings.TrimSpace(locale)
+	if locale == "" {
+		return "en"
+	}
+	return locale
+}
+
 func main() {
 	configPath := flag.String("config", "", "CLIProxyAPI config file")
 	manifestPath := flag.String("manifest", "", "Cockpit sidecar manifest file")
@@ -134,6 +142,7 @@ func main() {
 	selector := &cockpitSelector{
 		manifest:   m,
 		emitter:    emitter,
+		locale:     normalizeCockpitLocale(m.Locale),
 		quota:      quotaState,
 		priorities: priorityState,
 		tracker:    usageTracker,

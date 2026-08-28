@@ -37,6 +37,7 @@ import (
 type cockpitSelector struct {
 	manifest   *manifest
 	emitter    *eventEmitter
+	locale     string
 	quota      *quotaReserveStateStore
 	priorities *apiKeyPriorityStateStore
 	tracker    *requestUsageTracker
@@ -423,7 +424,7 @@ func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts
 			}
 		}
 		if len(auths) == 0 {
-			err := authPoolUnavailableError(ctx, selectionStats, "image generation is disabled for all selected accounts")
+			err := authPoolUnavailableError(s.locale, selectionStats, "image generation is disabled for all selected accounts")
 			s.emitAuthPoolUnavailable(ctx, provider, model, selectionStats, err)
 			return nil, err
 		}
@@ -454,7 +455,7 @@ func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts
 	}
 	selectionStats.availableAuths = len(available)
 	if len(available) == 0 {
-		err := authPoolUnavailableError(ctx, selectionStats, noAuthAvailableError(quotaReserveReasons).Error())
+		err := authPoolUnavailableError(s.locale, selectionStats, noAuthAvailableError(quotaReserveReasons).Error())
 		s.emitAuthPoolUnavailable(ctx, provider, model, selectionStats, err)
 		return nil, err
 	}
@@ -471,7 +472,7 @@ func (s *cockpitSelector) Pick(ctx context.Context, provider, model string, opts
 		ordered = s.prioritizeAuthsForAPIKey(ctx, ordered)
 	}
 	if len(ordered) == 0 {
-		err := authPoolUnavailableError(ctx, selectionStats, noAuthAvailableError(quotaReserveReasons).Error())
+		err := authPoolUnavailableError(s.locale, selectionStats, noAuthAvailableError(quotaReserveReasons).Error())
 		s.emitAuthPoolUnavailable(ctx, provider, model, selectionStats, err)
 		return nil, err
 	}
@@ -571,7 +572,7 @@ func (s *cockpitSelector) ReportAuthSelectionFailure(ctx context.Context, provid
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		detail = strings.TrimSpace(err.Error())
 	}
-	diagnosticErr := authPoolUnavailableError(ctx, stats, detail)
+	diagnosticErr := authPoolUnavailableError(s.locale, stats, detail)
 	var authErr *coreauth.Error
 	if errors.As(err, &authErr) && authErr != nil && strings.TrimSpace(authErr.Code) != "" {
 		diagnosticErr.Code = authErr.Code
@@ -1186,18 +1187,12 @@ func poolMemberDiagnostic(auth *coreauth.Auth, account *accountSpec, available b
 	return item
 }
 
-func authPoolUnavailableError(ctx context.Context, stats authPoolSelectionStats, detail string) *coreauth.Error {
+func authPoolUnavailableError(locale string, stats authPoolSelectionStats, detail string) *coreauth.Error {
 	detail = strings.TrimSpace(detail)
 	if detail == "" || detail == "no auth available" {
 		detail = "no auth available"
 	}
-	chinese := false
-	if ctx != nil {
-		if provider, ok := ctx.Value("gin").(interface{ GetHeader(string) string }); ok && provider != nil {
-			language := strings.ToLower(strings.TrimSpace(provider.GetHeader("Accept-Language")))
-			chinese = strings.HasPrefix(language, "zh")
-		}
-	}
+	chinese := strings.HasPrefix(strings.ToLower(strings.TrimSpace(locale)), "zh")
 	var message string
 	if chinese {
 		message = fmt.Sprintf("账号池没有可用账号：候选 %d 个，不可用 %d 个，模型排除 %d 个，额度保留拦截 %d 个，生图策略拦截 %d 个。请前往 Cockpit Tools 查看账号池诊断详情。",

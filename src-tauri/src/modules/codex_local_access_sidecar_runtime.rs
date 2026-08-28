@@ -248,6 +248,19 @@ async fn update_sidecar_auth_result_health(
     .await;
     sync_sidecar_scheduler_state(event).await;
     update_sidecar_account_pool_health(event, pool_diagnostic).await;
+    // Pool failures are the source of the account-pool dialog state. Failed
+    // account events also update per-account health; successful request events
+    // are intentionally not broadcast to avoid reloading the UI per request.
+    if pool_diagnostic || !event.success {
+        emit_local_access_state_updated();
+    }
+}
+
+fn emit_local_access_state_updated() {
+    let Some(app) = crate::get_app_handle() else {
+        return;
+    };
+    let _ = app.emit("codex-local-access-state-updated", ());
 }
 
 const UNSCOPED_ACCOUNT_POOL_HEALTH_KEY: &str = "__unscoped__";

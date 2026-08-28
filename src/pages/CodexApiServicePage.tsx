@@ -1270,9 +1270,20 @@ export function useCodexApiServicePageController() {
       void reloadState();
     };
     window.addEventListener("codex-local-access-state-updated", onUpdated);
+    let disposed = false;
+    let unlistenTauri: (() => void) | null = null;
+    void listen("codex-local-access-state-updated", onUpdated).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
+      unlistenTauri = dispose;
+    });
     return () => {
+      disposed = true;
       mountedRef.current = false;
       window.removeEventListener("codex-local-access-state-updated", onUpdated);
+      unlistenTauri?.();
     };
   }, [fetchAccounts, fetchCurrentAccount, reloadState]);
 
