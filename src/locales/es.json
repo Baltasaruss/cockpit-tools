@@ -525,7 +525,26 @@
       "appSpeed": "Velocidad",
       "appSpeedDesc": "Escribe la velocidad elegida antes de iniciar Codex oficial",
       "autoSyncThreads": "Auto-sync sesiones",
-      "autoSyncThreadsDesc": "Desactivado mantiene aisladas las sesiones de varias instancias. Al activarlo, iniciar o cerrar una instancia fusiona automáticamente los registros locales de sesión solo después de que todas las instancias de Codex estén detenidas."
+      "autoSyncThreadsDesc": "Desactivado mantiene aisladas las sesiones de varias instancias. Al activarlo, iniciar o cerrar una instancia fusiona automáticamente los registros locales de sesión solo después de que todas las instancias de Codex estén detenidas.",
+      "modelRouting": {
+        "title": "Enrutamiento de API de terceros",
+        "summary": "Los modelos sin prefijo usan la suscripción actual; los modelos con prefijo como cpa/gpt-5.5 se reenvían a una API de terceros. Ambos dependen del servicio de enrutamiento local.",
+        "rowSummary": "Los modelos sin prefijo usan la suscripción actual; los modelos con prefijo como cpa/gpt-5.5 se reenvían a una API de terceros. Ambos dependen del servicio de enrutamiento local.",
+        "confirmEnableTitle": "¿Habilitar enrutamiento de API de terceros?",
+        "confirmEnableMessage": "Las solicitudes de modelos de Codex se enrutarán a través del servicio local de Cockpit Tools. Si el servicio no está en ejecución, tanto los modelos de suscripción como los de terceros pueden no estar disponibles. El inicio al iniciar sesión se habilitará al guardar.\n\n¿Habilitar enrutamiento?",
+        "confirmEnableAction": "Habilitar",
+        "confirmDisableTitle": "¿Deshabilitar enrutamiento de API de terceros?",
+        "confirmDisableMessage": "Una vez aplicado este cambio, la puerta de enlace local se detendrá, se restaurará el acceso nativo a la suscripción y los modelos de terceros no estarán disponibles.\n\n¿Deshabilitar enrutamiento?",
+        "confirmDisableAction": "Deshabilitar",
+        "modalTip": "Tanto los modelos de suscripción como los de terceros pasan por el servicio de enrutamiento local. Mantenga Cockpit Tools ejecutándose en segundo plano. El servicio se recupera automáticamente y vuelve a la configuración oficial tras fallos reiterados.",
+        "modelRequired": "Cada ruta de API habilitada debe incluir al menos un modelo.",
+        "runningSaveTitle": "¿Cuándo debe surtir efecto el enrutamiento?",
+        "runningSaveMessage": "Esta instancia de Codex se está ejecutando. Reemplazar el servicio local ahora interrumpirá la conversación actual.\n\nElija «Guardar y reiniciar Codex» para aplicar ahora, o «Guardar para más tarde» para mantener la sesión actual sin cambios.",
+        "saveAndRestart": "Guardar y reiniciar Codex",
+        "saveForLater": "Guardar para más tarde",
+        "restartRollbackFailed": "No se pudo iniciar la nueva ruta y no se pudo reiniciar la configuración original: ",
+        "restartRolledBack": "No se pudo iniciar la nueva ruta. Se restauró la configuración original y se reinició Codex: {{error}}"
+      }
     },
     "quota": {
       "unbound": "Cuenta no vinculada",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} cuentas · {{scope}}",
       "summaryMetaUnconfigured": "Sin configurar · {{scope}}",
       "memberTitle": "Miembros de la colección",
-      "imagePolicy": { "label": "Política de imágenes", "inherit": "Imagen: Automático", "enabled": "Imagen: Activada", "disabled": "Imagen: Desactivada" },
+      "imagePolicy": {
+        "label": "Política de imágenes",
+        "inherit": "Imagen: Automático",
+        "enabled": "Imagen: Activada",
+        "disabled": "Imagen: Desactivada"
+      },
       "memberPriorityLabel": "Prioridad",
       "memberPriorityLowest": "Mínima",
       "memberPriorityNormal": "Estándar",

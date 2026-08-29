@@ -525,7 +525,26 @@
       "appSpeed": "Velocidade",
       "appSpeedDesc": "Grava a velocidade escolhida antes de iniciar o Codex oficial",
       "autoSyncThreads": "Auto-sync sessões",
-      "autoSyncThreadsDesc": "Desativado mantém as sessões de múltiplas instâncias isoladas. Ao ativar, iniciar ou fechar uma instância mescla automaticamente os registros locais de sessão somente depois que todas as instâncias Codex estiverem paradas."
+      "autoSyncThreadsDesc": "Desativado mantém as sessões de múltiplas instâncias isoladas. Ao ativar, iniciar ou fechar uma instância mescla automaticamente os registros locais de sessão somente depois que todas as instâncias Codex estiverem paradas.",
+      "modelRouting": {
+        "title": "Roteamento de API de terceiros",
+        "summary": "Modelos sem prefixo usam a assinatura atual; modelos com prefixo como cpa/gpt-5.5 são encaminhados para uma API de terceiros. Ambos dependem do serviço de roteamento local.",
+        "rowSummary": "Modelos sem prefixo usam a assinatura atual; modelos com prefixo como cpa/gpt-5.5 são encaminhados para uma API de terceiros. Ambos dependem do serviço de roteamento local.",
+        "confirmEnableTitle": "Ativar roteamento de API de terceiros?",
+        "confirmEnableMessage": "As solicitações de modelos do Codex serão roteadas através do serviço local Cockpit Tools. Se o serviço não estiver em execução, tanto os modelos de assinatura quanto os de terceiros poderão ficar indisponíveis. A inicialização no login será ativada ao salvar.\n\nAtivar roteamento?",
+        "confirmEnableAction": "Ativar",
+        "confirmDisableTitle": "Desativar roteamento de API de terceiros?",
+        "confirmDisableMessage": "Após essa alteração entrar em vigor, o gateway local será interrompido, o acesso nativo da assinatura será restaurado e os modelos de terceiros ficarão indisponíveis.\n\nDesativar roteamento?",
+        "confirmDisableAction": "Desativar",
+        "modalTip": "Tanto os modelos de assinatura quanto os de terceiros passam pelo serviço de roteamento local. Mantenha o Cockpit Tools em execução em segundo plano. O serviço se recupera automaticamente e reverte para a configuração oficial após falhas consecutivas.",
+        "modelRequired": "Cada rota de API habilitada deve incluir pelo menos um modelo.",
+        "runningSaveTitle": "Quando o roteamento deve entrar em vigor?",
+        "runningSaveMessage": "Esta instância do Codex está em execução. Substituir o serviço local agora interromperá a conversa atual.\n\nEscolha «Salvar e reiniciar o Codex» para aplicar agora ou «Salvar para depois» para manter a sessão atual inalterada.",
+        "saveAndRestart": "Salvar e reiniciar o Codex",
+        "saveForLater": "Salvar para depois",
+        "restartRollbackFailed": "Falha ao iniciar a nova rota e a configuração original não pôde ser reiniciada: ",
+        "restartRolledBack": "Falha ao iniciar a nova rota. A configuração original foi restaurada e o Codex foi reiniciado: {{error}}"
+      }
     },
     "quota": {
       "unbound": "Conta não vinculada",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} contas · {{scope}}",
       "summaryMetaUnconfigured": "Não configurado · {{scope}}",
       "memberTitle": "Membros da coleção",
-      "imagePolicy": { "label": "Política de imagem", "inherit": "Imagem: Automático", "enabled": "Imagem: Ativada", "disabled": "Imagem: Desativada" },
+      "imagePolicy": {
+        "label": "Política de imagem",
+        "inherit": "Imagem: Automático",
+        "enabled": "Imagem: Ativada",
+        "disabled": "Imagem: Desativada"
+      },
       "memberPriorityLabel": "Prioridade",
       "memberPriorityLowest": "Mínima",
       "memberPriorityNormal": "Padrão",

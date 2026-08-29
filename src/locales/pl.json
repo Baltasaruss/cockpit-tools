@@ -525,7 +525,26 @@
       "appSpeed": "Szybkość",
       "appSpeedDesc": "Zapisuje wybraną szybkość przed uruchomieniem oficjalnego Codex",
       "autoSyncThreads": "Auto-sync sesji",
-      "autoSyncThreadsDesc": "Wyłączone utrzymuje izolację sesji wielu instancji. Po włączeniu uruchomienie lub zamknięcie instancji automatycznie scala lokalne rekordy sesji tylko wtedy, gdy wszystkie instancje Codex są zatrzymane."
+      "autoSyncThreadsDesc": "Wyłączone utrzymuje izolację sesji wielu instancji. Po włączeniu uruchomienie lub zamknięcie instancji automatycznie scala lokalne rekordy sesji tylko wtedy, gdy wszystkie instancje Codex są zatrzymane.",
+      "modelRouting": {
+        "title": "Routing API innych firm",
+        "summary": "Modele bez prefiksu korzystają z bieżącej subskrypcji; modele z prefiksem, takie jak cpa/gpt-5.5, są przekazywane do zewnętrznego API. Oba zależą od lokalnej usługi routingu.",
+        "rowSummary": "Modele bez prefiksu korzystają z bieżącej subskrypcji; modele z prefiksem, takie jak cpa/gpt-5.5, są przekazywane do zewnętrznego API. Oba zależą od lokalnej usługi routingu.",
+        "confirmEnableTitle": "Włączyć routing API innych firm?",
+        "confirmEnableMessage": "Żądania modeli Codex będą kierowane przez lokalną usługę Cockpit Tools. Jeśli usługa nie działa, zarówno modele subskrypcyjne, jak i zewnętrzne mogą być niedostępne. Uruchamianie przy logowaniu zostanie włączone po zapisaniu.\n\nWłączyć routing?",
+        "confirmEnableAction": "Włącz",
+        "confirmDisableTitle": "Wyłączyć routing API innych firm?",
+        "confirmDisableMessage": "Gdy ta zmiana wejdzie w życie, lokalna brama zostanie zatrzymana, bezpośredni dostęp do oficjalnej subskrypcji zostanie przywrócony, a modele innych firm będą niedostępne.\n\nWyłączyć routing?",
+        "confirmDisableAction": "Wyłącz",
+        "modalTip": "Zarówno modele subskrypcyjne, jak i innych firm przechodzą przez lokalną usługę routingu. Pozostaw Cockpit Tools uruchomione w tle. Usługa odzyskuje sprawność automatycznie, a po wielokrotnych niepowodzeniach powraca do oficjalnej konfiguracji.",
+        "modelRequired": "Każda włączona trasa API musi zawierać co najmniej jeden model.",
+        "runningSaveTitle": "Kiedy routing ma wejść w życie?",
+        "runningSaveMessage": "Ta instancja Codex jest uruchomiona. Zastąpienie lokalnej usługi teraz przerwie bieżącą rozmowę.\n\nWybierz „Zapisz i zrestartuj Codex”, aby zastosować teraz, lub „Zapisz na później”, aby zachować bieżącą sesję bez zmian.",
+        "saveAndRestart": "Zapisz i zrestartuj Codex",
+        "saveForLater": "Zapisz na później",
+        "restartRollbackFailed": "Nie udało się uruchomić nowej trasy i nie można zrestartować pierwotnej konfiguracji: ",
+        "restartRolledBack": "Nie udało się uruchomić nowej trasy. Przywrócono pierwotną konfigurację i zrestartowano Codex: {{error}}"
+      }
     },
     "quota": {
       "unbound": "Konto niepowiązane",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} kont · {{scope}}",
       "summaryMetaUnconfigured": "Nie skonfigurowano · {{scope}}",
       "memberTitle": "Członkowie kolekcji",
-      "imagePolicy": { "label": "Zasady obrazów", "inherit": "Obraz: Automatycznie", "enabled": "Obraz: Włączony", "disabled": "Obraz: Wyłączony" },
+      "imagePolicy": {
+        "label": "Zasady obrazów",
+        "inherit": "Obraz: Automatycznie",
+        "enabled": "Obraz: Włączony",
+        "disabled": "Obraz: Wyłączony"
+      },
       "memberPriorityLabel": "Priorytet",
       "memberPriorityLowest": "Najniższy",
       "memberPriorityNormal": "Normalny",

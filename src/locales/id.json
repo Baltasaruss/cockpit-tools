@@ -584,7 +584,26 @@
       "appSpeed": "Kecepatan",
       "appSpeedDesc": "Menulis kecepatan pilihan sebelum menjalankan Codex resmi",
       "autoSyncThreads": "Sinkron sesi otomatis",
-      "autoSyncThreadsDesc": "Saat mati, sesi multi-instance tetap terisolasi. Saat aktif, memulai atau menutup instance otomatis menggabungkan catatan sesi lokal hanya setelah semua instance Codex berhenti."
+      "autoSyncThreadsDesc": "Saat mati, sesi multi-instance tetap terisolasi. Saat aktif, memulai atau menutup instance otomatis menggabungkan catatan sesi lokal hanya setelah semua instance Codex berhenti.",
+      "modelRouting": {
+        "title": "Perutean API pihak ketiga",
+        "summary": "Model tanpa awalan menggunakan langganan saat ini; model dengan awalan seperti cpa/gpt-5.5 diteruskan ke API pihak ketiga. Keduanya bergantung pada layanan perutean lokal.",
+        "rowSummary": "Model tanpa awalan menggunakan langganan saat ini; model dengan awalan seperti cpa/gpt-5.5 diteruskan ke API pihak ketiga. Keduanya bergantung pada layanan perutean lokal.",
+        "confirmEnableTitle": "Aktifkan perutean API pihak ketiga?",
+        "confirmEnableMessage": "Permintaan model Codex akan dirutekan melalui layanan Cockpit Tools lokal. Jika layanan tidak berjalan, model langganan dan pihak ketiga mungkin tidak tersedia. Mulai saat masuk akan diaktifkan saat Anda menyimpan.\n\nAktifkan perutean?",
+        "confirmEnableAction": "Aktifkan",
+        "confirmDisableTitle": "Nonaktifkan perutean API pihak ketiga?",
+        "confirmDisableMessage": "Setelah perubahan ini berlaku, gateway lokal akan berhenti, akses langganan resmi akan dipulihkan, dan model pihak ketiga tidak akan tersedia.\n\nNonaktifkan perutean?",
+        "confirmDisableAction": "Nonaktifkan",
+        "modalTip": "Model langganan dan pihak ketiga keduanya melewati layanan perutean lokal. Biarkan Cockpit Tools berjalan di latar belakang. Layanan pulih secara otomatis dan beralih kembali ke konfigurasi resmi setelah kegagalan berulang.",
+        "modelRequired": "Setiap rute API yang diaktifkan harus menyertakan setidaknya satu model.",
+        "runningSaveTitle": "Kapan perutean harus berlaku?",
+        "runningSaveMessage": "Instans Codex ini sedang berjalan. Mengganti layanan lokal sekarang akan memutus percakapan saat ini.\n\nPilih «Simpan dan mulai ulang Codex» untuk menerapkan sekarang, atau «Simpan untuk nanti» untuk mempertahankan sesi saat ini.",
+        "saveAndRestart": "Simpan dan mulai ulang Codex",
+        "saveForLater": "Simpan untuk nanti",
+        "restartRollbackFailed": "Rute baru gagal dimulai dan konfigurasi asli tidak dapat dimulai ulang: ",
+        "restartRolledBack": "Rute baru gagal dimulai. Konfigurasi asli telah dipulihkan dan Codex dimulai ulang: {{error}}"
+      }
     },
     "quota": {
       "unbound": "Tidak ada akun tertaut",
@@ -2373,7 +2392,12 @@
       "summaryMeta": "{{count}} akun · {{scope}}",
       "summaryMetaUnconfigured": "Belum dikonfigurasi · {{scope}}",
       "memberTitle": "Anggota koleksi",
-      "imagePolicy": { "label": "Kebijakan gambar", "inherit": "Gambar: Otomatis", "enabled": "Gambar: Aktif", "disabled": "Gambar: Nonaktif" },
+      "imagePolicy": {
+        "label": "Kebijakan gambar",
+        "inherit": "Gambar: Otomatis",
+        "enabled": "Gambar: Aktif",
+        "disabled": "Gambar: Nonaktif"
+      },
       "memberPriorityLabel": "Prioritas",
       "memberPriorityLowest": "Terendah",
       "memberPriorityNormal": "Biasa",

@@ -525,7 +525,26 @@
       "appSpeed": "速度",
       "appSpeedDesc": "公式 Codex の起動前に選択した速度を書き込みます",
       "autoSyncThreads": "セッション自動同期",
-      "autoSyncThreadsDesc": "オフの場合、複数インスタンスのセッションは分離されます。オンの場合、すべての Codex インスタンスが停止しているときだけ、インスタンスの起動または終了時にローカルセッション記録を自動的に統合します。"
+      "autoSyncThreadsDesc": "オフの場合、複数インスタンスのセッションは分離されます。オンの場合、すべての Codex インスタンスが停止しているときだけ、インスタンスの起動または終了時にローカルセッション記録を自動的に統合します。",
+      "modelRouting": {
+        "title": "サードパーティ API ルーティング",
+        "summary": "プレフィックスのないモデルは現在のサブスクリプションを使用し、cpa/gpt-5.5 などのプレフィックス付きモデルはサードパーティ API に転送されます。どちらもローカル ルーティング サービスに依存します。",
+        "rowSummary": "プレフィックスのないモデルは現在のサブスクリプションを使用し、cpa/gpt-5.5 などのプレフィックス付きモデルはサードパーティ API に転送されます。どちらもローカル ルーティング サービスに依存します。",
+        "confirmEnableTitle": "サードパーティ API ルーティングを有効にしますか？",
+        "confirmEnableMessage": "Codex モデルのリクエストはローカルの Cockpit Tools サービスを経由してルーティングされます。サービスが実行されていない場合、サブスクリプション モデルとサードパーティ モデルの両方が利用できなくなる可能性があります。保存時にログイン時起動が有効になります。\n\nルーティングを有効にしますか？",
+        "confirmEnableAction": "有効にする",
+        "confirmDisableTitle": "サードパーティ API ルーティングを無効にしますか？",
+        "confirmDisableMessage": "この変更が有効になると、ローカル ゲートウェイが停止し、ネイティブのサブスクリプション アクセスが復元され、サードパーティ モデルは利用できなくなります。\n\nルーティングを無効にしますか？",
+        "confirmDisableAction": "無効にする",
+        "modalTip": "サブスクリプション モデルとサードパーティ モデルはどちらもローカル ルーティング サービスを通過します。Cockpit Tools をバックグラウンドで実行したままにしてください。サービスは自動的に回復し、連続して失敗した場合は公式設定にフォールバックします。",
+        "modelRequired": "有効な各 API ルートには、少なくとも 1 つのモデルを含める必要があります。",
+        "runningSaveTitle": "ルーティング設定はいつ有効になりますか？",
+        "runningSaveMessage": "この Codex インスタンスは実行中です。今すぐローカル サービスを置き換えると、現在の会話が中断されます。\n\n今すぐ適用するには「保存して Codex を再起動」を、現在のセッションを変更しない場合は「保存して後で適用」を選択してください。",
+        "saveAndRestart": "保存して Codex を再起動",
+        "saveForLater": "保存して後で適用",
+        "restartRollbackFailed": "新しいルートの起動に失敗し、元の設定を再起動できませんでした: ",
+        "restartRolledBack": "新しいルートの起動に失敗しました。元の設定が復元され、Codex が再起動されました: {{error}}"
+      }
     },
     "quota": {
       "unbound": "紐付けアカウントなし",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} 件のアカウント · {{scope}}",
       "summaryMetaUnconfigured": "未設定 · {{scope}}",
       "memberTitle": "集合メンバー",
-      "imagePolicy": { "label": "画像ポリシー", "inherit": "画像：自動", "enabled": "画像：有効", "disabled": "画像：無効" },
+      "imagePolicy": {
+        "label": "画像ポリシー",
+        "inherit": "画像：自動",
+        "enabled": "画像：有効",
+        "disabled": "画像：無効"
+      },
       "memberPriorityLabel": "優先度",
       "memberPriorityLowest": "最低",
       "memberPriorityNormal": "通常",
