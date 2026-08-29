@@ -77,11 +77,73 @@ fn provider_gateway_profile_api_key(
     let now = now_ms();
     let state = ProviderGatewayProfileState {
         api_key: generate_local_api_key(),
+        port: None,
         created_at: now,
         updated_at: now,
     };
     save_provider_gateway_profile_state(profile_dir, account_id, &state)?;
     Ok(state.api_key)
+}
+
+fn provider_gateway_profile_port(
+    profile_dir: &Path,
+    account_id: &str,
+) -> Result<u16, String> {
+    if let Some(mut state) = load_provider_gateway_profile_state(profile_dir, account_id)? {
+        if let Some(port) = state.port.filter(|port| *port > 0) {
+            return Ok(port);
+        }
+        let port = allocate_random_local_port(CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST)?;
+        state.port = Some(port);
+        state.updated_at = now_ms();
+        save_provider_gateway_profile_state(profile_dir, account_id, &state)?;
+        return Ok(port);
+    }
+
+    let now = now_ms();
+    let state = ProviderGatewayProfileState {
+        api_key: generate_local_api_key(),
+        port: Some(allocate_random_local_port(
+            CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST,
+        )?),
+        created_at: now,
+        updated_at: now,
+    };
+    save_provider_gateway_profile_state(profile_dir, account_id, &state)?;
+    Ok(state.port.expect("new provider gateway state must have a port"))
+}
+
+fn persisted_mixed_model_gateway_endpoint(
+    profile_dir: &Path,
+) -> Result<Option<(GatewayBindEndpoint, String)>, String> {
+    let Some(state) =
+        load_provider_gateway_profile_state(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID)?
+    else {
+        return Ok(None);
+    };
+    let Some(port) = state.port.filter(|port| *port > 0) else {
+        return Ok(None);
+    };
+    let api_key = state.api_key.trim();
+    if api_key.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((
+        GatewayBindEndpoint {
+            bind_host: CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST.to_string(),
+            port,
+        },
+        api_key.to_string(),
+    )))
+}
+
+async fn persisted_mixed_model_gateway_is_healthy(profile_dir: &Path) -> bool {
+    let Ok(Some((endpoint, api_key))) = persisted_mixed_model_gateway_endpoint(profile_dir) else {
+        return false;
+    };
+    probe_sidecar_ready_endpoint(endpoint.port, &api_key, Duration::from_millis(500))
+        .await
+        .is_ok()
 }
 
 #[derive(Debug)]
@@ -295,6 +357,26 @@ pub fn restore_mixed_model_gateway_profile(profile_dir: &Path) -> Result<bool, S
     cleanup_profile_takeover_without_backup(profile_dir, api_key, false)
 }
 
+pub fn profile_uses_mixed_model_gateway(profile_dir: &Path) -> Result<bool, String> {
+    let Some(state) =
+        load_provider_gateway_profile_state(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID)?
+    else {
+        return Ok(false);
+    };
+    let api_key = state.api_key.trim();
+    if api_key.is_empty() {
+        return Ok(false);
+    }
+    let config = read_optional_profile_file(&profile_config_path(profile_dir))?;
+    let auth = read_optional_profile_file(&profile_auth_path(profile_dir))?;
+    Ok(config
+        .as_deref()
+        .is_some_and(|content| is_codex_local_access_config_for_api_key(content, api_key))
+        || auth
+            .as_deref()
+            .is_some_and(|content| is_exact_codex_local_access_auth_text(content, api_key)))
+}
+
 fn normalize_provider_gateway_models(models: Vec<&str>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut values = Vec::new();
@@ -306,6 +388,40 @@ fn normalize_provider_gateway_models(models: Vec<&str>) -> Vec<String> {
         values.push(model.to_string());
     }
     values
+}
+
+fn mixed_route_upstream_models(
+    catalog_models: &[String],
+    selected_models: Option<&[String]>,
+    extra_models: Option<&[String]>,
+) -> Vec<String> {
+    let selected = selected_models.map(|models| {
+        models
+            .iter()
+            .map(|model| model.trim().to_ascii_lowercase())
+            .collect::<HashSet<_>>()
+    });
+    let mut models = catalog_models
+        .iter()
+        .filter(|model| {
+            selected.as_ref().is_none_or(|selected| {
+                selected.contains(&model.trim().to_ascii_lowercase())
+            })
+        })
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    models.extend(
+        extra_models
+            .unwrap_or_default()
+            .iter()
+            .filter(|model| {
+                selected.as_ref().is_none_or(|selected| {
+                    selected.contains(&model.trim().to_ascii_lowercase())
+                })
+            })
+            .map(String::as_str),
+    );
+    normalize_provider_gateway_models(models)
 }
 
 fn provider_gateway_models_for_account(account: &CodexAccount) -> Vec<String> {
@@ -1106,6 +1222,18 @@ pub fn validate_mixed_model_routing_config(
             return Err(format!("模型路由 {} 必须绑定 API Key 账号", namespace));
         }
         let _gateway = provider_gateway_for_account(&provider_account)?;
+        let selected_models = route.selected_models.as_ref().map(|models| {
+            normalize_provider_gateway_models(models.iter().map(String::as_str).collect())
+        });
+        if route.enabled && selected_models.as_ref().is_some_and(Vec::is_empty) {
+            return Err(format!(
+                "模型路由 {} 至少需要选择一个上游模型",
+                namespace
+            ));
+        }
+        let extra_models = route.extra_models.as_ref().map(|models| {
+            normalize_provider_gateway_models(models.iter().map(String::as_str).collect())
+        });
         if route.enabled {
             enabled_count += 1;
         }
@@ -1114,8 +1242,8 @@ pub fn validate_mixed_model_routing_config(
             namespace,
             provider_account_id: provider_account_id.to_string(),
             enabled: route.enabled,
-            selected_models: route.selected_models.clone(),
-            extra_models: route.extra_models.clone(),
+            selected_models,
+            extra_models,
         });
     }
     if enabled_count == 0 {
@@ -1140,7 +1268,8 @@ fn build_mixed_model_gateway_collection_for_profile(
     }
 
     collection.enabled = true;
-    collection.port = allocate_random_local_port(CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST)?;
+    collection.port =
+        provider_gateway_profile_port(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID)?;
     collection.access_scope = CodexLocalAccessScope::Localhost;
     collection.client_base_url_host = CodexLocalAccessClientBaseUrlHost::default();
     collection.gateway_mode = CodexLocalAccessGatewayMode::Sidecar;
@@ -1156,23 +1285,11 @@ fn build_mixed_model_gateway_collection_for_profile(
         let provider_account = codex_account::load_account(&route.provider_account_id)
             .ok_or_else(|| format!("模型路由 {} 的 API 账号不存在", route.namespace))?;
         let mut provider_gateway = provider_gateway_for_account(&provider_account)?;
-        if let Some(selected) = &route.selected_models {
-            let selected_set: HashSet<String> = selected
-                .iter()
-                .map(|item| item.trim().to_ascii_lowercase())
-                .collect();
-            let extra_set: HashSet<String> = route
-                .extra_models
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .map(|item| item.trim().to_ascii_lowercase())
-                .collect();
-            provider_gateway.upstream_models.retain(|m| {
-                let lower = m.trim().to_ascii_lowercase();
-                selected_set.contains(&lower) || extra_set.contains(&lower)
-            });
-        }
+        provider_gateway.upstream_models = mixed_route_upstream_models(
+            &provider_gateway.upstream_models,
+            route.selected_models.as_deref(),
+            route.extra_models.as_deref(),
+        );
         routes.push(CodexLocalAccessModelRoute {
             id: route.id.clone(),
             namespace: route.namespace.clone(),
@@ -1721,7 +1838,7 @@ pub async fn run_model_provider_gateway_chat_test(
     }
 
     let (child, task, bind_host) =
-        match spawn_provider_gateway_sidecar(&collection, &launch_config).await {
+        match spawn_provider_gateway_sidecar(&collection, &launch_config, false).await {
             Ok(runtime) => runtime,
             Err(error) => {
                 if sidecar_dir.exists() {
@@ -2180,9 +2297,18 @@ pub async fn activate_provider_gateway_for_dir(
     Ok(build_state_snapshot(&runtime))
 }
 
+fn provider_gateway_sidecar_parent_pid(persistent_after_host_exit: bool) -> u32 {
+    if persistent_after_host_exit {
+        0
+    } else {
+        std::process::id()
+    }
+}
+
 async fn spawn_provider_gateway_sidecar(
     collection: &CodexLocalAccessCollection,
     launch_config: &SidecarLaunchConfig,
+    persistent_after_host_exit: bool,
 ) -> Result<(Child, tokio::task::JoinHandle<()>, String), String> {
     let bind_host = bind_host_for_collection(collection);
     let binary = sidecar_binary_path()?;
@@ -2198,7 +2324,7 @@ async fn spawn_provider_gateway_sidecar(
         .arg("--quota-pool-state")
         .arg(&launch_config.quota_pool_path)
         .arg("--parent-pid")
-        .arg(std::process::id().to_string())
+        .arg(provider_gateway_sidecar_parent_pid(persistent_after_host_exit).to_string())
         .current_dir(
             launch_config
                 .config_path
@@ -2385,6 +2511,40 @@ pub async fn stop_provider_gateways_for_profile(profile_dir: &Path) {
     stop_provider_gateways_for_profile_locked(profile_dir).await;
 }
 
+async fn stop_persisted_mixed_model_gateway(profile_dir: &Path) -> Option<GatewayBindEndpoint> {
+    let Ok(Some((endpoint, api_key))) = persisted_mixed_model_gateway_endpoint(profile_dir) else {
+        return None;
+    };
+    if probe_sidecar_ready_endpoint(endpoint.port, &api_key, Duration::from_millis(500))
+        .await
+        .is_err()
+    {
+        return None;
+    }
+    match process::kill_port_processes(endpoint.port) {
+        Ok(killed) => {
+            if killed > 0 {
+                logger::log_codex_api_info(&format!(
+                    "[CodexLocalAccess][mixed-model-routing] 已停止持久 sidecar: profile={} port={} killed={}",
+                    profile_dir.display(),
+                    endpoint.port,
+                    killed
+                ));
+            }
+            Some(endpoint)
+        }
+        Err(error) => {
+            logger::log_codex_api_warn(&format!(
+                "[CodexLocalAccess][mixed-model-routing] 停止持久 sidecar 失败: profile={} port={} error={}",
+                profile_dir.display(),
+                endpoint.port,
+                error
+            ));
+            None
+        }
+    }
+}
+
 async fn stop_provider_gateways_for_profile_locked(profile_dir: &Path) {
     let profile_prefix = format!("{}\n", normalize_profile_dir_key(profile_dir));
     let runtime_keys = {
@@ -2407,13 +2567,102 @@ async fn stop_provider_gateways_for_profile_locked(profile_dir: &Path) {
             }
         }
     }
+    if let Some(endpoint) = stop_persisted_mixed_model_gateway(profile_dir).await {
+        if let Err(error) = wait_for_gateway_port_release(&endpoint.bind_host, endpoint.port).await {
+            logger::log_codex_api_warn(&format!(
+                "[CodexLocalAccess][mixed-model-routing] 等待持久 sidecar 释放端口失败: bind={}:{} error={}",
+                endpoint.bind_host, endpoint.port, error
+            ));
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn has_running_persisted_mixed_model_gateway() -> bool {
+    let default_running = crate::modules::codex_instance::load_default_settings()
+        .ok()
+        .zip(crate::modules::codex_instance::get_default_codex_home().ok())
+        .is_some_and(|(settings, profile_dir)| {
+            crate::modules::process::resolve_codex_pid(settings.last_pid, None).is_some()
+                && persisted_mixed_model_gateway_endpoint(&profile_dir)
+                    .ok()
+                    .flatten()
+                    .is_some()
+        });
+    if default_running {
+        return true;
+    }
+    crate::modules::codex_instance::load_instance_store()
+        .ok()
+        .is_some_and(|store| {
+            store.instances.into_iter().any(|instance| {
+                let running = crate::modules::process::resolve_codex_pid(
+                    instance.last_pid,
+                    Some(&instance.user_data_dir),
+                )
+                .is_some();
+                running
+                    && persisted_mixed_model_gateway_endpoint(Path::new(&instance.user_data_dir))
+                        .ok()
+                        .flatten()
+                        .is_some()
+            })
+        })
 }
 
 async fn stop_all_provider_gateways_for_app_shutdown() -> Vec<GatewayBindEndpoint> {
     let _guard = provider_gateway_lifecycle_lock().lock().await;
+    let mut preserve_mixed_profiles = HashSet::new();
+    let mut configured_profiles = HashMap::new();
+    if let Ok(default_settings) = crate::modules::codex_instance::load_default_settings() {
+        if let Ok(profile_dir) = crate::modules::codex_instance::get_default_codex_home() {
+            configured_profiles.insert(normalize_profile_dir_key(&profile_dir), profile_dir.clone());
+        }
+        if crate::modules::process::resolve_codex_pid(default_settings.last_pid, None).is_some() {
+            if let Ok(profile_dir) = crate::modules::codex_instance::get_default_codex_home() {
+                preserve_mixed_profiles.insert(normalize_profile_dir_key(&profile_dir));
+            }
+        }
+    }
+    if let Ok(store) = crate::modules::codex_instance::load_instance_store() {
+        for instance in store.instances {
+            let profile_dir = PathBuf::from(&instance.user_data_dir);
+            configured_profiles.insert(
+                normalize_profile_dir_key(&profile_dir),
+                profile_dir,
+            );
+            let running = crate::modules::process::resolve_codex_pid(
+                instance.last_pid,
+                Some(&instance.user_data_dir),
+            )
+            .is_some();
+            if running
+            {
+                preserve_mixed_profiles
+                    .insert(normalize_profile_dir_key(Path::new(&instance.user_data_dir)));
+            }
+        }
+    }
     let runtime_keys = {
         let runtimes = provider_gateway_runtime_store().lock().await;
-        runtimes.keys().cloned().collect::<Vec<_>>()
+        runtimes
+            .keys()
+            .filter(|runtime_key| {
+                let Some((profile_key, runtime_id)) = runtime_key.rsplit_once('\n') else {
+                    return true;
+                };
+                let preserve = runtime_id == MIXED_MODEL_ROUTING_RUNTIME_ID
+                    && preserve_mixed_profiles.contains(profile_key);
+                if preserve {
+                    logger::log_codex_api_info(&format!(
+                        "[CodexLocalAccess][mixed-model-routing] Codex 仍在运行，应用退出后保留 sidecar: profile={}",
+                        profile_key
+                    ));
+                }
+                !preserve
+            })
+            .cloned()
+            .collect::<Vec<_>>()
     };
     if !runtime_keys.is_empty() {
         logger::log_codex_api_info(&format!(
@@ -2428,7 +2677,49 @@ async fn stop_all_provider_gateways_for_app_shutdown() -> Vec<GatewayBindEndpoin
             endpoints.push(endpoint);
         }
     }
+    for (profile_key, profile_dir) in configured_profiles {
+        if preserve_mixed_profiles.contains(&profile_key) {
+            continue;
+        }
+        if let Some(endpoint) = stop_persisted_mixed_model_gateway(&profile_dir).await {
+            endpoints.push(endpoint);
+        }
+    }
     endpoints
+}
+
+pub async fn mixed_model_gateway_runtime_is_healthy(profile_dir: &Path) -> bool {
+    let runtime_key = provider_gateway_runtime_key(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID);
+    let collection = {
+        let mut runtimes = provider_gateway_runtime_store().lock().await;
+        runtimes.get_mut(&runtime_key).and_then(|runtime| {
+            let child_running = runtime
+                .sidecar_child
+                .as_mut()
+                .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+            child_running.then(|| runtime.collection.clone()).flatten()
+        })
+    };
+    if let Some(collection) = collection {
+        if probe_sidecar_ready_once(&collection, Duration::from_millis(500))
+            .await
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    persisted_mixed_model_gateway_is_healthy(profile_dir).await
+}
+
+pub async fn mixed_model_gateway_runtime_is_managed(profile_dir: &Path) -> bool {
+    let runtime_key = provider_gateway_runtime_key(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID);
+    let mut runtimes = provider_gateway_runtime_store().lock().await;
+    runtimes.get_mut(&runtime_key).is_some_and(|runtime| {
+        runtime
+            .sidecar_child
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
+    })
 }
 
 pub async fn ensure_provider_gateway_for_dir(
@@ -2503,7 +2794,7 @@ pub async fn ensure_provider_gateway_for_dir(
     }
 
     let (child, task, bind_host) =
-        spawn_provider_gateway_sidecar(&collection, &launch_config).await?;
+        spawn_provider_gateway_sidecar(&collection, &launch_config, false).await?;
     let mut runtimes = provider_gateway_runtime_store().lock().await;
     runtimes.insert(
         runtime_key,
@@ -2532,10 +2823,9 @@ pub async fn ensure_mixed_model_gateway_for_dir(
 
     let oauth_account = validate_local_access_bound_oauth_account(oauth_account_id)?;
     let routing = validate_mixed_model_routing_config(Some(oauth_account_id), routing)?;
+    let _guard = provider_gateway_lifecycle_lock().lock().await;
     let (collection, key) =
         build_mixed_model_gateway_collection_for_profile(profile_dir, &oauth_account, &routing)?;
-
-    let _guard = provider_gateway_lifecycle_lock().lock().await;
     stop_provider_gateways_for_profile_locked(profile_dir).await;
     let runtime_key = provider_gateway_runtime_key(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID);
 
@@ -2577,7 +2867,7 @@ pub async fn ensure_mixed_model_gateway_for_dir(
     }
 
     let (child, task, bind_host) =
-        match spawn_provider_gateway_sidecar(&collection, &launch_config).await {
+        match spawn_provider_gateway_sidecar(&collection, &launch_config, true).await {
             Ok(runtime) => runtime,
             Err(error) => return Err(mixed_model_start_error_with_rollback(profile_dir, error)),
         };
@@ -2679,7 +2969,7 @@ pub async fn ensure_bound_oauth_local_gateway_for_dir(
     }
 
     let (child, task, bind_host) =
-        spawn_provider_gateway_sidecar(&collection, &launch_config).await?;
+        spawn_provider_gateway_sidecar(&collection, &launch_config, false).await?;
     let mut runtimes = provider_gateway_runtime_store().lock().await;
     runtimes.insert(
         runtime_key,

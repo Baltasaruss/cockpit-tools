@@ -1502,6 +1502,7 @@ supports_websockets = false
             super::MIXED_MODEL_ROUTING_RUNTIME_ID,
             &super::ProviderGatewayProfileState {
                 api_key: api_key.to_string(),
+                port: None,
                 created_at: 1,
                 updated_at: 1,
             },
@@ -1572,6 +1573,88 @@ supports_websockets = false
             .expect("second restore is idempotent"));
 
         fs::remove_dir_all(profile_dir).expect("cleanup mixed profile");
+    }
+
+    #[test]
+    fn mixed_model_gateway_reuses_persisted_profile_port() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _env = LocalAccessTestDataGuard::new("codex-mixed-model-port");
+        let profile_dir = make_temp_dir("codex-mixed-model-port-profile");
+
+        let first = super::provider_gateway_profile_port(
+            &profile_dir,
+            super::MIXED_MODEL_ROUTING_RUNTIME_ID,
+        )
+        .expect("allocate persistent port");
+        let second = super::provider_gateway_profile_port(
+            &profile_dir,
+            super::MIXED_MODEL_ROUTING_RUNTIME_ID,
+        )
+        .expect("reuse persistent port");
+
+        assert!(first > 0);
+        assert_eq!(second, first);
+        fs::remove_dir_all(profile_dir).expect("cleanup mixed port profile");
+    }
+
+    #[test]
+    fn mixed_model_profile_detection_accepts_managed_auth_projection() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _env = LocalAccessTestDataGuard::new("codex-mixed-model-profile-detection");
+        let profile_dir = make_temp_dir("codex-mixed-model-detection-profile");
+        let api_key = "agt_codex_mixed_detection";
+        super::save_provider_gateway_profile_state(
+            &profile_dir,
+            super::MIXED_MODEL_ROUTING_RUNTIME_ID,
+            &super::ProviderGatewayProfileState {
+                api_key: api_key.to_string(),
+                port: Some(14998),
+                created_at: 1,
+                updated_at: 1,
+            },
+        )
+        .expect("save mixed gateway state");
+        fs::write(
+            profile_dir.join(CODEX_PROFILE_AUTH_FILE),
+            format!(r#"{{"auth_mode":"apikey","OPENAI_API_KEY":"{}"}}"#, api_key),
+        )
+        .expect("write managed auth");
+
+        assert!(super::profile_uses_mixed_model_gateway(&profile_dir)
+            .expect("detect mixed profile"));
+        fs::remove_dir_all(profile_dir).expect("cleanup mixed detection profile");
+    }
+
+    #[test]
+    fn mixed_route_model_selection_merges_manual_models() {
+        let catalog = vec!["gpt-5.5".to_string(), "grok-4.6".to_string()];
+        let manual = vec!["custom-preview".to_string()];
+
+        assert_eq!(
+            super::mixed_route_upstream_models(&catalog, None, Some(&manual)),
+            vec!["gpt-5.5", "grok-4.6", "custom-preview"]
+        );
+        assert_eq!(
+            super::mixed_route_upstream_models(
+                &catalog,
+                Some(&["grok-4.6".to_string(), "custom-preview".to_string()]),
+                Some(&manual),
+            ),
+            vec!["grok-4.6", "custom-preview"]
+        );
+    }
+
+    #[test]
+    fn mixed_model_sidecar_is_not_bound_to_cockpit_parent_lifetime() {
+        assert_eq!(super::provider_gateway_sidecar_parent_pid(true), 0);
+        assert_eq!(
+            super::provider_gateway_sidecar_parent_pid(false),
+            std::process::id()
+        );
     }
 
     #[test]

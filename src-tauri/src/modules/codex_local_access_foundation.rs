@@ -493,6 +493,8 @@ struct ProviderGatewayRuntime {
 #[serde(rename_all = "camelCase")]
 struct ProviderGatewayProfileState {
     api_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
     created_at: i64,
     updated_at: i64,
 }

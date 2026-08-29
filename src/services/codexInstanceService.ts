@@ -80,6 +80,9 @@ export async function createInstance(payload: {
   copySourceInstanceId: string;
   initMode?: "copy" | "empty" | "existingDir";
 }): Promise<InstanceProfile> {
+  if (payload.modelRouting?.enabled) {
+    await ensureCodexModelRoutingBackgroundService();
+  }
   return await invoke("codex_create_instance", {
     name: payload.name,
     userDataDir: payload.userDataDir,
@@ -167,6 +170,59 @@ export async function saveCodexInstanceQuickConfig(
     experimentalModelCatalogModels: experimentalModelCatalogModels ?? null,
     experimentalModelCatalogDefaultModelId:
       experimentalModelCatalogDefaultModelId ?? null,
+  });
+}
+
+export async function saveCodexInstanceConfiguration(payload: {
+  instanceId: string;
+  name?: string;
+  workingDir?: string | null;
+  extraArgs?: string;
+  bindAccountId?: string | null;
+  modelRouting?: CodexInstanceModelRouting | null;
+  followLocalAccount?: boolean;
+  launchMode?: InstanceLaunchMode;
+  appSpeed?: CodexAppSpeed;
+  autoSyncThreads?: boolean;
+  deferBindAccountApplication?: boolean;
+  experimentalModelCatalogEnabled: boolean;
+  experimentalModelCatalogModels: CodexExperimentalModelDefinition[];
+  experimentalModelCatalogDefaultModelId?: string | null;
+}): Promise<{ instance: InstanceProfile; quickConfig: CodexQuickConfig }> {
+  if (payload.modelRouting?.enabled) {
+    await ensureCodexModelRoutingBackgroundService();
+  }
+  const body: Record<string, unknown> = {
+    instanceId: payload.instanceId,
+    experimentalModelCatalogEnabled:
+      payload.experimentalModelCatalogEnabled,
+    experimentalModelCatalogModels: payload.experimentalModelCatalogModels,
+    experimentalModelCatalogDefaultModelId:
+      payload.experimentalModelCatalogDefaultModelId ?? null,
+  };
+  for (const [key, value] of Object.entries({
+    name: payload.name,
+    workingDir: payload.workingDir,
+    extraArgs: payload.extraArgs,
+    bindAccountId: payload.bindAccountId,
+    modelRouting: payload.modelRouting,
+    followLocalAccount: payload.followLocalAccount,
+    launchMode: payload.launchMode,
+    appSpeed: payload.appSpeed,
+    autoSyncThreads: payload.autoSyncThreads,
+    deferBindAccountApplication: payload.deferBindAccountApplication,
+  })) {
+    if (value !== undefined) body[key] = value;
+  }
+  return await invoke("codex_save_instance_configuration", body);
+}
+
+export async function ensureCodexModelRoutingBackgroundService(): Promise<void> {
+  await invoke("patch_general_config", {
+    updates: {
+      app_auto_launch_enabled: true,
+      startup_minimized: true,
+    },
   });
 }
 

@@ -23,6 +23,7 @@ import { useTranslation } from "react-i18next";
 import { useEscClose } from "../../hooks/useEscClose";
 import {
   saveCodexInstanceQuickConfig,
+  saveCodexInstanceConfiguration,
   getCodexInstanceQuickConfig,
 } from "../../services/codexInstanceService";
 import { useCodexAccountStore } from "../../stores/useCodexAccountStore";
@@ -169,7 +170,6 @@ export function CodexLaunchPreviewModal({
   const accounts = useCodexAccountStore((state) => state.accounts);
   const fetchAccounts = useCodexAccountStore((state) => state.fetchAccounts);
   const instances = useCodexInstanceStore((state) => state.instances);
-  const updateInstance = useCodexInstanceStore((state) => state.updateInstance);
   const selectedInstance = useMemo(
     () =>
       instances.find((item) => item.id === instanceId) ??
@@ -366,6 +366,19 @@ export function CodexLaunchPreviewModal({
           );
           return false;
         }
+        if (
+          route.enabled &&
+          route.selectedModels !== undefined &&
+          route.selectedModels.filter((model) => model.trim()).length === 0
+        ) {
+          setError(
+            t(
+              "instances.form.modelRouting.modelRequired",
+              "每个已启用的 API 路由至少需要选择一个模型。",
+            ),
+          );
+          return false;
+        }
       }
     }
     setSaving(true);
@@ -383,21 +396,25 @@ export function CodexLaunchPreviewModal({
         );
         nextCatalogEnabled = true;
       }
-      if (routingDirty) {
-        await updateInstance({
-          instanceId,
-          modelRouting: nextModelRouting,
-          deferBindAccountApplication: true,
-        });
-      }
-      const saved = await saveCodexInstanceQuickConfig(
-        instanceId,
-        undefined,
-        undefined,
-        nextCatalogEnabled,
-        nextModels,
-        defaultModelId,
-      );
+      const saved = routingDirty
+        ? (
+            await saveCodexInstanceConfiguration({
+              instanceId,
+              modelRouting: nextModelRouting,
+              deferBindAccountApplication: true,
+              experimentalModelCatalogEnabled: nextCatalogEnabled,
+              experimentalModelCatalogModels: nextModels,
+              experimentalModelCatalogDefaultModelId: defaultModelId,
+            })
+          ).quickConfig
+        : await saveCodexInstanceQuickConfig(
+            instanceId,
+            undefined,
+            undefined,
+            nextCatalogEnabled,
+            nextModels,
+            defaultModelId,
+          );
       applyLoadedConfig(saved);
       setNotice(
         t(
@@ -433,7 +450,6 @@ export function CodexLaunchPreviewModal({
     routingRoutes,
     setError,
     t,
-    updateInstance,
   ]);
 
   const handleExecute = useCallback(

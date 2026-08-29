@@ -874,14 +874,22 @@ async fn probe_sidecar_ready_once(
     collection: &CodexLocalAccessCollection,
     request_timeout: Duration,
 ) -> Result<(), String> {
+    probe_sidecar_ready_endpoint(collection.port, &collection.api_key, request_timeout).await
+}
+
+async fn probe_sidecar_ready_endpoint(
+    port: u16,
+    api_key: &str,
+    request_timeout: Duration,
+) -> Result<(), String> {
     let url = format!(
         "http://{}:{}/v1/models",
-        CODEX_LOCAL_ACCESS_DEFAULT_CLIENT_URL_HOST, collection.port
+        CODEX_LOCAL_ACCESS_DEFAULT_CLIENT_URL_HOST, port
     );
     let client = build_localhost_http_client(request_timeout, "sidecar 健康检测")?;
     match client
         .get(&url)
-        .bearer_auth(collection.api_key.trim())
+        .bearer_auth(api_key.trim())
         .send()
         .await
     {

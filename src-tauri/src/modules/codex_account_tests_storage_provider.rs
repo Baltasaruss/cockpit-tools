@@ -225,6 +225,20 @@
         assert_eq!(normalized.routes[0].namespace, "cpa");
         assert_eq!(normalized.routes[0].provider_account_id, api_account.id);
 
+        let empty_selection = crate::models::CodexInstanceModelRouting {
+            routes: vec![crate::models::CodexInstanceApiRoute {
+                selected_models: Some(Vec::new()),
+                ..routing.routes[0].clone()
+            }],
+            ..routing.clone()
+        };
+        let error = crate::modules::codex_local_access::validate_mixed_model_routing_config(
+            Some(&oauth_account.id),
+            &empty_selection,
+        )
+        .expect_err("an enabled route must not accept an empty model allowlist");
+        assert!(error.contains("至少需要选择一个上游模型"));
+
         let oauth_as_provider = crate::models::CodexInstanceModelRouting {
             routes: vec![crate::models::CodexInstanceApiRoute {
                 provider_account_id: oauth_account.id.clone(),

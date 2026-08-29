@@ -129,7 +129,7 @@ func resolveModelRouting(spec *apiKeySpec, clientModel string) (*providerGateway
 			return nil, "", "missing"
 		}
 		if len(route.ProviderGateway.UpstreamModels) == 0 {
-			return route.ProviderGateway, upstreamModel, "matched"
+			return nil, "", "missing"
 		}
 		for _, candidate := range route.ProviderGateway.UpstreamModels {
 			if strings.EqualFold(candidate, upstreamModel) {

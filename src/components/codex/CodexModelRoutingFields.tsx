@@ -536,10 +536,20 @@ export function CodexModelRoutingEditor({
           (item.extraModels ?? []).map((model) => model.toLowerCase()),
         );
         const extraModels = [...(item.extraModels ?? [])];
+        const selectedModels = item.selectedModels
+          ? [...item.selectedModels]
+          : undefined;
+        const selectedSeen = new Set(
+          selectedModels?.map((model) => model.toLowerCase()) ?? [],
+        );
         for (const model of draft) {
-          if (seen.add(model.toLowerCase())) extraModels.push(model);
+          const normalized = model.toLowerCase();
+          if (seen.add(normalized)) extraModels.push(model);
+          if (selectedModels && selectedSeen.add(normalized)) {
+            selectedModels.push(model);
+          }
         }
-        return { ...item, extraModels };
+        return { ...item, extraModels, selectedModels };
       }),
     );
     setManualDraftByRoute((current) => ({ ...current, [routeId]: "" }));
@@ -553,7 +563,10 @@ export function CodexModelRoutingEditor({
         const extraModels = (item.extraModels ?? []).filter(
           (model) => model.toLowerCase() !== modelToRemove.toLowerCase(),
         );
-        return { ...item, extraModels };
+        const selectedModels = item.selectedModels?.filter(
+          (model) => model.toLowerCase() !== modelToRemove.toLowerCase(),
+        );
+        return { ...item, extraModels, selectedModels };
       }),
     );
   };
@@ -989,7 +1002,7 @@ async function confirmRoutingToggle(
   const message = nextEnabled
     ? t(
         "instances.form.modelRouting.confirmEnableMessage",
-        "开启后将启动本地分流网关。使用第三方模型需保持 Cockpit Tools 在后台常驻运行，退出软件将导致第三方请求失败（官方模型直连不受影响）。\n\n确认开启吗？",
+        "开启后，Codex 的模型请求将通过 Cockpit Tools 本地服务分流。服务未运行时，官方订阅和第三方模型都可能无法使用。保存时将默认启用开机自启。\n\n确认开启吗？",
       )
     : t(
         "instances.form.modelRouting.confirmDisableMessage",
@@ -1000,16 +1013,18 @@ async function confirmRoutingToggle(
     : t("instances.form.modelRouting.confirmDisableAction", "确认关闭");
   const cancelLabel = t("common.cancel", "取消");
 
+  let confirmed: boolean;
   try {
-    return await confirmDialog(message, {
+    confirmed = await confirmDialog(message, {
       title,
       okLabel,
       cancelLabel,
       kind: nextEnabled ? "info" : "warning",
     });
   } catch {
-    return window.confirm();
+    confirmed = window.confirm(message);
   }
+  return confirmed;
 }
 
 export function CodexModelRoutingModal({
@@ -1109,7 +1124,7 @@ export function CodexModelRoutingModal({
             <span>
               {t(
                 "instances.form.modelRouting.modalTip",
-                "分流机制：官方模型直连当前订阅；带前缀模型（如 cpa/*）由本地网关转发至第三方 API。使用第三方模型需保持 Cockpit Tools 后台运行。",
+                "开启后，官方订阅和第三方模型都会经过本地分流服务。请保持 Cockpit Tools 后台运行；服务异常时会自动恢复，连续失败则回退官方配置。",
               )}
             </span>
           </div>
@@ -1334,7 +1349,7 @@ export function CodexModelRoutingFields({
             <p>
               {t(
                 "instances.form.modelRouting.rowSummary",
-                "官方模型直连官方订阅；带前缀模型（如 cpa/gpt-5.5）走指定第三方 API 渠道。需保持后台服务运行。",
+                "普通模型使用当前订阅；带前缀模型（如 cpa/gpt-5.5）转发到第三方 API。两者都依赖本地分流服务。",
               )}
             </p>
             <div className="codex-launch-preview-tool-meta">
@@ -1402,7 +1417,7 @@ export function CodexModelRoutingFields({
           <p className="form-hint">
             {t(
               "instances.form.modelRouting.summary",
-              "官方模型直连官方订阅；带前缀模型（如 cpa/gpt-5.5）走指定第三方 API 渠道。需保持后台服务运行。",
+              "普通模型使用当前订阅；带前缀模型（如 cpa/gpt-5.5）转发到第三方 API。两者都依赖本地分流服务。",
             )}
           </p>
         </div>

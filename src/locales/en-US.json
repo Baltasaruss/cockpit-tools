@@ -730,6 +730,25 @@
           "autoCompactInvalid": "Auto-compact limit must be an integer greater than 0."
         }
       },
+      "modelRouting": {
+        "title": "Third-party API routing",
+        "summary": "Unprefixed models use the current subscription; prefixed models such as cpa/gpt-5.5 are forwarded to a third-party API. Both depend on the local routing service.",
+        "rowSummary": "Unprefixed models use the current subscription; prefixed models such as cpa/gpt-5.5 are forwarded to a third-party API. Both depend on the local routing service.",
+        "confirmEnableTitle": "Enable third-party API routing?",
+        "confirmEnableMessage": "Codex model requests will be routed through the local Cockpit Tools service. If the service is not running, both subscription and third-party models may be unavailable. Launch at login will be enabled when you save.\n\nEnable routing?",
+        "confirmEnableAction": "Enable",
+        "confirmDisableTitle": "Disable third-party API routing?",
+        "confirmDisableMessage": "After this change takes effect, the local gateway will stop, native subscription access will be restored, and third-party models will be unavailable.\n\nDisable routing?",
+        "confirmDisableAction": "Disable",
+        "modalTip": "Subscription and third-party models both pass through the local routing service. Keep Cockpit Tools running in the background. The service recovers automatically and falls back to the official configuration after repeated failures.",
+        "modelRequired": "Each enabled API route must include at least one model.",
+        "runningSaveTitle": "When should routing take effect?",
+        "runningSaveMessage": "This Codex instance is running. Replacing the local service now will interrupt the current conversation.\n\nChoose Save and restart Codex to apply now, or Save for later to keep the current session unchanged.",
+        "saveAndRestart": "Save and restart Codex",
+        "saveForLater": "Save for later",
+        "restartRollbackFailed": "The new route failed to start and the original configuration could not be restarted: ",
+        "restartRolledBack": "The new route failed to start. The original configuration was restored and Codex restarted: {{error}}"
+      },
       "nameRequired": "Please enter an instance name",
       "pathRequired": "Please select an instance directory",
       "bindRequired": "Please select an account to bind",

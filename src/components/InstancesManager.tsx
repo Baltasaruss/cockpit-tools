@@ -75,6 +75,7 @@ import {
 import {
   getCodexInstanceQuickConfig,
   openCodexInstanceConfigToml,
+  saveCodexInstanceConfiguration,
   saveCodexInstanceQuickConfig,
 } from "../services/codexInstanceService";
 import { CodexSpeedSelect } from "./codex/CodexSpeedSelect";
@@ -1432,6 +1433,20 @@ export function InstancesManager<TAccount extends AccountLike>({
           setFormErrorTick((prev) => prev + 1);
           return;
         }
+        if (
+          route.enabled &&
+          route.selectedModels !== undefined &&
+          route.selectedModels.filter((model) => model.trim()).length === 0
+        ) {
+          setFormError(
+            t(
+              "instances.form.modelRouting.modelRequired",
+              "每个已启用的 API 路由至少需要选择一个模型。",
+            ),
+          );
+          setFormErrorTick((prev) => prev + 1);
+          return;
+        }
         normalizedRoutes.push({
           ...route,
           namespace,
@@ -1482,6 +1497,30 @@ export function InstancesManager<TAccount extends AccountLike>({
         : undefined;
       const nextWorkingDir = showWorkingDirField ? formWorkingDir : null;
       if (editing) {
+        let restartAfterSave = false;
+        if (isCodexApp && modelRoutingChanged && editing.running) {
+          restartAfterSave = await confirmDialog(
+            t(
+              "instances.form.modelRouting.runningSaveMessage",
+              "此 Codex 实例正在运行。立即替换本地服务会中断当前对话。\n\n选择“保存并重启 Codex”立即生效；选择“仅保存，稍后生效”不会影响当前会话。",
+            ),
+            {
+              title: t(
+                "instances.form.modelRouting.runningSaveTitle",
+                "路由配置何时生效？",
+              ),
+              okLabel: t(
+                "instances.form.modelRouting.saveAndRestart",
+                "保存并重启 Codex",
+              ),
+              cancelLabel: t(
+                "instances.form.modelRouting.saveForLater",
+                "仅保存，稍后生效",
+              ),
+              kind: "warning",
+            },
+          );
+        }
         setActionLoading(editing.id);
         const updatePayload: {
           instanceId: string;
@@ -1493,6 +1532,7 @@ export function InstancesManager<TAccount extends AccountLike>({
           followLocalAccount?: boolean;
           launchMode?: InstanceLaunchMode;
           appSpeed?: CodexAppSpeed;
+          deferBindAccountApplication?: boolean;
         } = {
           instanceId: editing.id,
           workingDir: nextWorkingDir,
@@ -1502,6 +1542,9 @@ export function InstancesManager<TAccount extends AccountLike>({
         };
         if (modelRoutingChanged) {
           updatePayload.modelRouting = nextModelRouting;
+          if (editing.running) {
+            updatePayload.deferBindAccountApplication = true;
+          }
         }
         if (!isEditingDefault) {
           updatePayload.name = formName.trim();
@@ -1510,7 +1553,9 @@ export function InstancesManager<TAccount extends AccountLike>({
           isGrokApp || !(editing.initialized === false && !isEditingDefault);
         if (canEditBind) {
           const nextBindId = resolveBindAccountValue(formBindAccountId);
-          updatePayload.bindAccountId = nextBindId;
+          if (nextBindId !== (editing.bindAccountId ?? null)) {
+            updatePayload.bindAccountId = nextBindId;
+          }
         }
         if (isEditingDefault) {
           updatePayload.followLocalAccount = false;
@@ -1518,42 +1563,56 @@ export function InstancesManager<TAccount extends AccountLike>({
 
         const shouldSaveQuickConfig =
           isCodexApp && (formCodexQuickConfigDirty || modelRoutingChanged);
-        let quickConfigSaved = false;
         if (shouldSaveQuickConfig) {
-          await saveCodexInstanceQuickConfig(
-            editing.id,
-            undefined,
-            undefined,
-            nextExperimentalModelCatalogEnabled,
-            nextExperimentalModels,
-            formExperimentalDefaultModelId,
-          );
-          quickConfigSaved = true;
-        }
-        try {
+          await saveCodexInstanceConfiguration({
+            ...updatePayload,
+            experimentalModelCatalogEnabled:
+              nextExperimentalModelCatalogEnabled,
+            experimentalModelCatalogModels: nextExperimentalModels,
+            experimentalModelCatalogDefaultModelId:
+              formExperimentalDefaultModelId,
+          });
+          await refreshInstances();
+        } else {
           await updateInstance(updatePayload);
-        } catch (updateError) {
-          if (quickConfigSaved && formCodexQuickConfig) {
+        }
+        if (restartAfterSave) {
+          try {
+            await stopInstance(editing.id);
+            await startInstance(editing.id);
+          } catch (restartError) {
+            if (!formCodexQuickConfig) throw restartError;
             try {
-              await saveCodexInstanceQuickConfig(
-                editing.id,
-                undefined,
-                undefined,
-                formCodexQuickConfig.experimental_model_catalog_enabled,
-                formCodexQuickConfig.experimental_model_catalog_models,
-                formCodexQuickConfig.experimental_model_catalog_default_model_id ??
+              await saveCodexInstanceConfiguration({
+                instanceId: editing.id,
+                bindAccountId: editing.bindAccountId ?? null,
+                modelRouting: editing.modelRouting ?? null,
+                deferBindAccountApplication: true,
+                experimentalModelCatalogEnabled:
+                  formCodexQuickConfig.experimental_model_catalog_enabled,
+                experimentalModelCatalogModels:
+                  formCodexQuickConfig.experimental_model_catalog_models,
+                experimentalModelCatalogDefaultModelId:
+                  formCodexQuickConfig.experimental_model_catalog_default_model_id ??
                   null,
-              );
+              });
+              await startInstance(editing.id);
             } catch (rollbackError) {
               throw new Error(
-                `${String(updateError)}\n${t(
-                  "instances.form.modelRouting.quickConfigRollbackFailed",
-                  "实例更新失败，且恢复原可见模型配置失败：",
+                `${String(restartError)}\n${t(
+                  "instances.form.modelRouting.restartRollbackFailed",
+                  "新路由启动失败，恢复原配置后仍无法启动：",
                 )}${String(rollbackError)}`,
               );
             }
+            throw new Error(
+              t("instances.form.modelRouting.restartRolledBack", {
+                defaultValue:
+                  "新路由启动失败，已恢复原配置并重新启动 Codex：{{error}}",
+                error: String(restartError).replace(/^Error:\s*/, ""),
+              }),
+            );
           }
-          throw updateError;
         }
         setMessage({ text: t("instances.messages.updated", "实例已更新") });
       } else {

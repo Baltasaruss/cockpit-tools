@@ -2700,7 +2700,7 @@ func TestResolveModelRoutingNeverFallsBackForUnknownNamespaceOrModel(t *testing.
 	}
 }
 
-func TestResolveModelRoutingEmptyCatalogPassesThroughNamespacedModel(t *testing.T) {
+func TestResolveModelRoutingEmptyCatalogRejectsNamespacedModel(t *testing.T) {
 	spec := &apiKeySpec{ModelRouting: &modelRoutingSpec{
 		DefaultRoute:  "oauth",
 		FailurePolicy: "strict",
@@ -2715,8 +2715,8 @@ func TestResolveModelRoutingEmptyCatalogPassesThroughNamespacedModel(t *testing.
 	}}
 
 	gateway, upstream, status := resolveModelRouting(spec, "cpa/gpt-5.5")
-	if status != "matched" || gateway == nil || upstream != "gpt-5.5" {
-		t.Fatalf("empty catalog should pass through: gateway=%v model=%q status=%q", gateway, upstream, status)
+	if status != "missing" || gateway != nil || upstream != "" {
+		t.Fatalf("empty catalog should reject routing: gateway=%v model=%q status=%q", gateway, upstream, status)
 	}
 }
 

@@ -364,6 +364,8 @@ pub fn run() {
                 modules::codex_local_access::restore_local_access_gateway().await;
             });
 
+            commands::codex_instance::start_mixed_model_gateway_watchdog(app.handle().clone());
+
             {
                 let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -1294,6 +1296,7 @@ pub fn run() {
             commands::codex_instance::codex_list_instances,
             commands::codex_instance::codex_get_instance_quick_config,
             commands::codex_instance::codex_save_instance_quick_config,
+            commands::codex_instance::codex_save_instance_configuration,
             commands::codex_instance::codex_open_instance_config_toml,
             commands::codex_instance::codex_sync_threads_across_instances,
             commands::codex_instance::codex_sync_sessions_to_instance,
@@ -1358,7 +1361,10 @@ pub fn run() {
                     api.prevent_exit();
                     modules::logger::log_info("[Window] 主窗口已销毁，应用继续在托盘运行");
                 } else {
-                    modules::app_lifecycle::begin_shutdown();
+                    let first_shutdown = modules::app_lifecycle::begin_shutdown();
+                    if first_shutdown {
+                        commands::codex_instance::restore_mixed_model_profiles_for_app_exit();
+                    }
                     modules::codex_app_injection::stop_all();
                     tauri::async_runtime::spawn(async {
                         modules::codex_local_access::shutdown_local_access_gateway_for_app_exit()
@@ -1367,7 +1373,10 @@ pub fn run() {
                 }
             }
             RunEvent::Exit => {
-                modules::app_lifecycle::begin_shutdown();
+                let first_shutdown = modules::app_lifecycle::begin_shutdown();
+                if first_shutdown {
+                    commands::codex_instance::restore_mixed_model_profiles_for_app_exit();
+                }
                 modules::codex_app_injection::stop_all();
                 tauri::async_runtime::spawn(async {
                     modules::codex_local_access::shutdown_local_access_gateway_for_app_exit().await;
