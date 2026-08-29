@@ -4,6 +4,12 @@ fn provider_gateway_api_key_id(account_id: &str) -> String {
     format!("provider_gateway_{}", account_id)
 }
 
+const MIXED_MODEL_ROUTING_RUNTIME_ID: &str = "mixed_model_routing";
+
+fn mixed_model_routing_api_key_id() -> String {
+    "mixed_model_routing".to_string()
+}
+
 fn provider_gateway_runtime_key(profile_dir: &Path, account_id: &str) -> String {
     format!(
         "{}\n{}",
@@ -76,6 +82,217 @@ fn provider_gateway_profile_api_key(
     };
     save_provider_gateway_profile_state(profile_dir, account_id, &state)?;
     Ok(state.api_key)
+}
+
+#[derive(Debug)]
+struct MixedModelProfileFileSnapshot {
+    path: PathBuf,
+    content: Option<Vec<u8>>,
+}
+
+#[derive(Debug)]
+struct MixedModelProfileActivationSnapshot {
+    files: Vec<MixedModelProfileFileSnapshot>,
+    takeover_backup: Option<CodexLocalAccessProfileTakeoverBackup>,
+    started_from_mixed_takeover: bool,
+}
+
+fn mixed_model_profile_activation_paths(profile_dir: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let mut seen = HashSet::new();
+    for path in [
+        profile_config_path(profile_dir),
+        profile_auth_path(profile_dir),
+        profile_dir.join(CODEX_LOCAL_ACCESS_AUTH_PROJECTION_FILE),
+        profile_dir.join(CODEX_LOCAL_ACCESS_MODEL_CATALOG_FILE),
+        profile_dir.join(CODEX_LEGACY_LOCAL_ACCESS_MODEL_CATALOG_FILE),
+        profile_dir.join(CODEX_LEGACY_PROVIDER_MODEL_CATALOG_FILE),
+        profile_dir.join(CODEX_MODEL_CACHE_FILE),
+        provider_model_backup_path(profile_dir),
+    ] {
+        let key = path.to_string_lossy().to_string();
+        if seen.insert(key) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+fn capture_mixed_model_profile_activation_snapshot(
+    profile_dir: &Path,
+    api_key: &str,
+) -> Result<MixedModelProfileActivationSnapshot, String> {
+    let mut files = Vec::new();
+    for path in mixed_model_profile_activation_paths(profile_dir) {
+        let content = match fs::read(&path) {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(format!(
+                    "读取混合模型路由启动快照失败({}): {}",
+                    path.display(),
+                    error
+                ));
+            }
+        };
+        files.push(MixedModelProfileFileSnapshot { path, content });
+    }
+
+    let profile_key = normalize_profile_dir_key(profile_dir);
+    let takeover_backup = load_takeover_backups()?
+        .profiles
+        .into_iter()
+        .find(|backup| backup.profile_dir == profile_key);
+    let current_config = read_optional_profile_file(&profile_config_path(profile_dir))?;
+    let current_auth = read_optional_profile_file(&profile_auth_path(profile_dir))?;
+    let started_from_mixed_takeover = current_config
+        .as_deref()
+        .is_some_and(|content| is_codex_local_access_config_for_api_key(content, api_key))
+        || current_auth
+            .as_deref()
+            .is_some_and(|content| is_exact_codex_local_access_auth_text(content, api_key));
+
+    Ok(MixedModelProfileActivationSnapshot {
+        files,
+        takeover_backup,
+        started_from_mixed_takeover,
+    })
+}
+
+fn restore_mixed_model_profile_activation_snapshot(
+    profile_dir: &Path,
+    snapshot: MixedModelProfileActivationSnapshot,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for file in snapshot.files {
+        let result = match file.content {
+            Some(content) => {
+                let parent_result = file.path.parent().map_or(Ok(()), |parent| {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        format!("创建启动回滚目录失败({}): {}", parent.display(), error)
+                    })
+                });
+                parent_result.and_then(|()| {
+                    crate::modules::atomic_write::write_bytes_atomic(&file.path, &content).map_err(
+                        |error| format!("恢复启动快照失败({}): {}", file.path.display(), error),
+                    )
+                })
+            }
+            None => match fs::remove_file(&file.path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(format!(
+                    "清理启动失败残留失败({}): {}",
+                    file.path.display(),
+                    error
+                )),
+            },
+        };
+        if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+
+    let profile_key = normalize_profile_dir_key(profile_dir);
+    match load_takeover_backups().and_then(|mut backups| {
+        backups
+            .profiles
+            .retain(|backup| backup.profile_dir != profile_key);
+        if let Some(backup) = snapshot.takeover_backup {
+            backups.profiles.push(backup);
+        }
+        backups.version = CODEX_LOCAL_ACCESS_TAKEOVER_BACKUP_VERSION;
+        save_takeover_backups(&backups)
+    }) {
+        Ok(()) => {}
+        Err(error) => errors.push(error),
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+fn rollback_mixed_model_profile_after_start_failure(
+    profile_dir: &Path,
+    snapshot: Option<MixedModelProfileActivationSnapshot>,
+) -> Result<(), String> {
+    if snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.started_from_mixed_takeover)
+    {
+        restore_mixed_model_gateway_profile(profile_dir)?;
+        cleanup_provider_gateway_profile_model_overrides(profile_dir)?;
+        return Ok(());
+    }
+    if let Some(snapshot) = snapshot {
+        return restore_mixed_model_profile_activation_snapshot(profile_dir, snapshot);
+    }
+    if restore_mixed_model_gateway_profile(profile_dir)? {
+        cleanup_provider_gateway_profile_model_overrides(profile_dir)?;
+    }
+    Ok(())
+}
+
+fn mixed_model_start_error_with_rollback(profile_dir: &Path, error: String) -> String {
+    match rollback_mixed_model_profile_after_start_failure(profile_dir, None) {
+        Ok(()) => error,
+        Err(rollback_error) => format!("{}; 启动失败回滚也失败: {}", error, rollback_error),
+    }
+}
+
+pub fn restore_mixed_model_gateway_profile(profile_dir: &Path) -> Result<bool, String> {
+    let Some(state) =
+        load_provider_gateway_profile_state(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID)?
+    else {
+        return Ok(false);
+    };
+    let api_key = state.api_key.trim();
+    if api_key.is_empty() {
+        return Ok(false);
+    }
+
+    let config_path = profile_config_path(profile_dir);
+    let auth_path = profile_auth_path(profile_dir);
+    let current_config = read_optional_profile_file(&config_path)?;
+    let current_auth = read_optional_profile_file(&auth_path)?;
+    let config_is_mixed = current_config
+        .as_deref()
+        .is_some_and(|content| is_codex_local_access_config_for_api_key(content, api_key));
+    let auth_is_mixed = current_auth
+        .as_deref()
+        .is_some_and(|content| is_exact_codex_local_access_auth_text(content, api_key));
+    if !config_is_mixed && !auth_is_mixed {
+        return Ok(false);
+    }
+
+    let profile_key = normalize_profile_dir_key(profile_dir);
+    let mut backups = load_takeover_backups()?;
+    let backup_index = backups
+        .profiles
+        .iter()
+        .position(|backup| backup.profile_dir == profile_key);
+    if let Some(index) = backup_index {
+        let backup = backups.profiles[index].clone();
+        if config_is_mixed {
+            let restored = restore_config_toml_from_takeover_backup(
+                current_config.as_deref(),
+                backup.config_toml.as_deref(),
+            )?;
+            write_optional_profile_file(&config_path, restored.as_deref())?;
+        }
+        if auth_is_mixed {
+            write_optional_profile_file(&auth_path, backup.auth_json.as_deref())?;
+        }
+        let _ = cleanup_profile_takeover_artifacts(profile_dir)?;
+        backups.profiles.remove(index);
+        save_takeover_backups(&backups)?;
+        return Ok(true);
+    }
+
+    cleanup_profile_takeover_without_backup(profile_dir, api_key, false)
 }
 
 fn normalize_provider_gateway_models(models: Vec<&str>) -> Vec<String> {
@@ -730,11 +947,17 @@ fn collection_uses_provider_gateway_account(
     account_id: &str,
 ) -> bool {
     collection.api_keys.iter().any(|item| {
-        item.provider_gateway.is_some()
+        (item.provider_gateway.is_some()
             && item
                 .account_ids
                 .iter()
-                .any(|candidate| candidate == account_id)
+                .any(|candidate| candidate == account_id))
+            || item.model_routing.as_ref().map_or(false, |routing| {
+                routing
+                    .routes
+                    .iter()
+                    .any(|r| r.provider_account_id == account_id)
+            })
     })
 }
 
@@ -818,6 +1041,181 @@ fn provider_gateway_bound_oauth_account_id_for_account(account: &CodexAccount) -
     normalize_optional_account_ref(account.bound_oauth_account_id.as_deref())
 }
 
+fn normalize_mixed_model_namespace(namespace: &str) -> Result<String, String> {
+    let namespace = namespace.trim().to_ascii_lowercase();
+    if !(2..=32).contains(&namespace.len()) {
+        return Err("模型路由命名空间长度必须为 2-32 个字符".to_string());
+    }
+    let mut chars = namespace.chars();
+    let Some(first) = chars.next() else {
+        return Err("模型路由命名空间不能为空".to_string());
+    };
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return Err("模型路由命名空间必须以小写字母或数字开头".to_string());
+    }
+    if chars.any(|ch| !ch.is_ascii_lowercase() && !ch.is_ascii_digit() && ch != '_' && ch != '-') {
+        return Err("模型路由命名空间只能包含小写字母、数字、下划线和连字符".to_string());
+    }
+    if ["official", "subscription", "openai", "codex", "oauth"]
+        .iter()
+        .any(|reserved| namespace == *reserved)
+    {
+        return Err(format!("模型路由命名空间 {} 为保留名称", namespace));
+    }
+    Ok(namespace)
+}
+
+pub fn validate_mixed_model_routing_config(
+    bind_account_id: Option<&str>,
+    routing: &CodexInstanceModelRouting,
+) -> Result<CodexInstanceModelRouting, String> {
+    if !routing.enabled {
+        return Ok(routing.clone());
+    }
+    if routing.version != 1 {
+        return Err(format!("不支持的混合模型路由版本: {}", routing.version));
+    }
+    let oauth_account_id = bind_account_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("启用混合模型路由前必须绑定直接登录的 OAuth 订阅账号")?;
+    let _ = validate_local_access_bound_oauth_account(oauth_account_id)?;
+
+    let mut seen_namespaces = HashSet::new();
+    let mut normalized_routes = Vec::with_capacity(routing.routes.len());
+    let mut enabled_count = 0usize;
+    for route in &routing.routes {
+        let id = route.id.trim();
+        if id.is_empty() {
+            return Err("模型路由缺少 route id".to_string());
+        }
+        let namespace = normalize_mixed_model_namespace(&route.namespace)?;
+        if !seen_namespaces.insert(namespace.clone()) {
+            return Err(format!("模型路由命名空间重复: {}", namespace));
+        }
+        let provider_account_id = route.provider_account_id.trim();
+        if provider_account_id.is_empty() {
+            return Err(format!("模型路由 {} 尚未选择 API 账号", namespace));
+        }
+        if provider_account_id == oauth_account_id {
+            return Err(format!("模型路由 {} 不能使用订阅 OAuth 账号", namespace));
+        }
+        let provider_account = codex_account::load_account(provider_account_id)
+            .ok_or_else(|| format!("模型路由 {} 的 API 账号不存在", namespace))?;
+        if !provider_account.is_api_key_auth() {
+            return Err(format!("模型路由 {} 必须绑定 API Key 账号", namespace));
+        }
+        let _gateway = provider_gateway_for_account(&provider_account)?;
+        if route.enabled {
+            enabled_count += 1;
+        }
+        normalized_routes.push(CodexInstanceApiRoute {
+            id: id.to_string(),
+            namespace,
+            provider_account_id: provider_account_id.to_string(),
+            enabled: route.enabled,
+            selected_models: route.selected_models.clone(),
+            extra_models: route.extra_models.clone(),
+        });
+    }
+    if enabled_count == 0 {
+        return Err("混合模型路由至少需要一个已启用的 API 路由".to_string());
+    }
+    Ok(CodexInstanceModelRouting {
+        enabled: true,
+        version: 1,
+        routes: normalized_routes,
+    })
+}
+
+fn build_mixed_model_gateway_collection_for_profile(
+    profile_dir: &Path,
+    oauth_account: &CodexAccount,
+    routing: &CodexInstanceModelRouting,
+) -> Result<(CodexLocalAccessCollection, String), String> {
+    let routing = validate_mixed_model_routing_config(Some(&oauth_account.id), routing)?;
+    let mut collection = new_empty_local_access_collection()?;
+    if let Some(template) = load_collection_from_disk()? {
+        apply_provider_gateway_template_settings(&mut collection, &template);
+    }
+
+    collection.enabled = true;
+    collection.port = allocate_random_local_port(CODEX_LOCAL_ACCESS_LOCALHOST_BIND_HOST)?;
+    collection.access_scope = CodexLocalAccessScope::Localhost;
+    collection.client_base_url_host = CodexLocalAccessClientBaseUrlHost::default();
+    collection.gateway_mode = CodexLocalAccessGatewayMode::Sidecar;
+    collection.responses_websockets_enabled = false;
+    collection.account_ids = vec![oauth_account.id.clone()];
+    collection.custom_routing_rules.clear();
+    collection.account_model_rules.clear();
+    collection.api_keys.clear();
+    collection.bound_oauth_account_id = Some(oauth_account.id.clone());
+
+    let mut routes = Vec::new();
+    for route in routing.routes.iter().filter(|route| route.enabled) {
+        let provider_account = codex_account::load_account(&route.provider_account_id)
+            .ok_or_else(|| format!("模型路由 {} 的 API 账号不存在", route.namespace))?;
+        let mut provider_gateway = provider_gateway_for_account(&provider_account)?;
+        if let Some(selected) = &route.selected_models {
+            let selected_set: HashSet<String> = selected
+                .iter()
+                .map(|item| item.trim().to_ascii_lowercase())
+                .collect();
+            let extra_set: HashSet<String> = route
+                .extra_models
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|item| item.trim().to_ascii_lowercase())
+                .collect();
+            provider_gateway.upstream_models.retain(|m| {
+                let lower = m.trim().to_ascii_lowercase();
+                selected_set.contains(&lower) || extra_set.contains(&lower)
+            });
+        }
+        routes.push(CodexLocalAccessModelRoute {
+            id: route.id.clone(),
+            namespace: route.namespace.clone(),
+            provider_account_id: route.provider_account_id.clone(),
+            provider_gateway,
+        });
+    }
+
+    let key = provider_gateway_profile_api_key(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID)?;
+    let now = now_ms();
+    collection.api_key = key.clone();
+    collection.api_keys.push(CodexLocalAccessApiKey {
+        id: mixed_model_routing_api_key_id(),
+        label: "Mixed Model Routing".to_string(),
+        key: key.clone(),
+        provider_gateway: None,
+        model_routing: Some(CodexLocalAccessModelRouting {
+            default_route: "oauth".to_string(),
+            failure_policy: "strict".to_string(),
+            routes,
+        }),
+        inherit_account_pool: Some(false),
+        account_ids: vec![oauth_account.id.clone()],
+        priority_account_ids: Vec::new(),
+        preferred_account_id: Some(oauth_account.id.clone()),
+        model_prefix: None,
+        allowed_models: Vec::new(),
+        excluded_models: Vec::new(),
+        token_limit: None,
+        token_used: 0,
+        enabled: true,
+        created_at: now,
+        updated_at: now,
+        last_used_at: None,
+    });
+    collection.updated_at = now;
+    let (changed, _) = sanitize_collection(&mut collection)?;
+    if changed {
+        collection.updated_at = now_ms();
+    }
+    Ok((collection, key))
+}
+
 fn build_provider_gateway_collection_for_profile(
     profile_dir: &Path,
     account: &CodexAccount,
@@ -864,6 +1262,7 @@ fn build_provider_gateway_collection_for_profile(
         label: format!("Provider Gateway: {}", account.email),
         key: key.clone(),
         provider_gateway: Some(provider_gateway.clone()),
+        model_routing: None,
         inherit_account_pool: Some(false),
         account_ids: vec![account.id.clone()],
         priority_account_ids: Vec::new(),
@@ -923,6 +1322,7 @@ fn build_bound_oauth_local_gateway_collection_for_profile(
         label: format!("Bound OAuth Local Gateway: {}", account.email),
         key: key.clone(),
         provider_gateway: None,
+        model_routing: None,
         inherit_account_pool: Some(false),
         account_ids: vec![account.id.clone()],
         priority_account_ids: Vec::new(),
@@ -1108,6 +1508,7 @@ fn build_model_provider_gateway_test_collection(
         label: provider_gateway_test_api_key_label(request),
         key: collection.api_key.clone(),
         provider_gateway,
+        model_routing: None,
         inherit_account_pool: Some(false),
         account_ids: vec![account.id.clone()],
         priority_account_ids: Vec::new(),
@@ -1945,8 +2346,46 @@ async fn stop_provider_gateway_runtime(runtime_key: &str) -> Option<GatewayBindE
     endpoint
 }
 
+async fn stop_spawned_provider_gateway_sidecar(
+    mut child: Child,
+    mut task: tokio::task::JoinHandle<()>,
+    bind_host: &str,
+    port: u16,
+) {
+    match timeout(GATEWAY_SHUTDOWN_TIMEOUT, child.kill()).await {
+        Ok(Ok(())) => {
+            let _ = child.wait().await;
+        }
+        Ok(Err(error)) => logger::log_codex_api_warn(&format!(
+            "[CodexLocalAccess][mixed-model-routing] 启动回滚停止 sidecar 失败: {}",
+            error
+        )),
+        Err(_) => logger::log_codex_api_warn(
+            "[CodexLocalAccess][mixed-model-routing] 启动回滚停止 sidecar 超时",
+        ),
+    }
+    tokio::select! {
+        result = &mut task => {
+            let _ = result;
+        }
+        _ = tokio::time::sleep(GATEWAY_SHUTDOWN_TIMEOUT) => {
+            task.abort();
+        }
+    }
+    if let Err(error) = wait_for_gateway_port_release(bind_host, port).await {
+        logger::log_codex_api_warn(&format!(
+            "[CodexLocalAccess][mixed-model-routing] 启动回滚等待端口释放失败: bind={}:{} error={}",
+            bind_host, port, error
+        ));
+    }
+}
+
 pub async fn stop_provider_gateways_for_profile(profile_dir: &Path) {
     let _guard = provider_gateway_lifecycle_lock().lock().await;
+    stop_provider_gateways_for_profile_locked(profile_dir).await;
+}
+
+async fn stop_provider_gateways_for_profile_locked(profile_dir: &Path) {
     let profile_prefix = format!("{}\n", normalize_profile_dir_key(profile_dir));
     let runtime_keys = {
         let runtimes = provider_gateway_runtime_store().lock().await;
@@ -2036,6 +2475,7 @@ pub async fn ensure_provider_gateway_for_dir(
     }
 
     let sidecar_dir = provider_gateway_sidecar_dir(profile_dir, account_id)?;
+    let runtime_sidecar_dir = sidecar_dir.clone();
     let default_service_tier =
         crate::modules::codex_speed::get_app_speed_config_for_dir(profile_dir)
             .map(|config| codex_app_speed_service_tier(&config.speed))?;
@@ -2072,6 +2512,114 @@ pub async fn ensure_provider_gateway_for_dir(
             actual_bind_host: Some(bind_host),
             task: Some(task),
             sidecar_child: Some(child),
+            sidecar_dir: Some(runtime_sidecar_dir),
+            collection: Some(collection),
+            oauth_account_ids: Vec::new(),
+        },
+    );
+    Ok(())
+}
+
+pub async fn ensure_mixed_model_gateway_for_dir(
+    profile_dir: &Path,
+    oauth_account_id: &str,
+    routing: &CodexInstanceModelRouting,
+) -> Result<(), String> {
+    let oauth_account_id = oauth_account_id.trim();
+    if oauth_account_id.is_empty() {
+        return Err("混合模型路由缺少 OAuth 订阅账号".to_string());
+    }
+
+    let oauth_account = validate_local_access_bound_oauth_account(oauth_account_id)?;
+    let routing = validate_mixed_model_routing_config(Some(oauth_account_id), routing)?;
+    let (collection, key) =
+        build_mixed_model_gateway_collection_for_profile(profile_dir, &oauth_account, &routing)?;
+
+    let _guard = provider_gateway_lifecycle_lock().lock().await;
+    stop_provider_gateways_for_profile_locked(profile_dir).await;
+    let runtime_key = provider_gateway_runtime_key(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID);
+
+    let sidecar_dir = provider_gateway_sidecar_dir(profile_dir, MIXED_MODEL_ROUTING_RUNTIME_ID)
+        .map_err(|error| mixed_model_start_error_with_rollback(profile_dir, error))?;
+    let runtime_sidecar_dir = sidecar_dir.clone();
+    let runtime_oauth_account_id = oauth_account.id.clone();
+    let default_service_tier =
+        crate::modules::codex_speed::get_app_speed_config_for_dir(profile_dir)
+            .map(|config| codex_app_speed_service_tier(&config.speed))
+            .map_err(|error| mixed_model_start_error_with_rollback(profile_dir, error))?;
+    let launch_config = match prepare_sidecar_launch_config_in_dir(
+        &collection,
+        sidecar_dir,
+        HashMap::new(),
+        default_service_tier,
+        HashMap::from([(oauth_account.id.clone(), oauth_account)]),
+    )
+    .await
+    {
+        Ok(config) => config,
+        Err(error) => return Err(mixed_model_start_error_with_rollback(profile_dir, error)),
+    };
+    if probe_sidecar_ready_once(&collection, Duration::from_millis(250))
+        .await
+        .is_ok()
+    {
+        let killed = process::kill_port_processes(collection.port)
+            .map_err(|error| mixed_model_start_error_with_rollback(profile_dir, error))?;
+        if killed > 0 {
+            logger::log_codex_api_info(&format!(
+                "[CodexLocalAccess][mixed-model-routing] 已停止旧 sidecar: port={}, killed={}",
+                collection.port, killed
+            ));
+        }
+        wait_for_gateway_port_release(bind_host_for_collection(&collection), collection.port)
+            .await
+            .map_err(|error| mixed_model_start_error_with_rollback(profile_dir, error))?;
+    }
+
+    let (child, task, bind_host) =
+        match spawn_provider_gateway_sidecar(&collection, &launch_config).await {
+            Ok(runtime) => runtime,
+            Err(error) => return Err(mixed_model_start_error_with_rollback(profile_dir, error)),
+        };
+
+    let activation_snapshot =
+        match capture_mixed_model_profile_activation_snapshot(profile_dir, &key) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                stop_spawned_provider_gateway_sidecar(child, task, &bind_host, collection.port)
+                    .await;
+                return Err(mixed_model_start_error_with_rollback(profile_dir, error));
+            }
+        };
+
+    let takeover_result = async {
+        save_profile_takeover_backup(profile_dir, &key)?;
+        cleanup_provider_gateway_profile_model_overrides(profile_dir)?;
+        write_local_access_profile_takeover(profile_dir, &collection, Some(&key)).await?;
+        codex_account::reapply_experimental_model_policy_if_enabled(profile_dir)
+    }
+    .await;
+    if let Err(error) = takeover_result {
+        stop_spawned_provider_gateway_sidecar(child, task, &bind_host, collection.port).await;
+        if let Err(rollback_error) =
+            rollback_mixed_model_profile_after_start_failure(profile_dir, Some(activation_snapshot))
+        {
+            return Err(format!("{}; 启动失败回滚也失败: {}", error, rollback_error));
+        }
+        return Err(error);
+    }
+
+    let mut runtimes = provider_gateway_runtime_store().lock().await;
+    runtimes.insert(
+        runtime_key,
+        ProviderGatewayRuntime {
+            actual_port: Some(collection.port),
+            actual_bind_host: Some(bind_host),
+            task: Some(task),
+            sidecar_child: Some(child),
+            sidecar_dir: Some(runtime_sidecar_dir),
+            collection: Some(collection),
+            oauth_account_ids: vec![runtime_oauth_account_id],
         },
     );
     Ok(())
@@ -2102,6 +2650,8 @@ pub async fn ensure_bound_oauth_local_gateway_for_dir(
     }
 
     let sidecar_dir = provider_gateway_sidecar_dir(profile_dir, account_id)?;
+    let runtime_sidecar_dir = sidecar_dir.clone();
+    let runtime_oauth_account_id = account.id.clone();
     let default_service_tier =
         crate::modules::codex_speed::get_app_speed_config_for_dir(profile_dir)
             .map(|config| codex_app_speed_service_tier(&config.speed))?;
@@ -2138,9 +2688,68 @@ pub async fn ensure_bound_oauth_local_gateway_for_dir(
             actual_bind_host: Some(bind_host),
             task: Some(task),
             sidecar_child: Some(child),
+            sidecar_dir: Some(runtime_sidecar_dir),
+            collection: Some(collection),
+            oauth_account_ids: vec![runtime_oauth_account_id],
         },
     );
     Ok(())
+}
+
+fn sync_provider_gateway_runtime_auth_file(
+    account: &CodexAccount,
+    collection: &CodexLocalAccessCollection,
+    sidecar_dir: &Path,
+) -> Result<bool, String> {
+    let auth_path = sidecar_auths_dir(sidecar_dir).join(sidecar_auth_file_name(&account.id));
+    if !auth_path.exists() {
+        return Ok(false);
+    }
+    let proxy_signature = sidecar_effective_proxy_signature(collection)?;
+    let auth_json =
+        sidecar_auth_json_for_account(account, collection, proxy_signature.proxy_url.as_deref());
+    let auth_content = serde_json::to_string_pretty(&auth_json)
+        .map_err(|error| format!("序列化实例 sidecar OAuth 认证失败: {}", error))?;
+    let changed = write_string_atomic_if_changed(&auth_path, &auth_content)?;
+    harden_sidecar_auth_file_permissions(&auth_path)?;
+    Ok(changed)
+}
+
+pub fn sync_provider_gateway_auth_files_for_account_in_background(account: CodexAccount) {
+    tauri::async_runtime::spawn(async move {
+        let targets = {
+            let runtimes = provider_gateway_runtime_store().lock().await;
+            runtimes
+                .values()
+                .filter(|runtime| {
+                    runtime
+                        .oauth_account_ids
+                        .iter()
+                        .any(|account_id| account_id == &account.id)
+                })
+                .filter_map(|runtime| {
+                    Some((runtime.collection.clone()?, runtime.sidecar_dir.clone()?))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (collection, sidecar_dir) in targets {
+            match sync_provider_gateway_runtime_auth_file(&account, &collection, &sidecar_dir) {
+                Ok(true) => logger::log_codex_api_info(&format!(
+                    "[CodexLocalAccess][provider-gateway] 已写穿实例 sidecar OAuth 凭证: account_id={}, sidecar_dir={}",
+                    account.id,
+                    sidecar_dir.display()
+                )),
+                Ok(false) => {}
+                Err(error) => logger::log_codex_api_warn(&format!(
+                    "[CodexLocalAccess][provider-gateway] 写穿实例 sidecar OAuth 凭证失败: account_id={}, sidecar_dir={}, error={}",
+                    account.id,
+                    sidecar_dir.display(),
+                    error
+                )),
+            }
+        }
+    });
 }
 
 pub fn reload_provider_gateway_for_profile_in_background(
@@ -2188,4 +2797,3 @@ pub fn reload_provider_gateway_for_profile_in_background(
         }
     });
 }
-

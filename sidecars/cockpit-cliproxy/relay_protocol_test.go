@@ -533,6 +533,245 @@ func TestRelayServerProviderGatewayUsesSelectedUpstreamModel(t *testing.T) {
 	}
 }
 
+func mixedRoutingAPIKey(gateway *providerGatewaySpec) *apiKeySpec {
+	return &apiKeySpec{
+		ID:      "mixed_model_routing",
+		Label:   "Mixed Model Routing",
+		Key:     "client-key",
+		Enabled: true,
+		ModelRouting: &modelRoutingSpec{
+			DefaultRoute:  "oauth",
+			FailurePolicy: "strict",
+			Routes: []modelRouteSpec{{
+				ID:                "route-cpa",
+				Namespace:         "cpa",
+				ProviderAccountID: "cpa-account",
+				ProviderGateway:   gateway,
+			}},
+		},
+	}
+}
+
+func mixedRoutingManifest(spec *apiKeySpec) *manifest {
+	return &manifest{
+		APIKeys:  []apiKeySpec{*spec},
+		ModelIDs: []string{"gpt-5.5"},
+		apiKeyByValue: map[string]*apiKeySpec{
+			"client-key": spec,
+		},
+	}
+}
+
+func TestRelayServerMixedRoutingBareModelUsesOAuthRuntime(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"provider should not be used"}`))
+	}))
+	defer upstream.Close()
+
+	runtime := &fakeRuntime{
+		response: cliproxyexecutor.Response{
+			Headers: http.Header{"Content-Type": []string{"application/json"}},
+			Payload: []byte(`{"ok":true,"route":"oauth"}`),
+		},
+	}
+	spec := mixedRoutingAPIKey(&providerGatewaySpec{
+		BaseURL:        upstream.URL,
+		APIKey:         "cpa-secret",
+		UpstreamModels: []string{"gpt-5.5", "grok-4.6"},
+		WireAPI:        "responses",
+	})
+	m := mixedRoutingManifest(spec)
+	router := (&relayServer{
+		runtime:  runtime,
+		cfg:      &config.Config{},
+		manifest: m,
+		policy:   &requestPolicy{manifest: m},
+	}).router()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","input":"hello","stream":false}`))
+	req.Header.Set("Authorization", "Bearer client-key")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", w.Code, w.Body.String())
+	}
+	if runtime.executeCalls != 1 || runtime.streamCalls != 0 {
+		t.Fatalf("bare model should use OAuth runtime: execute=%d stream=%d", runtime.executeCalls, runtime.streamCalls)
+	}
+	if runtime.lastReq.Model != "gpt-5.5" {
+		t.Fatalf("OAuth runtime model = %q, want gpt-5.5", runtime.lastReq.Model)
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("bare official model must not hit the API provider: hits=%d", upstreamHits)
+	}
+}
+
+func TestRelayServerMixedRoutingNamespacedModelsUseProviderAndStripPrefix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var (
+		upstreamHits   int
+		upstreamAuth   string
+		upstreamBody   string
+		upstreamHeader http.Header
+	)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		upstreamAuth = r.Header.Get("Authorization")
+		upstreamHeader = r.Header.Clone()
+		body, _ := io.ReadAll(r.Body)
+		upstreamBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","object":"response","status":"completed"}`))
+	}))
+	defer upstream.Close()
+
+	runtime := &fakeRuntime{}
+	spec := mixedRoutingAPIKey(&providerGatewaySpec{
+		BaseURL:        upstream.URL,
+		APIKey:         "cpa-secret",
+		UpstreamModels: []string{"gpt-5.5", "grok-4.6"},
+		WireAPI:        "responses",
+	})
+	m := mixedRoutingManifest(spec)
+	router := (&relayServer{
+		runtime:  runtime,
+		cfg:      &config.Config{},
+		manifest: m,
+		policy:   &requestPolicy{manifest: m},
+	}).router()
+
+	for _, tc := range []struct {
+		clientModel   string
+		upstreamModel string
+	}{
+		{clientModel: "cpa/gpt-5.5", upstreamModel: "gpt-5.5"},
+		{clientModel: "cpa/grok-4.6", upstreamModel: "grok-4.6"},
+	} {
+		upstreamHits = 0
+		upstreamAuth = ""
+		upstreamBody = ""
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":%q,"input":"hello","stream":false}`, tc.clientModel)))
+		req.Header.Set("Authorization", "Bearer client-key")
+		req.Header.Set("Chatgpt-Account-Id", "oauth-account")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", tc.clientModel, w.Code, w.Body.String())
+		}
+		if runtime.executeCalls != 0 || runtime.streamCalls != 0 {
+			t.Fatalf("%s must not use OAuth runtime: execute=%d stream=%d", tc.clientModel, runtime.executeCalls, runtime.streamCalls)
+		}
+		if upstreamHits != 1 {
+			t.Fatalf("%s should hit the API provider once, got %d", tc.clientModel, upstreamHits)
+		}
+		if upstreamAuth != "Bearer cpa-secret" {
+			t.Fatalf("%s Authorization = %q, want provider key", tc.clientModel, upstreamAuth)
+		}
+		if upstreamHeader.Get("Chatgpt-Account-Id") != "" {
+			t.Fatalf("%s must not forward OAuth Chatgpt-Account-Id", tc.clientModel)
+		}
+		if !strings.Contains(upstreamBody, fmt.Sprintf(`"model":"%s"`, tc.upstreamModel)) || strings.Contains(upstreamBody, tc.clientModel) {
+			t.Fatalf("%s should strip namespace before upstream: %s", tc.clientModel, upstreamBody)
+		}
+	}
+}
+
+func TestRelayServerMixedRoutingUnknownNamespaceDoesNotFallBackToOAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamHits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	runtime := &fakeRuntime{
+		response: cliproxyexecutor.Response{Payload: []byte(`{"ok":true}`)},
+	}
+	spec := mixedRoutingAPIKey(&providerGatewaySpec{
+		BaseURL:        upstream.URL,
+		APIKey:         "cpa-secret",
+		UpstreamModels: []string{"gpt-5.5"},
+		WireAPI:        "responses",
+	})
+	m := mixedRoutingManifest(spec)
+	router := (&relayServer{
+		runtime:  runtime,
+		cfg:      &config.Config{},
+		manifest: m,
+		policy:   &requestPolicy{manifest: m},
+	}).router()
+
+	for _, model := range []string{"missing/gpt-5.5", "cpa/grok-4.6", "cpa/"} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":%q,"input":"hello","stream":false}`, model)))
+		req.Header.Set("Authorization", "Bearer client-key")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404 body=%s", model, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), `"code":"model_route_not_available"`) {
+			t.Fatalf("%s should return model_route_not_available: %s", model, w.Body.String())
+		}
+	}
+	if runtime.executeCalls != 0 || upstreamHits != 0 {
+		t.Fatalf("unknown namespace must not fall back: execute=%d upstream=%d", runtime.executeCalls, upstreamHits)
+	}
+}
+
+func TestRelayServerMixedRoutingProviderErrorDoesNotFallBackToOAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"cpa down"}`))
+	}))
+	defer upstream.Close()
+
+	runtime := &fakeRuntime{
+		response: cliproxyexecutor.Response{Payload: []byte(`{"ok":true,"route":"oauth"}`)},
+	}
+	spec := mixedRoutingAPIKey(&providerGatewaySpec{
+		BaseURL:        upstream.URL,
+		APIKey:         "cpa-secret",
+		UpstreamModels: []string{"gpt-5.5"},
+		WireAPI:        "responses",
+	})
+	m := mixedRoutingManifest(spec)
+	router := (&relayServer{
+		runtime:  runtime,
+		cfg:      &config.Config{},
+		manifest: m,
+		policy:   &requestPolicy{manifest: m},
+	}).router()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"cpa/gpt-5.5","input":"hello","stream":false}`))
+	req.Header.Set("Authorization", "Bearer client-key")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 body=%s", w.Code, w.Body.String())
+	}
+	if runtime.executeCalls != 0 || runtime.streamCalls != 0 {
+		t.Fatalf("API failure must not retry OAuth: execute=%d stream=%d", runtime.executeCalls, runtime.streamCalls)
+	}
+	if !strings.Contains(w.Body.String(), "cpa down") {
+		t.Fatalf("provider error should surface to the client: %s", w.Body.String())
+	}
+}
+
 func TestRelayServerProviderGatewayOmitsVisionInputWhenUnsupported(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var upstreamBody string

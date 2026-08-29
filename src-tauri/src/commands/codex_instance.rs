@@ -10,7 +10,9 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::models::codex::{CodexAccount, CodexAppSpeed};
-use crate::models::{DefaultInstanceSettings, InstanceLaunchMode, InstanceProfile};
+use crate::models::{
+    CodexInstanceModelRouting, DefaultInstanceSettings, InstanceLaunchMode, InstanceProfile,
+};
 use crate::modules;
 
 const DEFAULT_INSTANCE_ID: &str = "__default__";
@@ -20,6 +22,35 @@ static CODEX_INSTANCE_START_FLOW_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLo
 
 fn launch_mode_uses_desktop_runtime(launch_mode: &InstanceLaunchMode) -> bool {
     *launch_mode == InstanceLaunchMode::App
+}
+
+fn validate_instance_model_routing(
+    bind_account_id: Option<&str>,
+    launch_mode: &InstanceLaunchMode,
+    model_routing: Option<&CodexInstanceModelRouting>,
+) -> Result<(), String> {
+    let Some(model_routing) = model_routing.filter(|routing| routing.enabled) else {
+        return Ok(());
+    };
+    if !launch_mode_uses_desktop_runtime(launch_mode) {
+        return Err("混合模型路由第一版仅支持桌面版实例".to_string());
+    }
+    modules::codex_local_access::validate_mixed_model_routing_config(
+        bind_account_id,
+        model_routing,
+    )?;
+    Ok(())
+}
+
+fn model_routing_update_error(error: String, rollback_errors: Vec<String>) -> String {
+    if rollback_errors.is_empty() {
+        return error;
+    }
+    format!(
+        "{}；恢复原实例配置时仍有错误: {}",
+        error,
+        rollback_errors.join("；")
+    )
 }
 
 #[derive(Debug)]
@@ -56,6 +87,7 @@ struct CodexInstanceStartTarget {
     instance_name: String,
     user_data_dir: PathBuf,
     bind_account_id: Option<String>,
+    model_routing: Option<CodexInstanceModelRouting>,
     is_default: bool,
     launch_operation: Option<String>,
 }
@@ -123,6 +155,7 @@ fn resolve_codex_instance_start_target(
             instance_name: String::new(),
             user_data_dir: modules::codex_instance::get_default_codex_home()?,
             bind_account_id: resolve_default_account_id(&settings),
+            model_routing: settings.model_routing,
             is_default: true,
             launch_operation: None,
         });
@@ -139,6 +172,7 @@ fn resolve_codex_instance_start_target(
         instance_name: instance.name,
         user_data_dir: PathBuf::from(instance.user_data_dir),
         bind_account_id: instance.bind_account_id,
+        model_routing: instance.model_routing,
         is_default: false,
         launch_operation: None,
     })
@@ -160,6 +194,8 @@ pub struct CodexInstanceProfileView {
     pub working_dir: Option<String>,
     pub extra_args: String,
     pub bind_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_routing: Option<CodexInstanceModelRouting>,
     pub launch_mode: InstanceLaunchMode,
     pub app_speed: CodexAppSpeed,
     pub created_at: i64,
@@ -183,6 +219,7 @@ impl CodexInstanceProfileView {
             working_dir: profile.working_dir,
             extra_args: profile.extra_args,
             bind_account_id: profile.bind_account_id,
+            model_routing: profile.model_routing,
             launch_mode: profile.launch_mode,
             app_speed: profile.app_speed,
             created_at: profile.created_at,
@@ -336,7 +373,20 @@ async fn inject_preflighted_bound_account_to_profile(
 async fn ensure_provider_gateway_for_bind_account(
     profile_dir: &Path,
     bind_account_id: Option<&str>,
+    model_routing: Option<&CodexInstanceModelRouting>,
 ) -> Result<(), String> {
+    if let Some(routing) = model_routing.filter(|routing| routing.enabled) {
+        let oauth_account_id = bind_account_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("混合模型路由缺少 OAuth 订阅账号")?;
+        return modules::codex_local_access::ensure_mixed_model_gateway_for_dir(
+            profile_dir,
+            oauth_account_id,
+            routing,
+        )
+        .await;
+    }
     let Some(bind_account_id) = bind_account_id else {
         modules::codex_local_access::stop_provider_gateways_for_profile(profile_dir).await;
         return Ok(());
@@ -379,6 +429,18 @@ async fn ensure_provider_gateway_for_bind_account(
     .await
 }
 
+async fn restore_mixed_model_gateway_when_disabled(
+    profile_dir: &Path,
+    model_routing: Option<&CodexInstanceModelRouting>,
+) -> Result<(), String> {
+    if model_routing.is_some_and(|routing| routing.enabled) {
+        return Ok(());
+    }
+    modules::codex_local_access::stop_provider_gateways_for_profile(profile_dir).await;
+    modules::codex_local_access::restore_mixed_model_gateway_profile(profile_dir)?;
+    modules::codex_local_access::cleanup_provider_gateway_profile_model_overrides(profile_dir)
+}
+
 fn default_instance_view(
     default_dir: &Path,
     default_settings: &DefaultInstanceSettings,
@@ -393,6 +455,7 @@ fn default_instance_view(
         working_dir: None,
         extra_args: default_settings.extra_args.clone(),
         bind_account_id,
+        model_routing: default_settings.model_routing.clone(),
         launch_mode: default_settings.launch_mode.clone(),
         app_speed: default_settings.app_speed.clone(),
         created_at: 0,
@@ -511,12 +574,14 @@ fn sync_codex_threads_across_idle_instances(context: &str) {
 async fn apply_bound_account_to_initialized_profile(
     profile_dir: &Path,
     bind_account_id: Option<&str>,
+    model_routing: Option<&CodexInstanceModelRouting>,
     context: &str,
 ) -> Result<(), String> {
     if !is_profile_initialized(&profile_dir.to_string_lossy()) {
         return Ok(());
     }
 
+    restore_mixed_model_gateway_when_disabled(profile_dir, model_routing).await?;
     let previous_kind = read_applied_launch_credential_kind_for_dir(profile_dir);
     if let Some(account_id) = bind_account_id {
         // 已初始化 profile 的绑定变更也可能立即被官方客户端读取。
@@ -530,7 +595,8 @@ async fn apply_bound_account_to_initialized_profile(
             .await?;
         }
         inject_bound_account_to_profile(profile_dir, account_id, false).await?;
-        ensure_provider_gateway_for_bind_account(profile_dir, bind_account_id).await?;
+        ensure_provider_gateway_for_bind_account(profile_dir, bind_account_id, model_routing)
+            .await?;
     } else {
         modules::codex_local_access::cleanup_provider_gateway_profile_model_overrides(profile_dir)?;
         modules::codex_local_access::stop_provider_gateways_for_profile(profile_dir).await;
@@ -548,12 +614,17 @@ async fn created_instance_view_after_binding<F, Fut>(
     apply_binding: F,
 ) -> Result<CodexInstanceProfileView, String>
 where
-    F: FnOnce(PathBuf, String) -> Fut,
+    F: FnOnce(PathBuf, String, Option<CodexInstanceModelRouting>) -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
     let initialized = is_profile_initialized(&instance.user_data_dir);
     if let (true, Some(bind_account_id)) = (initialized, instance.bind_account_id.clone()) {
-        apply_binding(PathBuf::from(&instance.user_data_dir), bind_account_id).await?;
+        apply_binding(
+            PathBuf::from(&instance.user_data_dir),
+            bind_account_id,
+            instance.model_routing.clone(),
+        )
+        .await?;
     }
 
     Ok(CodexInstanceProfileView::from_profile(
@@ -631,6 +702,43 @@ async fn repair_session_visibility_for_selected_instance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestDataDirGuard {
+        root: PathBuf,
+        previous_test_data_dir: Option<std::ffi::OsString>,
+        previous_data_dir: Option<std::ffi::OsString>,
+    }
+
+    impl TestDataDirGuard {
+        fn new(prefix: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::new_v4()));
+            let data_dir = root.join("data");
+            std::fs::create_dir_all(&data_dir).expect("create test data dir");
+            let previous_test_data_dir = std::env::var_os("COCKPIT_TOOLS_TEST_DATA_DIR");
+            let previous_data_dir = std::env::var_os("COCKPIT_TOOLS_DATA_DIR");
+            std::env::set_var("COCKPIT_TOOLS_TEST_DATA_DIR", &data_dir);
+            std::env::set_var("COCKPIT_TOOLS_DATA_DIR", &data_dir);
+            Self {
+                root,
+                previous_test_data_dir,
+                previous_data_dir,
+            }
+        }
+    }
+
+    impl Drop for TestDataDirGuard {
+        fn drop(&mut self) {
+            match self.previous_test_data_dir.as_ref() {
+                Some(value) => std::env::set_var("COCKPIT_TOOLS_TEST_DATA_DIR", value),
+                None => std::env::remove_var("COCKPIT_TOOLS_TEST_DATA_DIR"),
+            }
+            match self.previous_data_dir.as_ref() {
+                Some(value) => std::env::set_var("COCKPIT_TOOLS_DATA_DIR", value),
+                None => std::env::remove_var("COCKPIT_TOOLS_DATA_DIR"),
+            }
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
 
     #[test]
     fn instance_start_guard_rejects_only_duplicate_instance_starts() {
@@ -827,6 +935,7 @@ mod tests {
             working_dir: None,
             extra_args: String::new(),
             bind_account_id: Some("target-account".to_string()),
+            model_routing: None,
             launch_mode: InstanceLaunchMode::App,
             app_speed: CodexAppSpeed::Standard,
             created_at: 0,
@@ -836,7 +945,7 @@ mod tests {
 
         let view = created_instance_view_after_binding(
             instance,
-            |profile_dir, bind_account_id| async move {
+            |profile_dir, bind_account_id, _model_routing| async move {
                 let copied = std::fs::read_to_string(profile_dir.join("auth.json"))
                     .map_err(|error| error.to_string())?;
                 assert_eq!(copied, "source-account");
@@ -855,6 +964,61 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(test_root);
+    }
+
+    #[tokio::test]
+    async fn mixed_routing_update_restores_instance_store_when_speed_write_fails() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let env = TestDataDirGuard::new("cockpit-codex-routing-update-rollback");
+
+        let profile_path = env.root.join("profile-is-a-file");
+        std::fs::write(&profile_path, "not a directory").expect("write blocked profile path");
+        let mut store = crate::models::InstanceStore::new();
+        store.instances.push(InstanceProfile {
+            id: "routing-rollback-instance".to_string(),
+            name: "Original name".to_string(),
+            user_data_dir: profile_path.to_string_lossy().to_string(),
+            working_dir: None,
+            extra_args: "--original".to_string(),
+            bind_account_id: None,
+            model_routing: None,
+            launch_mode: InstanceLaunchMode::App,
+            app_speed: CodexAppSpeed::Standard,
+            created_at: 1,
+            last_launched_at: None,
+            last_pid: None,
+        });
+        modules::codex_instance::save_instance_store(&store).expect("save instance store");
+
+        let result = codex_update_instance(
+            "routing-rollback-instance".to_string(),
+            Some("Changed name".to_string()),
+            None,
+            Some("--changed".to_string()),
+            None,
+            Some(Some(CodexInstanceModelRouting::default())),
+            None,
+            None,
+            Some(CodexAppSpeed::Fast),
+            None,
+            None,
+        )
+        .await;
+
+        let error = result.expect_err("speed write should fail for a file profile path");
+        assert!(error.contains("Codex config.toml"));
+        let restored = modules::codex_instance::load_instance_store()
+            .expect("load restored store")
+            .instances
+            .into_iter()
+            .find(|instance| instance.id == "routing-rollback-instance")
+            .expect("restored instance");
+        assert_eq!(restored.name, "Original name");
+        assert_eq!(restored.extra_args, "--original");
+        assert_eq!(restored.model_routing, None);
+        assert_eq!(restored.app_speed, CodexAppSpeed::Standard);
     }
 
     #[cfg(target_os = "windows")]
@@ -1669,11 +1833,18 @@ pub async fn codex_create_instance(
     working_dir: Option<String>,
     extra_args: Option<String>,
     bind_account_id: Option<String>,
+    model_routing: Option<CodexInstanceModelRouting>,
     copy_source_instance_id: Option<String>,
     init_mode: Option<String>,
     launch_mode: Option<InstanceLaunchMode>,
     app_speed: Option<CodexAppSpeed>,
 ) -> Result<CodexInstanceProfileView, String> {
+    let effective_launch_mode = launch_mode.clone().unwrap_or_default();
+    validate_instance_model_routing(
+        bind_account_id.as_deref(),
+        &effective_launch_mode,
+        model_routing.as_ref(),
+    )?;
     let instance =
         modules::codex_instance::create_instance(modules::codex_instance::CreateInstanceParams {
             name,
@@ -1681,20 +1852,25 @@ pub async fn codex_create_instance(
             working_dir,
             extra_args: extra_args.unwrap_or_default(),
             bind_account_id,
+            model_routing,
             copy_source_instance_id,
             init_mode,
             launch_mode,
             app_speed,
         })?;
 
-    created_instance_view_after_binding(instance, |profile_dir, bind_account_id| async move {
-        apply_bound_account_to_initialized_profile(
-            &profile_dir,
-            Some(&bind_account_id),
-            "create-instance-bind-account",
-        )
-        .await
-    })
+    created_instance_view_after_binding(
+        instance,
+        |profile_dir, bind_account_id, model_routing| async move {
+            apply_bound_account_to_initialized_profile(
+                &profile_dir,
+                Some(&bind_account_id),
+                model_routing.as_ref(),
+                "create-instance-bind-account",
+            )
+            .await
+        },
+    )
     .await
 }
 
@@ -1705,39 +1881,115 @@ pub async fn codex_update_instance(
     working_dir: Option<String>,
     extra_args: Option<String>,
     bind_account_id: Option<Option<String>>,
+    model_routing: Option<Option<CodexInstanceModelRouting>>,
     follow_local_account: Option<bool>,
     launch_mode: Option<InstanceLaunchMode>,
     app_speed: Option<CodexAppSpeed>,
     auto_sync_threads: Option<bool>,
     defer_bind_account_application: Option<bool>,
 ) -> Result<CodexInstanceProfileView, String> {
+    let model_routing_update_requested = model_routing.is_some();
+    let app_speed_update_requested = app_speed.is_some();
     let should_apply_bind_account = should_apply_instance_binding_immediately(
-        bind_account_id.is_some() || follow_local_account.is_some(),
+        bind_account_id.is_some() || model_routing.is_some() || follow_local_account.is_some(),
         defer_bind_account_application,
     );
     if instance_id == DEFAULT_INSTANCE_ID {
+        let current = modules::codex_instance::load_default_settings()?;
+        let effective_bind_account_id = bind_account_id
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| resolve_default_account_id(&current));
+        let effective_model_routing = model_routing
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| current.model_routing.clone());
+        let effective_launch_mode = launch_mode
+            .clone()
+            .unwrap_or_else(|| current.launch_mode.clone());
+        validate_instance_model_routing(
+            effective_bind_account_id.as_deref(),
+            &effective_launch_mode,
+            effective_model_routing.as_ref(),
+        )?;
         let default_dir = modules::codex_instance::get_default_codex_home()?;
         let mut updated = modules::codex_instance::update_default_settings(
             bind_account_id,
+            model_routing,
             extra_args,
             follow_local_account,
             launch_mode,
             auto_sync_threads,
         )?;
+        let mut update_error = None;
         if let Some(speed) = app_speed {
-            updated = modules::codex_instance::update_default_app_speed(speed.clone())?;
-            modules::codex_speed::write_app_speed_for_dir(&default_dir, speed)?;
+            match modules::codex_instance::update_default_app_speed(speed.clone()) {
+                Ok(next) => {
+                    updated = next;
+                    if let Err(error) =
+                        modules::codex_speed::write_app_speed_for_dir(&default_dir, speed)
+                    {
+                        update_error = Some(error);
+                    }
+                }
+                Err(error) => update_error = Some(error),
+            }
         }
         let resolved_pid = modules::process::resolve_codex_pid(updated.last_pid, None);
         let running = resolved_pid.is_some();
         let default_bind_account_id = resolve_default_account_id(&updated);
-        if should_apply_bind_account {
-            apply_bound_account_to_initialized_profile(
+        if update_error.is_none() && should_apply_bind_account {
+            if let Err(error) = apply_bound_account_to_initialized_profile(
                 &default_dir,
                 default_bind_account_id.as_deref(),
+                updated.model_routing.as_ref(),
                 "update-default-bind-account",
             )
-            .await?;
+            .await
+            {
+                update_error = Some(error);
+            }
+        }
+        if let Some(error) = update_error {
+            if !model_routing_update_requested {
+                return Err(error);
+            }
+            let mut rollback_errors = Vec::new();
+            if let Err(rollback_error) = modules::codex_instance::update_default_settings(
+                Some(current.bind_account_id.clone()),
+                Some(current.model_routing.clone()),
+                Some(current.extra_args.clone()),
+                Some(current.follow_local_account),
+                Some(current.launch_mode.clone()),
+                Some(current.auto_sync_threads),
+            ) {
+                rollback_errors.push(rollback_error);
+            }
+            if app_speed_update_requested {
+                if let Err(rollback_error) =
+                    modules::codex_instance::update_default_app_speed(current.app_speed.clone())
+                {
+                    rollback_errors.push(rollback_error);
+                }
+                if let Err(rollback_error) = modules::codex_speed::write_app_speed_for_dir(
+                    &default_dir,
+                    current.app_speed.clone(),
+                ) {
+                    rollback_errors.push(rollback_error);
+                }
+            }
+            let previous_bind_account_id = resolve_default_account_id(&current);
+            if let Err(rollback_error) = apply_bound_account_to_initialized_profile(
+                &default_dir,
+                previous_bind_account_id.as_deref(),
+                current.model_routing.as_ref(),
+                "rollback-default-model-routing",
+            )
+            .await
+            {
+                rollback_errors.push(rollback_error);
+            }
+            return Err(model_routing_update_error(error, rollback_errors));
         }
         let _ = working_dir;
         return Ok(default_instance_view(
@@ -1748,6 +2000,28 @@ pub async fn codex_update_instance(
             resolved_pid,
         ));
     }
+
+    let current = modules::codex_instance::load_instance_store()?
+        .instances
+        .into_iter()
+        .find(|item| item.id == instance_id)
+        .ok_or("实例不存在")?;
+    let effective_bind_account_id = bind_account_id
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| current.bind_account_id.clone());
+    let effective_model_routing = model_routing
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| current.model_routing.clone());
+    let effective_launch_mode = launch_mode
+        .clone()
+        .unwrap_or_else(|| current.launch_mode.clone());
+    validate_instance_model_routing(
+        effective_bind_account_id.as_deref(),
+        &effective_launch_mode,
+        effective_model_routing.as_ref(),
+    )?;
 
     let wants_bind = bind_account_id
         .as_ref()
@@ -1766,7 +2040,7 @@ pub async fn codex_update_instance(
     }
 
     let should_apply_instance_bind_account = should_apply_instance_binding_immediately(
-        bind_account_id.is_some(),
+        bind_account_id.is_some() || model_routing.is_some(),
         defer_bind_account_application,
     );
     let selected_app_speed = app_speed.clone();
@@ -1777,25 +2051,70 @@ pub async fn codex_update_instance(
             working_dir,
             extra_args,
             bind_account_id,
+            model_routing,
             launch_mode,
             app_speed,
         })?;
-    if let Some(speed) = selected_app_speed {
-        modules::codex_speed::write_app_speed_for_dir(Path::new(&instance.user_data_dir), speed)?;
-    }
+    let mut update_error = selected_app_speed.and_then(|speed| {
+        modules::codex_speed::write_app_speed_for_dir(Path::new(&instance.user_data_dir), speed)
+            .err()
+    });
 
     let running = instance
         .last_pid
         .map(modules::process::is_pid_running)
         .unwrap_or(false);
     let initialized = is_profile_initialized(&instance.user_data_dir);
-    if should_apply_instance_bind_account {
-        apply_bound_account_to_initialized_profile(
+    if update_error.is_none() && should_apply_instance_bind_account {
+        if let Err(error) = apply_bound_account_to_initialized_profile(
             Path::new(&instance.user_data_dir),
             instance.bind_account_id.as_deref(),
+            instance.model_routing.as_ref(),
             "update-instance-bind-account",
         )
-        .await?;
+        .await
+        {
+            update_error = Some(error);
+        }
+    }
+    if let Some(error) = update_error {
+        if !model_routing_update_requested {
+            return Err(error);
+        }
+        let mut rollback_errors = Vec::new();
+        if let Err(rollback_error) = modules::codex_instance::update_instance(
+            modules::codex_instance::UpdateInstanceParams {
+                instance_id: current.id.clone(),
+                name: Some(current.name.clone()),
+                working_dir: current.working_dir.clone(),
+                extra_args: Some(current.extra_args.clone()),
+                bind_account_id: Some(current.bind_account_id.clone()),
+                model_routing: Some(current.model_routing.clone()),
+                launch_mode: Some(current.launch_mode.clone()),
+                app_speed: Some(current.app_speed.clone()),
+            },
+        ) {
+            rollback_errors.push(rollback_error);
+        }
+        if app_speed_update_requested {
+            if let Err(rollback_error) = modules::codex_speed::write_app_speed_for_dir(
+                Path::new(&current.user_data_dir),
+                current.app_speed.clone(),
+            ) {
+                rollback_errors.push(rollback_error);
+            }
+        }
+        if let Err(rollback_error) = apply_bound_account_to_initialized_profile(
+            Path::new(&current.user_data_dir),
+            current.bind_account_id.as_deref(),
+            current.model_routing.as_ref(),
+            "rollback-instance-model-routing",
+        )
+        .await
+        {
+            rollback_errors.push(rollback_error);
+        }
+        return Err(model_routing_update_error(error, rollback_errors));
     }
     Ok(CodexInstanceProfileView::from_profile(
         instance,
@@ -1827,6 +2146,21 @@ async fn codex_start_instance_internal(
 ) -> Result<CodexInstanceProfileView, String> {
     let _start_guard = CodexInstanceStartGuard::acquire(&instance_id)?;
     let mut launch_target = resolve_codex_instance_start_target(&instance_id)?;
+    let configured_launch_mode = if instance_id == DEFAULT_INSTANCE_ID {
+        modules::codex_instance::load_default_settings()?.launch_mode
+    } else {
+        modules::codex_instance::load_instance_store()?
+            .instances
+            .into_iter()
+            .find(|item| item.id == instance_id)
+            .map(|item| item.launch_mode)
+            .ok_or("实例不存在")?
+    };
+    validate_instance_model_routing(
+        launch_target.bind_account_id.as_deref(),
+        &configured_launch_mode,
+        launch_target.model_routing.as_ref(),
+    )?;
     launch_target.launch_operation = launch_operation.map(str::to_owned);
     emit_codex_instance_launch_progress(
         &app,
@@ -2044,6 +2378,11 @@ async fn codex_start_instance_internal(
             "cli-no-desktop"
         };
         modules::codex_local_access::stop_provider_gateways_for_profile(&default_dir).await;
+        restore_mixed_model_gateway_when_disabled(
+            &default_dir,
+            default_settings.model_routing.as_ref(),
+        )
+        .await?;
         modules::logger::log_info(&format!(
             "[Codex Start] default close phase finished, mode={}, elapsed_ms={}",
             close_mode,
@@ -2129,8 +2468,12 @@ async fn codex_start_instance_internal(
             serde_json::json!({}),
         );
         let provider_gateway_started = Instant::now();
-        ensure_provider_gateway_for_bind_account(&default_dir, default_bind_account_id.as_deref())
-            .await?;
+        ensure_provider_gateway_for_bind_account(
+            &default_dir,
+            default_bind_account_id.as_deref(),
+            default_settings.model_routing.as_ref(),
+        )
+        .await?;
         modules::logger::log_info(&format!(
             "[Codex Start] default provider gateway phase finished: elapsed_ms={}, total_ms={}",
             provider_gateway_started.elapsed().as_millis(),
@@ -2305,6 +2648,8 @@ async fn codex_start_instance_internal(
         let _ = modules::codex_instance::update_instance_pid(&instance.id, None)?;
     }
     modules::codex_local_access::stop_provider_gateways_for_profile(instance_dir).await;
+    restore_mixed_model_gateway_when_disabled(instance_dir, instance.model_routing.as_ref())
+        .await?;
     modules::logger::log_info(&format!(
         "[Codex Start] instance close/provider-stop phase finished: instance_id={}, elapsed_ms={}, total_ms={}",
         instance.id,
@@ -2383,8 +2728,12 @@ async fn codex_start_instance_internal(
         serde_json::json!({}),
     );
     let provider_gateway_started = Instant::now();
-    ensure_provider_gateway_for_bind_account(instance_dir, instance.bind_account_id.as_deref())
-        .await?;
+    ensure_provider_gateway_for_bind_account(
+        instance_dir,
+        instance.bind_account_id.as_deref(),
+        instance.model_routing.as_ref(),
+    )
+    .await?;
     modules::logger::log_info(&format!(
         "[Codex Start] instance provider gateway phase finished: instance_id={}, elapsed_ms={}, total_ms={}",
         instance.id,

@@ -241,6 +241,7 @@
             working_dir: None,
             extra_args: String::new(),
             bind_account_id: bind_account_id.map(str::to_string),
+            model_routing: None,
             launch_mode: InstanceLaunchMode::App,
             app_speed: CodexAppSpeed::Standard,
             created_at: 0,
@@ -1478,6 +1479,178 @@ supports_websockets = false
         );
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mixed_model_gateway_restore_preserves_refreshed_oauth_auth() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _env = LocalAccessTestDataGuard::new("codex-mixed-model-restore");
+        let profile_dir = make_temp_dir("codex-mixed-model-profile");
+        let api_key = "agt_codex_mixed_restore_test";
+        let original_config = "model = \"gpt-5.5\"\ncustom_setting = \"keep\"\n";
+        let original_auth = r#"{"tokens":{"id_token":"old-id","access_token":"old-access","refresh_token":"old-refresh"}}"#;
+        let refreshed_auth = r#"{"tokens":{"id_token":"new-id","access_token":"new-access","refresh_token":"new-refresh"}}"#;
+
+        fs::write(profile_dir.join(CODEX_PROFILE_CONFIG_FILE), original_config)
+            .expect("write original config");
+        fs::write(profile_dir.join(CODEX_PROFILE_AUTH_FILE), original_auth)
+            .expect("write original auth");
+        super::save_provider_gateway_profile_state(
+            &profile_dir,
+            super::MIXED_MODEL_ROUTING_RUNTIME_ID,
+            &super::ProviderGatewayProfileState {
+                api_key: api_key.to_string(),
+                created_at: 1,
+                updated_at: 1,
+            },
+        )
+        .expect("save mixed gateway state");
+        super::save_profile_takeover_backup(&profile_dir, api_key)
+            .expect("save mixed takeover backup");
+
+        let mixed_config = format!(
+            r#"model = "gpt-5.5"
+custom_setting = "keep"
+model_provider = "codex_local_access"
+model_catalog_json = "{}"
+
+[model_providers.codex_local_access]
+name = "Cockpit Mixed Model Routing"
+base_url = "http://127.0.0.1:14998/v1"
+wire_api = "responses"
+requires_openai_auth = false
+experimental_bearer_token = "{}"
+supports_websockets = false
+"#,
+            CODEX_LOCAL_ACCESS_MODEL_CATALOG_FILE, api_key
+        );
+        fs::write(profile_dir.join(CODEX_PROFILE_CONFIG_FILE), mixed_config)
+            .expect("write mixed config");
+        fs::write(profile_dir.join(CODEX_PROFILE_AUTH_FILE), refreshed_auth)
+            .expect("write refreshed OAuth auth");
+        for file_name in [
+            CODEX_LOCAL_ACCESS_AUTH_PROJECTION_FILE,
+            CODEX_LOCAL_ACCESS_MODEL_CATALOG_FILE,
+            CODEX_MODEL_CACHE_FILE,
+        ] {
+            fs::write(profile_dir.join(file_name), "managed").expect("write managed artifact");
+        }
+
+        assert!(super::restore_mixed_model_gateway_profile(&profile_dir).expect("restore mixed"));
+        let restored_config = fs::read_to_string(profile_dir.join(CODEX_PROFILE_CONFIG_FILE))
+            .expect("read restored config");
+        let restored_doc = restored_config
+            .parse::<toml_edit::Document>()
+            .expect("parse restored config");
+        assert_eq!(
+            restored_doc.get("model").and_then(|item| item.as_str()),
+            Some("gpt-5.5")
+        );
+        assert_eq!(
+            restored_doc
+                .get("custom_setting")
+                .and_then(|item| item.as_str()),
+            Some("keep")
+        );
+        assert!(restored_doc.get("model_provider").is_none());
+        assert!(restored_doc.get("model_catalog_json").is_none());
+        assert_eq!(
+            fs::read_to_string(profile_dir.join(CODEX_PROFILE_AUTH_FILE))
+                .expect("read refreshed auth"),
+            refreshed_auth
+        );
+        for file_name in [
+            CODEX_LOCAL_ACCESS_AUTH_PROJECTION_FILE,
+            CODEX_LOCAL_ACCESS_MODEL_CATALOG_FILE,
+            CODEX_MODEL_CACHE_FILE,
+        ] {
+            assert!(!profile_dir.join(file_name).exists());
+        }
+        assert!(!super::restore_mixed_model_gateway_profile(&profile_dir)
+            .expect("second restore is idempotent"));
+
+        fs::remove_dir_all(profile_dir).expect("cleanup mixed profile");
+    }
+
+    #[test]
+    fn mixed_model_activation_snapshot_restores_partial_takeover_failure() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _env = LocalAccessTestDataGuard::new("codex-mixed-model-start-rollback");
+        let profile_dir = make_temp_dir("codex-mixed-model-start-profile");
+        let api_key = "agt_codex_mixed_start_rollback";
+        let original_config = "model = \"gpt-5.5\"\ncustom_setting = \"keep\"\n";
+        let original_auth =
+            r#"{"tokens":{"id_token":"id","access_token":"access","refresh_token":"refresh"}}"#;
+        let provider_backup_path = super::provider_model_backup_path(&profile_dir);
+
+        fs::write(profile_dir.join(CODEX_PROFILE_CONFIG_FILE), original_config)
+            .expect("write original config");
+        fs::write(profile_dir.join(CODEX_PROFILE_AUTH_FILE), original_auth)
+            .expect("write original auth");
+        fs::write(
+            profile_dir.join(CODEX_LOCAL_ACCESS_MODEL_CATALOG_FILE),
+            "original-catalog",
+        )
+        .expect("write original catalog");
+        if let Some(parent) = provider_backup_path.parent() {
+            fs::create_dir_all(parent).expect("create provider backup dir");
+        }
+        fs::write(&provider_backup_path, "original-provider-backup")
+            .expect("write original provider backup");
+
+        let snapshot = super::capture_mixed_model_profile_activation_snapshot(&profile_dir, api_key)
+            .expect("capture activation snapshot");
+        super::save_profile_takeover_backup(&profile_dir, api_key)
+            .expect("save partial takeover backup");
+        fs::write(
+            profile_dir.join(CODEX_PROFILE_CONFIG_FILE),
+            "model_provider = \"codex_local_access\"\n",
+        )
+        .expect("write partial config");
+        fs::write(
+            profile_dir.join(CODEX_PROFILE_AUTH_FILE),
+            format!(r#"{{"auth_mode":"apikey","OPENAI_API_KEY":"{}"}}"#, api_key),
+        )
+        .expect("write partial auth");
+        fs::write(
+            profile_dir.join(CODEX_LOCAL_ACCESS_MODEL_CATALOG_FILE),
+            "partial-catalog",
+        )
+        .expect("write partial catalog");
+        fs::remove_file(&provider_backup_path).expect("remove provider backup");
+
+        super::rollback_mixed_model_profile_after_start_failure(&profile_dir, Some(snapshot))
+            .expect("rollback partial takeover");
+        assert_eq!(
+            fs::read_to_string(profile_dir.join(CODEX_PROFILE_CONFIG_FILE))
+                .expect("read rolled back config"),
+            original_config
+        );
+        assert_eq!(
+            fs::read_to_string(profile_dir.join(CODEX_PROFILE_AUTH_FILE))
+                .expect("read rolled back auth"),
+            original_auth
+        );
+        assert_eq!(
+            fs::read_to_string(profile_dir.join(CODEX_LOCAL_ACCESS_MODEL_CATALOG_FILE))
+                .expect("read rolled back catalog"),
+            "original-catalog"
+        );
+        assert_eq!(
+            fs::read_to_string(provider_backup_path).expect("read rolled back provider backup"),
+            "original-provider-backup"
+        );
+        assert!(super::load_takeover_backups()
+            .expect("load takeover backups")
+            .profiles
+            .iter()
+            .all(|backup| backup.profile_dir != super::normalize_profile_dir_key(&profile_dir)));
+
+        fs::remove_dir_all(profile_dir).expect("cleanup mixed profile");
     }
 
     #[test]

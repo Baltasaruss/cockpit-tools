@@ -502,7 +502,8 @@
         sidecar_local_account_usable_for_start, sidecar_payload_default_service_tier,
         sidecar_quota_reserve_snapshot_value, sidecar_routing_strategy_value, sidecar_stable_id,
         sidecar_usage_event_is_client_canceled, sidecar_usage_event_should_auto_restart,
-        supported_codex_model_ids, system_proxy_target_scheme, system_proxy_value_url,
+        supported_codex_model_ids, sync_provider_gateway_runtime_auth_file,
+        system_proxy_target_scheme, system_proxy_value_url,
         tool_declares_image_generation_capability, usage_event_from_row,
         validate_api_key_account_scope_update, validate_client_model_visible,
         validate_loaded_local_access_bound_oauth_account, visible_codex_model_ids_for_api_key,
@@ -538,6 +539,7 @@
         CodexLocalAccessAccountModelRule, CodexLocalAccessAccountWindowQuery,
         CodexLocalAccessApiKey, CodexLocalAccessClientBaseUrlHost,
         CodexLocalAccessCustomRoutingRule, CodexLocalAccessImageGenerationMode,
+        CodexLocalAccessModelRoute, CodexLocalAccessModelRouting,
         CodexLocalAccessProviderGateway, CodexLocalAccessQuotaReserve, CodexLocalAccessRequestKind,
         CodexLocalAccessRoutingStrategy, CodexLocalAccessStats, CodexLocalAccessStatsWindow,
         CodexLocalAccessTimeouts, CodexLocalAccessUsageEvent, CodexTokenBreakdown,
@@ -2558,6 +2560,64 @@ wire_api = "responses"
         panic!("create temp dir failed");
     }
 
+    struct LocalAccessTestDataGuard {
+        data_dir: PathBuf,
+        previous_test_data_dir: Option<String>,
+        previous_data_dir: Option<String>,
+        takeover_backup_path: PathBuf,
+        previous_takeover_backup: Option<Vec<u8>>,
+    }
+
+    impl LocalAccessTestDataGuard {
+        fn new(prefix: &str) -> Self {
+            let data_dir = make_temp_dir(prefix);
+            let previous_test_data_dir = std::env::var("COCKPIT_TOOLS_TEST_DATA_DIR").ok();
+            let previous_data_dir = std::env::var("COCKPIT_TOOLS_DATA_DIR").ok();
+            std::env::set_var("COCKPIT_TOOLS_TEST_DATA_DIR", &data_dir);
+            std::env::set_var("COCKPIT_TOOLS_DATA_DIR", &data_dir);
+
+            let takeover_backup_path =
+                super::local_access_takeover_backups_path().expect("resolve takeover backup path");
+            let previous_takeover_backup = fs::read(&takeover_backup_path).ok();
+            if takeover_backup_path.exists() {
+                fs::remove_file(&takeover_backup_path).expect("clear takeover backup for test");
+            }
+
+            Self {
+                data_dir,
+                previous_test_data_dir,
+                previous_data_dir,
+                takeover_backup_path,
+                previous_takeover_backup,
+            }
+        }
+    }
+
+    impl Drop for LocalAccessTestDataGuard {
+        fn drop(&mut self) {
+            match self.previous_test_data_dir.as_deref() {
+                Some(value) => std::env::set_var("COCKPIT_TOOLS_TEST_DATA_DIR", value),
+                None => std::env::remove_var("COCKPIT_TOOLS_TEST_DATA_DIR"),
+            }
+            match self.previous_data_dir.as_deref() {
+                Some(value) => std::env::set_var("COCKPIT_TOOLS_DATA_DIR", value),
+                None => std::env::remove_var("COCKPIT_TOOLS_DATA_DIR"),
+            }
+            match self.previous_takeover_backup.as_deref() {
+                Some(content) => {
+                    if let Some(parent) = self.takeover_backup_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    let _ = fs::write(&self.takeover_backup_path, content);
+                }
+                None => {
+                    let _ = fs::remove_file(&self.takeover_backup_path);
+                }
+            }
+            let _ = fs::remove_dir_all(&self.data_dir);
+        }
+    }
+
     fn test_account_with_plan(plan_type: &str) -> CodexAccount {
         let mut account = CodexAccount::new(
             format!("acc-{}", plan_type),
@@ -2789,6 +2849,41 @@ wire_api = "responses"
     }
 
     #[test]
+    fn provider_gateway_runtime_auth_sync_rewrites_access_token_without_refresh_token() {
+        let sidecar_dir = make_temp_dir("codex-provider-runtime-auth-sync");
+        let auths_dir = sidecar_auths_dir(&sidecar_dir);
+        fs::create_dir_all(&auths_dir).expect("create auths dir");
+        let mut account = test_account_with_plan("plus");
+        account.tokens.access_token = "access-before".to_string();
+        account.tokens.refresh_token = Some("refresh-must-not-leak".to_string());
+        let collection = test_local_access_collection(vec![account.id.clone()]);
+        let auth_path = auths_dir.join(sidecar_auth_file_name(&account.id));
+        fs::write(&auth_path, "{}").expect("write existing auth file");
+
+        account.tokens.access_token = "access-after".to_string();
+        assert!(
+            sync_provider_gateway_runtime_auth_file(&account, &collection, &sidecar_dir)
+                .expect("sync provider runtime auth")
+        );
+
+        let auth: Value = serde_json::from_str(
+            &fs::read_to_string(&auth_path).expect("read provider runtime auth"),
+        )
+        .expect("parse provider runtime auth");
+        assert_eq!(
+            auth.get("access_token").and_then(Value::as_str),
+            Some("access-after")
+        );
+        assert_eq!(auth.get("refresh_token").and_then(Value::as_str), Some(""));
+        assert_eq!(
+            auth.get("refresh_owner").and_then(Value::as_str),
+            Some("cockpit_token_authority")
+        );
+
+        fs::remove_dir_all(sidecar_dir).expect("cleanup provider runtime auth sync");
+    }
+
+    #[test]
     fn sidecar_agent_identity_auth_json_preserves_signing_credentials_without_tokens() {
         let mut account = CodexAccount::new(
             "agent-account".to_string(),
@@ -2932,9 +3027,10 @@ wire_api = "responses"
                 upstream_models: vec!["deepseek-v4-pro".to_string()],
                 wire_api: Some("chat_completions".to_string()),
                 supports_vision: false,
-                model_capabilities: HashMap::new(),
-                vision_routing_model: None,
-            }),
+            model_capabilities: HashMap::new(),
+            vision_routing_model: None,
+        }),
+            model_routing: None,
             inherit_account_pool: Some(false),
             account_ids: vec!["deepseek-account".to_string()],
             priority_account_ids: Vec::new(),
@@ -2954,4 +3050,70 @@ wire_api = "responses"
         collection.responses_websockets_enabled = true;
         assert!(!profile_api_key_supports_websockets(&collection, "deepseek-local-key"));
         assert!(profile_api_key_supports_websockets(&collection, &collection.api_key));
+    }
+
+    #[test]
+    fn mixed_model_routing_manifest_keeps_oauth_default_and_disables_websockets() {
+        let mut collection = test_local_access_collection(vec!["oauth-account".to_string()]);
+        collection.bound_oauth_account_id = Some("oauth-account".to_string());
+        collection.responses_websockets_enabled = true;
+        let mut api_key = build_local_access_api_key(Some("Mixed"));
+        api_key.key = "mixed-local-key".to_string();
+        api_key.inherit_account_pool = Some(false);
+        api_key.account_ids = vec!["oauth-account".to_string()];
+        api_key.provider_gateway = None;
+        api_key.model_routing = Some(CodexLocalAccessModelRouting {
+            default_route: "oauth".to_string(),
+            failure_policy: "strict".to_string(),
+            routes: vec![CodexLocalAccessModelRoute {
+                id: "route-cpa".to_string(),
+                namespace: "cpa".to_string(),
+                provider_account_id: "cpa-account".to_string(),
+                provider_gateway: CodexLocalAccessProviderGateway {
+                    base_url: "https://cpa.example.com/v1".to_string(),
+                    api_key: "sk-cpa".to_string(),
+                    upstream_model: "gpt-5.5".to_string(),
+                    upstream_models: vec!["gpt-5.5".to_string(), "grok-4.6".to_string()],
+                    wire_api: Some("responses".to_string()),
+                    supports_vision: false,
+                    model_capabilities: HashMap::new(),
+                    vision_routing_model: None,
+                },
+            }],
+        });
+        collection.api_keys = vec![api_key];
+
+        let mixed = sidecar_api_key_manifest_values(&collection)
+            .into_iter()
+            .find(|value| value.get("key").and_then(Value::as_str) == Some("mixed-local-key"))
+            .expect("mixed routing key should be emitted");
+        assert!(mixed.get("providerGateway").and_then(Value::as_object).is_none());
+        assert_eq!(
+            mixed
+                .pointer("/modelRouting/defaultRoute")
+                .and_then(Value::as_str),
+            Some("oauth")
+        );
+        assert_eq!(
+            mixed
+                .pointer("/modelRouting/failurePolicy")
+                .and_then(Value::as_str),
+            Some("strict")
+        );
+        assert_eq!(
+            mixed
+                .pointer("/modelRouting/routes/0/namespace")
+                .and_then(Value::as_str),
+            Some("cpa")
+        );
+        assert_eq!(
+            mixed
+                .get("responsesWebsockets")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(!profile_api_key_supports_websockets(
+            &collection,
+            "mixed-local-key"
+        ));
     }

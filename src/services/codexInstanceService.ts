@@ -25,7 +25,11 @@ import type {
   CodexExperimentalModelDefinition,
   CodexAppSpeed,
 } from "../types/codex";
-import type { InstanceLaunchMode, InstanceProfile } from "../types/instance";
+import type {
+  CodexInstanceModelRouting,
+  InstanceLaunchMode,
+  InstanceProfile,
+} from "../types/instance";
 
 const service = createPlatformInstanceService("codex");
 
@@ -70,6 +74,7 @@ export async function createInstance(payload: {
   workingDir?: string | null;
   extraArgs?: string;
   bindAccountId?: string | null;
+  modelRouting?: CodexInstanceModelRouting | null;
   launchMode?: InstanceLaunchMode;
   appSpeed?: CodexAppSpeed;
   copySourceInstanceId: string;
@@ -81,6 +86,7 @@ export async function createInstance(payload: {
     workingDir: payload.workingDir ?? null,
     extraArgs: payload.extraArgs ?? "",
     bindAccountId: payload.bindAccountId ?? null,
+    modelRouting: payload.modelRouting ?? null,
     launchMode: payload.launchMode ?? "app",
     appSpeed: payload.appSpeed ?? "standard",
     copySourceInstanceId: payload.copySourceInstanceId,
@@ -94,6 +100,7 @@ export async function updateInstance(payload: {
   workingDir?: string | null;
   extraArgs?: string;
   bindAccountId?: string | null;
+  modelRouting?: CodexInstanceModelRouting | null;
   followLocalAccount?: boolean;
   launchMode?: InstanceLaunchMode;
   appSpeed?: CodexAppSpeed;
@@ -114,6 +121,9 @@ export async function updateInstance(payload: {
   }
   if (payload.bindAccountId !== undefined) {
     body.bindAccountId = payload.bindAccountId;
+  }
+  if (payload.modelRouting !== undefined) {
+    body.modelRouting = payload.modelRouting;
   }
   if (payload.followLocalAccount !== undefined) {
     body.followLocalAccount = payload.followLocalAccount;

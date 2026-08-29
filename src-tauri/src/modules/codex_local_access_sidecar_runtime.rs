@@ -220,10 +220,7 @@ async fn update_sidecar_account_health(event: &SidecarUsageEvent) {
     .await;
 }
 
-async fn update_sidecar_auth_result_health(
-    event: &SidecarAuthResultEvent,
-    pool_diagnostic: bool,
-) {
+async fn update_sidecar_auth_result_health(event: &SidecarAuthResultEvent, pool_diagnostic: bool) {
     let is_client_canceled = event
         .error_message
         .as_deref()
@@ -286,10 +283,7 @@ fn is_account_pool_unavailable_error(event: &SidecarAuthResultEvent) -> bool {
 
 // Pool selection can fail before Sidecar chooses an auth, so account_id is correctly empty.
 // Keep that state separately instead of discarding it or blaming an arbitrary account.
-async fn update_sidecar_account_pool_health(
-    event: &SidecarAuthResultEvent,
-    pool_diagnostic: bool,
-) {
+async fn update_sidecar_account_pool_health(event: &SidecarAuthResultEvent, pool_diagnostic: bool) {
     let mut runtime = gateway_runtime().lock().await;
     apply_sidecar_account_pool_health(&mut runtime, event, pool_diagnostic, now_ms());
 }
@@ -1152,7 +1146,7 @@ fn profile_api_key_supports_websockets(
             .api_keys
             .iter()
             .find(|item| item.enabled && item.key.trim() == api_key.trim())
-            .map(|item| item.provider_gateway.is_none())
+            .map(|item| item.provider_gateway.is_none() && item.model_routing.is_none())
             .unwrap_or(true)
 }
 
@@ -1545,6 +1539,7 @@ fn build_local_access_api_key(label: Option<&str>) -> CodexLocalAccessApiKey {
         label: normalize_api_key_label(label, &default_local_api_key_label()),
         key: generate_local_api_key(),
         provider_gateway: None,
+        model_routing: None,
         inherit_account_pool: Some(true),
         account_ids: Vec::new(),
         priority_account_ids: Vec::new(),
@@ -1576,6 +1571,7 @@ fn normalize_collection_api_keys(collection: &mut CodexLocalAccessCollection) ->
             label: default_local_api_key_label(),
             key,
             provider_gateway: None,
+            model_routing: None,
             inherit_account_pool: Some(true),
             account_ids: Vec::new(),
             priority_account_ids: Vec::new(),

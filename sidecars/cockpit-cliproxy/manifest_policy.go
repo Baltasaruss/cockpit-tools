@@ -113,6 +113,7 @@ type apiKeySpec struct {
 	Label               string               `json:"label"`
 	Key                 string               `json:"key"`
 	ProviderGateway     *providerGatewaySpec `json:"providerGateway,omitempty"`
+	ModelRouting        *modelRoutingSpec    `json:"modelRouting,omitempty"`
 	BoundOAuth          bool                 `json:"boundOAuth,omitempty"`
 	AccountIDs          []string             `json:"accountIds"`
 	ModelPrefix         string               `json:"modelPrefix,omitempty"`
@@ -122,6 +123,19 @@ type apiKeySpec struct {
 	TokenLimit          uint64               `json:"tokenLimit,omitempty"`
 	TokenUsed           uint64               `json:"tokenUsed,omitempty"`
 	Enabled             bool                 `json:"enabled"`
+}
+
+type modelRoutingSpec struct {
+	DefaultRoute  string           `json:"defaultRoute"`
+	FailurePolicy string           `json:"failurePolicy"`
+	Routes        []modelRouteSpec `json:"routes"`
+}
+
+type modelRouteSpec struct {
+	ID                string               `json:"id"`
+	Namespace         string               `json:"namespace"`
+	ProviderAccountID string               `json:"providerAccountId"`
+	ProviderGateway   *providerGatewaySpec `json:"providerGateway"`
 }
 
 type apiKeyTokenState struct {
@@ -776,18 +790,34 @@ func loadManifest(path string) (*manifest, error) {
 		}
 		m.APIKeys[i].Key = key
 		if gateway := m.APIKeys[i].ProviderGateway; gateway != nil {
-			gateway.BaseURL = strings.TrimSpace(gateway.BaseURL)
-			gateway.APIKey = strings.TrimSpace(gateway.APIKey)
-			gateway.UpstreamModel = strings.TrimSpace(gateway.UpstreamModel)
-			gateway.UpstreamModels = normalizeStringList(gateway.UpstreamModels)
-			gateway.VisionRoutingModel = strings.TrimSpace(gateway.VisionRoutingModel)
-			if len(gateway.UpstreamModels) == 0 && gateway.UpstreamModel != "" {
-				gateway.UpstreamModels = []string{gateway.UpstreamModel}
-			}
-			gateway.WireAPI = normalizeProviderGatewayWireAPI(gateway.WireAPI)
-			gateway.ModelCapabilities = normalizeProviderGatewayModelCapabilities(gateway.ModelCapabilities)
-			if gateway.BaseURL == "" || gateway.APIKey == "" {
+			if !normalizeProviderGatewaySpec(gateway) {
 				m.APIKeys[i].ProviderGateway = nil
+			}
+		}
+		if routing := m.APIKeys[i].ModelRouting; routing != nil {
+			routing.DefaultRoute = strings.ToLower(strings.TrimSpace(routing.DefaultRoute))
+			routing.FailurePolicy = strings.ToLower(strings.TrimSpace(routing.FailurePolicy))
+			seenNamespaces := make(map[string]struct{}, len(routing.Routes))
+			routes := make([]modelRouteSpec, 0, len(routing.Routes))
+			for _, route := range routing.Routes {
+				route.ID = strings.TrimSpace(route.ID)
+				route.Namespace = strings.ToLower(strings.Trim(strings.TrimSpace(route.Namespace), "/"))
+				route.ProviderAccountID = strings.TrimSpace(route.ProviderAccountID)
+				if route.ID == "" || route.Namespace == "" || strings.Contains(route.Namespace, "/") {
+					continue
+				}
+				if _, exists := seenNamespaces[route.Namespace]; exists {
+					continue
+				}
+				if route.ProviderGateway == nil || !normalizeProviderGatewaySpec(route.ProviderGateway) {
+					continue
+				}
+				seenNamespaces[route.Namespace] = struct{}{}
+				routes = append(routes, route)
+			}
+			routing.Routes = routes
+			if routing.DefaultRoute != "oauth" || routing.FailurePolicy != "strict" || len(routes) == 0 {
+				m.APIKeys[i].ModelRouting = nil
 			}
 		}
 		m.apiKeyByValue[key] = &m.APIKeys[i]
@@ -848,6 +878,23 @@ func loadManifest(path string) (*manifest, error) {
 		m.AccountModelRules[index].ExcludedModels = normalizeStringList(m.AccountModelRules[index].ExcludedModels)
 	}
 	return &m, nil
+}
+
+func normalizeProviderGatewaySpec(gateway *providerGatewaySpec) bool {
+	if gateway == nil {
+		return false
+	}
+	gateway.BaseURL = strings.TrimSpace(gateway.BaseURL)
+	gateway.APIKey = strings.TrimSpace(gateway.APIKey)
+	gateway.UpstreamModel = strings.TrimSpace(gateway.UpstreamModel)
+	gateway.UpstreamModels = normalizeStringList(gateway.UpstreamModels)
+	gateway.VisionRoutingModel = strings.TrimSpace(gateway.VisionRoutingModel)
+	if len(gateway.UpstreamModels) == 0 && gateway.UpstreamModel != "" {
+		gateway.UpstreamModels = []string{gateway.UpstreamModel}
+	}
+	gateway.WireAPI = normalizeProviderGatewayWireAPI(gateway.WireAPI)
+	gateway.ModelCapabilities = normalizeProviderGatewayModelCapabilities(gateway.ModelCapabilities)
+	return gateway.BaseURL != "" && gateway.APIKey != "" && len(gateway.UpstreamModels) > 0
 }
 
 func normalizeStringList(values []string) []string {
@@ -1788,6 +1835,11 @@ func rewriteBodyModel(m *manifest, spec *apiKeySpec, body []byte) ([]byte, strin
 	if model == "" {
 		return nil, "", nil
 	}
+	if _, _, status := resolveModelRouting(spec, model); status != "none" {
+		// Keep the namespaced client model intact so the executor can route
+		// before OAuth catalog canonicalization strips the namespace.
+		return nil, model, nil
+	}
 	canonical := canonicalModelForClientModel(m, spec, model)
 	if !validateClientModelVisible(m, spec, model, canonical) {
 		return nil, model, fmt.Errorf("模型 %s 不在当前 API Key 的可用模型范围内", model)
@@ -1822,6 +1874,17 @@ func visibleModelsForAPIKey(m *manifest, spec *apiKeySpec) []string {
 		return normalizeStringList(models)
 	}
 	models := applyModelFilters(m.ModelIDs, nil, m.ExcludedModels)
+	if spec != nil && spec.ModelRouting != nil {
+		for _, route := range spec.ModelRouting.Routes {
+			if route.ProviderGateway == nil {
+				continue
+			}
+			for _, upstreamModel := range route.ProviderGateway.UpstreamModels {
+				models = append(models, route.Namespace+"/"+upstreamModel)
+			}
+		}
+		models = normalizeStringList(models)
+	}
 	if spec != nil {
 		models = applyModelFilters(models, spec.AllowedModels, spec.ExcludedModels)
 		if strings.TrimSpace(spec.ModelPrefix) != "" {
