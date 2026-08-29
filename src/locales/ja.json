@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "下のボタンをクリックして、ブラウザで Cursor の認可を完了してください。"
+    },
+    "filters": {
+      "quotaFailed": "クォータ照会に失敗（{{count}}）",
+      "cleanQuotaFailedAction": "クォータ照会に失敗したアカウントを削除（{{count}}）",
+      "cleanQuotaFailedConfirm": "クォータ照会に失敗した{{count}}件のアカウントをすべて削除しますか？"
     }
   },
   "breakout": {

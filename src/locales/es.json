@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Haz clic en el botón de abajo y completa la autorización de Cursor en el navegador."
+    },
+    "filters": {
+      "quotaFailed": "Error al consultar la cuota ({{count}})",
+      "cleanQuotaFailedAction": "Eliminar cuentas con error de cuota ({{count}})",
+      "cleanQuotaFailedConfirm": "¿Eliminar las {{count}} cuentas cuya consulta de cuota falló?"
     }
   },
   "breakout": {

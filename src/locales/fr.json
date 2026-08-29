@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Cliquez sur le bouton ci-dessous et terminez l'autorisation Cursor dans le navigateur."
+    },
+    "filters": {
+      "quotaFailed": "Échec de la requête de quota ({{count}})",
+      "cleanQuotaFailedAction": "Supprimer les comptes dont la requête de quota a échoué ({{count}})",
+      "cleanQuotaFailedConfirm": "Supprimer les {{count}} compte(s) dont la requête de quota a échoué ?"
     }
   },
   "breakout": {

@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "點擊下方按鈕，在瀏覽器中完成 Cursor 授權登入。"
+    },
+    "filters": {
+      "quotaFailed": "配額查詢失敗 ({{count}})",
+      "cleanQuotaFailedAction": "刪除配額查詢失敗的帳號 ({{count}})",
+      "cleanQuotaFailedConfirm": "確定要刪除全部 {{count}} 個配額查詢失敗的帳號嗎？"
     }
   },
   "breakout": {

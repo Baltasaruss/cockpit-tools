@@ -463,8 +463,6 @@ QQ 交流群、微信群或新建的 Telegram 畅聊群都可以加入。
 - Codex 模型目录、前端模型显示、loopback CDP 诊断、官方 live auth 保留策略，以及历史会话 Provider、SQLite 本地目录和工作区状态修复方向参考：[CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus)
 - Codex 受管模型目录中展示实验模型的思路参考：[gptsolwm](https://github.com/yynxxxxx/gptsolwm)
 - Claude 可选登录 helper 运行时基于：[Electron](https://github.com/electron/electron)
-- 感谢 [@longwQaQ](https://github.com/longwQaQ) 贡献 Codex 模型供应商 Responses WebSocket 配置能力（[#1512](https://github.com/jlcodes99/cockpit-tools/pull/1512)）。
-- 感谢 [@sqmw](https://github.com/sqmw) 在 Trae CN 账号支持方向上的贡献（OAuth/本机导入、pay v2 配额与速通展示、CN 产品类型等实现思路），已整合进统一 Trae 套件（[#1281](https://github.com/jlcodes99/cockpit-tools/pull/1281)）。
 
 感谢项目作者的开源贡献！如果这些项目对你有帮助，也请给他们点个 ⭐ Star 支持一下！
 

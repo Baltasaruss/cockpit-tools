@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "아래 버튼을 클릭하고 브라우저에서 Cursor 인증을 완료하세요."
+    },
+    "filters": {
+      "quotaFailed": "할당량 조회 실패 ({{count}})",
+      "cleanQuotaFailedAction": "할당량 조회 실패 계정 삭제 ({{count}})",
+      "cleanQuotaFailedConfirm": "할당량 조회에 실패한 계정 {{count}}개를 모두 삭제하시겠습니까?"
     }
   },
   "breakout": {

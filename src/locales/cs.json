@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Klikněte na tlačítko níže a dokončete autorizaci Cursor v prohlížeči."
+    },
+    "filters": {
+      "quotaFailed": "Dotaz kvóty selhal ({{count}})",
+      "cleanQuotaFailedAction": "Smazat účty s neúspěšným dotazem kvóty ({{count}})",
+      "cleanQuotaFailedConfirm": "Odstranit všech {{count}} účtů, u kterých selhal dotaz kvóty?"
     }
   },
   "breakout": {

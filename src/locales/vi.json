@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Nhấn nút bên dưới và hoàn tất ủy quyền Cursor trong trình duyệt."
+    },
+    "filters": {
+      "quotaFailed": "Truy vấn hạn ngạch thất bại ({{count}})",
+      "cleanQuotaFailedAction": "Xóa tài khoản có truy vấn hạn ngạch thất bại ({{count}})",
+      "cleanQuotaFailedConfirm": "Xóa tất cả {{count}} tài khoản có truy vấn hạn ngạch thất bại?"
     }
   },
   "breakout": {

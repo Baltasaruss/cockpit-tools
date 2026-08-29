@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Kliknij przycisk poniżej i dokończ autoryzację Cursor w przeglądarce."
+    },
+    "filters": {
+      "quotaFailed": "Zapytanie o limit nie powiodło się ({{count}})",
+      "cleanQuotaFailedAction": "Usuń konta z nieudanym zapytaniem o limit ({{count}})",
+      "cleanQuotaFailedConfirm": "Usunąć wszystkie {{count}} kont, dla których zapytanie o limit nie powiodło się?"
     }
   },
   "breakout": {

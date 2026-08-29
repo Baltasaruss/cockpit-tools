@@ -4884,6 +4884,11 @@
     },
     "oauth": {
       "desc": "انقر الزر أدناه لإكمال تفويض Cursor في المتصفح."
+    },
+    "filters": {
+      "quotaFailed": "فشل الاستعلام عن الحصة ({{count}})",
+      "cleanQuotaFailedAction": "حذف الحسابات التي فشل الاستعلام عن حصتها ({{count}})",
+      "cleanQuotaFailedConfirm": "هل تريد حذف جميع الحسابات {{count}} التي فشل الاستعلام عن حصتها؟"
     }
   },
   "breakout": {

@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Aşağıdaki düğmeye tıklayın ve tarayıcıda Cursor yetkilendirmesini tamamlayın."
+    },
+    "filters": {
+      "quotaFailed": "Kota sorgusu başarısız ({{count}})",
+      "cleanQuotaFailedAction": "Kota sorgusu başarısız olan hesapları sil ({{count}})",
+      "cleanQuotaFailedConfirm": "Kota sorgusu başarısız olan {{count}} hesabın tümü silinsin mi?"
     }
   },
   "breakout": {

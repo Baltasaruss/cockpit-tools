@@ -4990,6 +4990,11 @@
       "desc": "Kelola akun Cursor dengan mengimpor dari instalasi Cursor lokal, menempelkan token JWT, atau masuk melalui OAuth.",
       "reason": "Cakupan izin: baca dan tulis penyimpanan auth lokal Cursor (state.vscdb) untuk impor akun dan injeksi token (penggantian akun).",
       "storage": "Cakupan jaringan: saat menyegarkan kuota, JWT dikirim ke API resmi cursor.com untuk mengambil penggunaan, info pengguna, dan data langganan. Tidak ada data yang dikirim ke server pihak ketiga."
+    },
+    "filters": {
+      "quotaFailed": "Permintaan kuota gagal ({{count}})",
+      "cleanQuotaFailedAction": "Hapus akun dengan permintaan kuota gagal ({{count}})",
+      "cleanQuotaFailedConfirm": "Hapus semua {{count}} akun yang permintaan kuotanya gagal?"
     }
   },
   "breakout": {

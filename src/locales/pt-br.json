@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Clique no botão abaixo e conclua a autorização do Cursor no navegador."
+    },
+    "filters": {
+      "quotaFailed": "Falha na consulta de cota ({{count}})",
+      "cleanQuotaFailedAction": "Excluir contas com falha na consulta de cota ({{count}})",
+      "cleanQuotaFailedConfirm": "Excluir todas as {{count}} conta(s) com falha na consulta de cota?"
     }
   },
   "breakout": {

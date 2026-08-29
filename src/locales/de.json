@@ -4837,6 +4837,11 @@
     },
     "oauth": {
       "desc": "Klicken Sie auf die Schaltfläche unten und schließen Sie die Cursor-Autorisierung im Browser ab."
+    },
+    "filters": {
+      "quotaFailed": "Kontingentabfrage fehlgeschlagen ({{count}})",
+      "cleanQuotaFailedAction": "Kontingentabfrage-fehlgeschlagene Konten löschen ({{count}})",
+      "cleanQuotaFailedConfirm": "Alle {{count}} Konto/Konten mit fehlgeschlagener Kontingentabfrage löschen?"
     }
   },
   "breakout": {
