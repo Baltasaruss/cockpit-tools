@@ -637,3 +637,42 @@
     width: 100%;
   }
 }
+
+/* Row actions layout in launch preview */
+.codex-model-routing-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* Modal header actions & switch */
+.codex-model-routing-modal__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.codex-model-routing-modal__switch-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.codex-model-routing-modal__switch-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Row title & switch layout in launch preview */
+.codex-model-routing-row__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.codex-model-routing-row__title-row h3 {
+  margin: 0;
+}

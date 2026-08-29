@@ -978,6 +978,8 @@ export function CodexModelRoutingEditor({
 
 export function CodexModelRoutingModal({
   open,
+  enabled = true,
+  onEnabledChange,
   routes,
   accounts,
   onClose,
@@ -1024,14 +1026,31 @@ export function CodexModelRoutingModal({
               )}
             </p>
           </div>
-          <button
-            type="button"
-            className="modal-close"
-            onClick={onClose}
-            aria-label={t("common.close", "关闭")}
-          >
-            <X size={16} />
-          </button>
+          <div className="codex-model-routing-modal__header-actions">
+            {onEnabledChange && (
+              <div className="codex-model-routing-modal__switch-wrap">
+                <span className="codex-model-routing-modal__switch-label">
+                  {enabled ? t("common.enabled", "已开启") : t("common.disabled", "已关闭")}
+                </span>
+                <label className="codex-model-routing__switch" title={enabled ? "点击停用第三方路由" : "点击开启第三方路由"}>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => onEnabledChange(e.target.checked)}
+                  />
+                  <span className="codex-model-routing__switch-track" aria-hidden="true" />
+                </label>
+              </div>
+            )}
+            <button
+              type="button"
+              className="modal-close"
+              onClick={onClose}
+              aria-label={t("common.close", "关闭")}
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="modal-body">
@@ -1250,7 +1269,10 @@ export function CodexModelRoutingFields({
             <GitBranch size={16} />
           </div>
           <div className="codex-launch-preview-tool-copy">
-            <h3>{t("instances.form.modelRouting.title", "第三方 API 路由")}</h3>
+            <div className="codex-model-routing-row__title-row">
+              <h3>{t("instances.form.modelRouting.title", "第三方 API 路由")}</h3>
+              {switchControl}
+            </div>
             <p>
               {t(
                 "instances.form.modelRouting.rowSummary",
@@ -1286,7 +1308,7 @@ export function CodexModelRoutingFields({
             className="btn btn-outline btn-sm codex-launch-preview-tool-action"
             onClick={() => {
               if (!enabled) {
-                enableWithDefaultRoute(true);
+                enableWithDefaultRoute(false);
               }
               setModalOpen(true);
             }}
