@@ -1,3 +1,5 @@
+import type { TFunction } from "i18next";
+import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { GitBranch, Info, Plus, RefreshCw, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -976,6 +978,40 @@ export function CodexModelRoutingEditor({
   );
 }
 
+
+async function confirmRoutingToggle(
+  nextEnabled: boolean,
+  t: TFunction,
+): Promise<boolean> {
+  const title = nextEnabled
+    ? t("instances.form.modelRouting.confirmEnableTitle", "开启第三方 API 路由？")
+    : t("instances.form.modelRouting.confirmDisableTitle", "关闭第三方 API 路由？");
+  const message = nextEnabled
+    ? t(
+        "instances.form.modelRouting.confirmEnableMessage",
+        "开启后将启动本地分流网关。使用第三方模型需保持 Cockpit Tools 在后台常驻运行，退出软件将导致第三方请求失败（官方模型直连不受影响）。\n\n确认开启吗？",
+      )
+    : t(
+        "instances.form.modelRouting.confirmDisableMessage",
+        "关闭后将停止本地网关并恢复为 100% 官方原生直连，所有第三方模型将不可用。\n\n确认关闭吗？",
+      );
+  const okLabel = nextEnabled
+    ? t("instances.form.modelRouting.confirmEnableAction", "确认开启")
+    : t("instances.form.modelRouting.confirmDisableAction", "确认关闭");
+  const cancelLabel = t("common.cancel", "取消");
+
+  try {
+    return await confirmDialog(message, {
+      title,
+      okLabel,
+      cancelLabel,
+      kind: nextEnabled ? "info" : "warning",
+    });
+  } catch {
+    return window.confirm();
+  }
+}
+
 export function CodexModelRoutingModal({
   open,
   enabled = true,
@@ -989,6 +1025,13 @@ export function CodexModelRoutingModal({
 }: CodexModelRoutingModalProps) {
   const { t } = useTranslation();
   const [draftRoutes, setDraftRoutes] = useState<CodexInstanceApiRoute[]>([]);
+
+  const handleModalToggle = async (nextEnabled: boolean) => {
+    if (!onEnabledChange || nextEnabled === enabled) return;
+    const confirmed = await confirmRoutingToggle(nextEnabled, t);
+    if (!confirmed) return;
+    onEnabledChange(nextEnabled);
+  };
 
   useMemo(() => {
     if (open) {
@@ -1032,11 +1075,18 @@ export function CodexModelRoutingModal({
                 <span className="codex-model-routing-modal__switch-label">
                   {enabled ? t("common.enabled", "已开启") : t("common.disabled", "已关闭")}
                 </span>
-                <label className="codex-model-routing__switch" title={enabled ? "点击停用第三方路由" : "点击开启第三方路由"}>
+                <label
+                  className="codex-model-routing__switch"
+                  title={enabled ? t("instances.form.modelRouting.clickToDisable", "点击关闭第三方路由") : t("instances.form.modelRouting.clickToEnable", "点击开启第三方路由")}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void handleModalToggle(!enabled);
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={enabled}
-                    onChange={(e) => onEnabledChange(e.target.checked)}
+                    onChange={() => {}}
                   />
                   <span className="codex-model-routing__switch-track" aria-hidden="true" />
                 </label>
@@ -1242,12 +1292,20 @@ export function CodexModelRoutingFields({
     }
   };
 
+  const handleToggle = async (nextEnabled: boolean) => {
+    if (nextEnabled === enabled) return;
+    const confirmed = await confirmRoutingToggle(nextEnabled, t);
+    if (!confirmed) return;
+    enableWithDefaultRoute(nextEnabled);
+  };
+
   const switchControl = (
     <label
       className="codex-model-routing__switch"
+      title={enabled ? t("instances.form.modelRouting.clickToDisable", "点击关闭第三方路由") : t("instances.form.modelRouting.clickToEnable", "点击开启第三方路由")}
       onClick={(event) => {
         event.preventDefault();
-        enableWithDefaultRoute(!enabled);
+        void handleToggle(!enabled);
       }}
     >
       <input
