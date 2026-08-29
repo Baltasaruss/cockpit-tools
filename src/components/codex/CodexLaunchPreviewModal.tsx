@@ -23,8 +23,22 @@ import { useTranslation } from "react-i18next";
 import { useEscClose } from "../../hooks/useEscClose";
 import {
   saveCodexInstanceQuickConfig,
+  saveCodexInstanceConfiguration,
   getCodexInstanceQuickConfig,
 } from "../../services/codexInstanceService";
+import { useCodexAccountStore } from "../../stores/useCodexAccountStore";
+import { useCodexInstanceStore } from "../../stores/useCodexInstanceStore";
+import type { CodexInstanceApiRoute } from "../../types/instance";
+import {
+  CodexModelRoutingFields,
+  buildCodexModelRoutingValue,
+  createCodexModelSourceResolver,
+  collectRouteUpstreamModels,
+  eligibleCodexModelRoutingAccounts,
+  shortCodexRouteAccountLabel,
+  syncExperimentalModelsWithRouting,
+  toggleRouteModelInRoutes,
+} from "./CodexModelRoutingFields";
 import { forceRefreshCodexTokens } from "../../services/codexService";
 import { requestCodexOpenAddAccount } from "../../utils/codexAddAccountRequest";
 import type {
@@ -42,7 +56,6 @@ import {
 import { getCodexJwtExpiration } from "../../utils/codexSwitchAuthFailure";
 import type { UnifiedQuotaMetric } from "../../presentation/platformAccountPresentation";
 import { buildCodexAccountPresentation } from "../../presentation/platformAccountPresentation";
-import { useCodexAccountStore } from "../../stores/useCodexAccountStore";
 import { ModalErrorMessage, useModalErrorState } from "../ModalErrorMessage";
 import {
   SingleSelectDropdown,
@@ -154,7 +167,53 @@ export function CodexLaunchPreviewModal({
     useState<CodexAccount | null>(null);
   const [modelConfigSnapshot, setModelConfigSnapshot] =
     useState<ModelConfigSnapshot | null>(null);
+  const [routingEnabled, setRoutingEnabled] = useState(false);
+  const [routingRoutes, setRoutingRoutes] = useState<CodexInstanceApiRoute[]>(
+    [],
+  );
   const [notice, setNotice] = useState<string | null>(null);
+  const accounts = useCodexAccountStore((state) => state.accounts);
+  const fetchAccounts = useCodexAccountStore((state) => state.fetchAccounts);
+  const instances = useCodexInstanceStore((state) => state.instances);
+  const selectedInstance = useMemo(
+    () =>
+      instances.find((item) => item.id === instanceId) ??
+      (instanceId === DEFAULT_CODEX_INSTANCE_ID
+        ? instances.find((item) => item.isDefault)
+        : undefined),
+    [instanceId, instances],
+  );
+  const resolveModelSource = useMemo(
+    () =>
+      createCodexModelSourceResolver(
+        routingRoutes,
+        accounts,
+        t,
+      ),
+    [accounts, routingRoutes, t],
+  );
+  const availableChannels = useMemo(() => {
+    const providerAccounts = eligibleCodexModelRoutingAccounts(accounts);
+    return routingRoutes
+      .filter((route) => route.enabled)
+      .map((route) => {
+        const provider = providerAccounts.find(
+          (acc) => acc.id === route.providerAccountId,
+        );
+        const upstreamModels = collectRouteUpstreamModels(route, provider);
+        const name = shortCodexRouteAccountLabel(
+          provider,
+          provider?.email,
+        );
+        return {
+          id: route.id,
+          namespace: route.namespace,
+          providerName: name,
+          models: route.selectedModels ?? upstreamModels,
+        };
+      })
+      .filter((group) => group.models.length > 0);
+  }, [accounts, routingRoutes]);
   const {
     message: error,
     scrollKey: errorScrollKey,
@@ -202,9 +261,24 @@ export function CodexLaunchPreviewModal({
     setNotice(null);
     setManualRefreshResult(null);
     setManualRefreshedAccount(null);
+    const routing = selectedInstance?.modelRouting;
+    setRoutingEnabled(Boolean(routing?.enabled));
+    setRoutingRoutes(routing?.routes?.map((route) => ({ ...route })) ?? []);
     void getCodexInstanceQuickConfig(instanceId)
       .then((config) => {
-        if (active) applyLoadedConfig(config);
+        if (active) {
+          applyLoadedConfig(config);
+          if (routing?.enabled && routing.routes?.length) {
+            setModels(
+              syncExperimentalModelsWithRouting(
+                config.experimental_model_catalog_models,
+                routing.routes,
+                accounts,
+                true,
+              ),
+            );
+          }
+        }
       })
       .catch((loadError) => {
         if (!active) return;
@@ -221,37 +295,132 @@ export function CodexLaunchPreviewModal({
     return () => {
       active = false;
     };
-  }, [account?.id, applyLoadedConfig, instanceId, setError, t]);
+  }, [account?.id, applyLoadedConfig, instanceId, selectedInstance, setError, t]);
 
+  const nextModelRouting = useMemo(
+    () => buildCodexModelRoutingValue(routingEnabled, routingRoutes),
+    [routingEnabled, routingRoutes],
+  );
+  const routingDirty = useMemo(
+    () =>
+      JSON.stringify(selectedInstance?.modelRouting ?? null) !==
+      JSON.stringify(nextModelRouting),
+    [nextModelRouting, selectedInstance?.modelRouting],
+  );
   const dirty = useMemo(() => {
-    if (!loadedConfig) return false;
+    if (!loadedConfig && !routingDirty) return false;
     return (
-      loadedConfig.experimental_model_catalog_enabled !== catalogEnabled ||
-      JSON.stringify(loadedConfig.experimental_model_catalog_models) !==
-        JSON.stringify(models) ||
-      (loadedConfig.experimental_model_catalog_default_model_id ?? null) !==
-        defaultModelId
+      routingDirty ||
+      (loadedConfig != null &&
+        (loadedConfig.experimental_model_catalog_enabled !== catalogEnabled ||
+          JSON.stringify(loadedConfig.experimental_model_catalog_models) !==
+            JSON.stringify(models) ||
+          (loadedConfig.experimental_model_catalog_default_model_id ?? null) !==
+            defaultModelId))
     );
-  }, [catalogEnabled, defaultModelId, loadedConfig, models]);
+  }, [
+    catalogEnabled,
+    defaultModelId,
+    loadedConfig,
+    models,
+    routingDirty,
+  ]);
 
   const persistDraft = useCallback(async () => {
-    if (!loadedConfig || (catalogEnabled && modelsError)) {
+    if (!loadedConfig || (catalogEnabled && modelsError && !routingEnabled)) {
       if (catalogEnabled && modelsError) setError(modelsError);
       return false;
     }
     if (!dirty) return true;
+    if (routingEnabled) {
+      if (routingRoutes.length === 0) {
+        setError(
+          t(
+            "instances.form.modelRouting.routeRequired",
+            "请至少添加一个 API 模型路由。",
+          ),
+        );
+        return false;
+      }
+      const providerAccounts = eligibleCodexModelRoutingAccounts(accounts);
+      for (const route of routingRoutes) {
+        const namespace = route.namespace.trim().toLowerCase();
+        if (
+          !/^[a-z0-9][a-z0-9_-]{1,31}$/.test(namespace) ||
+          ["official", "subscription", "openai", "codex", "oauth"].includes(
+            namespace,
+          )
+        ) {
+          setError(
+            t(
+              "instances.form.modelRouting.invalidNamespace",
+              "命名空间需为 2-32 位小写字母、数字、下划线或连字符，且不能使用保留名称。",
+            ),
+          );
+          return false;
+        }
+        if (
+          !providerAccounts.some(
+            (account) => account.id === route.providerAccountId,
+          )
+        ) {
+          setError(
+            t(
+              "instances.form.modelRouting.providerRequired",
+              "每个模型路由都必须选择一个 API 账号。",
+            ),
+          );
+          return false;
+        }
+        if (
+          route.enabled &&
+          route.selectedModels !== undefined &&
+          route.selectedModels.filter((model) => model.trim()).length === 0
+        ) {
+          setError(
+            t(
+              "instances.form.modelRouting.modelRequired",
+              "每个已启用的 API 路由至少需要选择一个模型。",
+            ),
+          );
+          return false;
+        }
+      }
+    }
     setSaving(true);
     setNotice(null);
     setError(null);
     try {
-      const saved = await saveCodexInstanceQuickConfig(
-        instanceId,
-        undefined,
-        undefined,
-        catalogEnabled,
-        models,
-        defaultModelId,
-      );
+      let nextModels = models;
+      let nextCatalogEnabled = catalogEnabled;
+      if (routingEnabled) {
+        nextModels = syncExperimentalModelsWithRouting(
+          models,
+          routingRoutes,
+          accounts,
+          true,
+        );
+        nextCatalogEnabled = true;
+      }
+      const saved = routingDirty
+        ? (
+            await saveCodexInstanceConfiguration({
+              instanceId,
+              modelRouting: nextModelRouting,
+              deferBindAccountApplication: true,
+              experimentalModelCatalogEnabled: nextCatalogEnabled,
+              experimentalModelCatalogModels: nextModels,
+              experimentalModelCatalogDefaultModelId: defaultModelId,
+            })
+          ).quickConfig
+        : await saveCodexInstanceQuickConfig(
+            instanceId,
+            undefined,
+            undefined,
+            nextCatalogEnabled,
+            nextModels,
+            defaultModelId,
+          );
       applyLoadedConfig(saved);
       setNotice(
         t(
@@ -272,6 +441,7 @@ export function CodexLaunchPreviewModal({
       setSaving(false);
     }
   }, [
+    accounts,
     applyLoadedConfig,
     catalogEnabled,
     defaultModelId,
@@ -280,6 +450,10 @@ export function CodexLaunchPreviewModal({
     models,
     modelsError,
     instanceId,
+    nextModelRouting,
+    routingDirty,
+    routingEnabled,
+    routingRoutes,
     setError,
     t,
   ]);
@@ -858,6 +1032,41 @@ export function CodexLaunchPreviewModal({
             </section>
 
             <div className="codex-launch-preview-tool-list">
+              {mode !== "apiService" &&
+                account &&
+                isStandardCodexOAuthAccount(account) &&
+                (selectedInstance?.launchMode ?? "app") !== "cli" && (
+                  <CodexModelRoutingFields
+                    variant="row"
+                    enabled={routingEnabled}
+                    routes={routingRoutes}
+                    accounts={accounts}
+                    running={Boolean(selectedInstance?.running)}
+                    onEnabledChange={(nextEnabled) => {
+                      setRoutingEnabled(nextEnabled);
+                      setModels((prevModels) =>
+                        syncExperimentalModelsWithRouting(
+                          prevModels,
+                          routingRoutes,
+                          accounts,
+                          nextEnabled,
+                        ),
+                      );
+                    }}
+                    onRoutesChange={(nextRoutes) => {
+                      setRoutingRoutes(nextRoutes);
+                      setModels((prevModels) =>
+                        syncExperimentalModelsWithRouting(
+                          prevModels,
+                          nextRoutes,
+                          accounts,
+                          routingEnabled,
+                        ),
+                      );
+                    }}
+                    onAccountsRefresh={fetchAccounts}
+                  />
+                )}
               <section className="codex-launch-preview-tool-row">
                 <div className="codex-launch-preview-tool-icon">
                   <RefreshCw size={16} />
@@ -1170,6 +1379,8 @@ export function CodexLaunchPreviewModal({
                 models={models}
                 defaultModelId={defaultModelId}
                 mode="inline"
+                availableChannels={availableChannels}
+                resolveModelSource={resolveModelSource}
                 onChange={(nextModels) => {
                   setModels(nextModels);
                   setNotice(null);
@@ -1181,6 +1392,16 @@ export function CodexLaunchPreviewModal({
                   setError(null);
                 }}
                 onValidationChange={setModelsError}
+                onModelRemoved={(removedId) => {
+                  setRoutingRoutes((prevRoutes) =>
+                    toggleRouteModelInRoutes(prevRoutes, removedId, accounts, "remove"),
+                  );
+                }}
+                onModelAdded={(addedId) => {
+                  setRoutingRoutes((prevRoutes) =>
+                    toggleRouteModelInRoutes(prevRoutes, addedId, accounts, "add"),
+                  );
+                }}
                 disabled={busy}
               />
             </div>

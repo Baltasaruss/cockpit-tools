@@ -525,7 +525,26 @@
       "appSpeed": "Hız",
       "appSpeedDesc": "Resmi Codex başlatılmadan önce seçilen hızı yazar",
       "autoSyncThreads": "Oto oturum sync",
-      "autoSyncThreadsDesc": "Kapalıyken çoklu instance oturumları ayrı kalır. Açıldığında, bir instance başlatılırken veya kapatılırken yerel oturum kayıtları yalnızca tüm Codex instance'ları durmuşsa otomatik birleştirilir."
+      "autoSyncThreadsDesc": "Kapalıyken çoklu instance oturumları ayrı kalır. Açıldığında, bir instance başlatılırken veya kapatılırken yerel oturum kayıtları yalnızca tüm Codex instance'ları durmuşsa otomatik birleştirilir.",
+      "modelRouting": {
+        "title": "Üçüncü taraf API yönlendirmesi",
+        "summary": "Ön eki olmayan modeller geçerli aboneliği kullanır; cpa/gpt-5.5 gibi ön ekli modeller üçüncü taraf bir API'ye iletilir. Her ikisi de yerel yönlendirme hizmetine bağlıdır.",
+        "rowSummary": "Ön eki olmayan modeller geçerli aboneliği kullanır; cpa/gpt-5.5 gibi ön ekli modeller üçüncü taraf bir API'ye iletilir. Her ikisi de yerel yönlendirme hizmetine bağlıdır.",
+        "confirmEnableTitle": "Üçüncü taraf API yönlendirmesi etkinleştirilsin mi?",
+        "confirmEnableMessage": "Codex model istekleri yerel Cockpit Tools hizmeti üzerinden yönlendirilecektir. Hizmet çalışmıyorsa hem abonelik hem de üçüncü taraf modelleri kullanılamayabilir. Kaydettiğinizde oturum açılışında başlatma etkinleştirilecektir.\n\nYönlendirme etkinleştirilsin mi?",
+        "confirmEnableAction": "Etkinleştir",
+        "confirmDisableTitle": "Üçüncü taraf API yönlendirmesi devre dışı bırakılsın mı?",
+        "confirmDisableMessage": "Bu değişiklik yürürlüğe girdikten sonra yerel ağ geçidi durdurulacak, yerel abonelik erişimi geri yüklenecek ve üçüncü taraf modelleri kullanılamayacaktır.\n\nDevre dışı bırakılsın mı?",
+        "confirmDisableAction": "Devre dışı bırak",
+        "modalTip": "Hem abonelik hem de üçüncü taraf modelleri yerel yönlendirme hizmetinden geçer. Cockpit Tools'u arka planda çalışır durumda tutun. Hizmet otomatik olarak kurtarılır ve yinelenen arızalardan sonra resmi yapılandırmaya geri döner.",
+        "modelRequired": "Etkinleştirilen her API rotası en az bir model içermelidir.",
+        "runningSaveTitle": "Yönlendirme ne zaman geçerli olsun?",
+        "runningSaveMessage": "Bu Codex örneği çalışıyor. Yerel hizmeti şimdi değiştirmek mevcut görüşmeyi kesintiye uğratacaktır.\n\nŞimdi uygulamak için «Kaydet ve Codex'i yeniden başlat»ı veya mevcut oturumu değiştirmemek için «Daha sonra kaydet»i seçin.",
+        "saveAndRestart": "Kaydet ve Codex'i yeniden başlat",
+        "saveForLater": "Daha sonra kaydet",
+        "restartRollbackFailed": "Yeni rota başlatılamadı ve orijinal yapılandırma yeniden başlatılamadı: ",
+        "restartRolledBack": "Yeni rota başlatılamadı. Orijinal yapılandırma geri yüklendi ve Codex yeniden başlatıldı: {{error}}"
+      }
     },
     "quota": {
       "unbound": "Hesap bağlı değil",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} hesap · {{scope}}",
       "summaryMetaUnconfigured": "Yapılandırılmadı · {{scope}}",
       "memberTitle": "Koleksiyon üyeleri",
-      "imagePolicy": { "label": "Görsel politikası", "inherit": "Görsel: Otomatik", "enabled": "Görsel: Açık", "disabled": "Görsel: Kapalı" },
+      "imagePolicy": {
+        "label": "Görsel politikası",
+        "inherit": "Görsel: Otomatik",
+        "enabled": "Görsel: Açık",
+        "disabled": "Görsel: Kapalı"
+      },
       "memberPriorityLabel": "Öncelik",
       "memberPriorityLowest": "En düşük",
       "memberPriorityNormal": "Olağan",

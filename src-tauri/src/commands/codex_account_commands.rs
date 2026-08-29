@@ -942,9 +942,8 @@ pub async fn switch_codex_account(
     let access_token_refresh_due =
         is_oauth_account && codex_oauth::is_token_expired(&initial_account.tokens.access_token);
     let is_reauth_handoff = reauth_token_generation.is_some();
-    let credentials_need_refresh = !is_reauth_handoff
-        && is_oauth_account
-        && access_token_refresh_due;
+    let credentials_need_refresh =
+        !is_reauth_handoff && is_oauth_account && access_token_refresh_due;
     let initial_token_generation = initial_account.token_generation;
     let user_config = config::get_user_config();
     let launch_after_switch = launch_after_switch.unwrap_or(user_config.codex_launch_on_switch);
@@ -1192,6 +1191,7 @@ pub async fn switch_codex_account(
         };
     if let Err(e) = crate::modules::codex_instance::update_default_settings(
         Some(Some(default_bind_account_id.clone())),
+        None,
         None,
         Some(false),
         None,

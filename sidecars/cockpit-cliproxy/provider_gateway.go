@@ -70,6 +70,19 @@ func (s *relayServer) handleExecutorBody(c *gin.Context, spec *apiKeySpec, body 
 		writeAPIError(c, http.StatusBadRequest, "model is required", "invalid_request")
 		return
 	}
+	if gateway, upstreamModel, routeStatus := resolveModelRouting(spec, model); routeStatus != "none" {
+		if routeStatus != "matched" {
+			writeAPIError(c, http.StatusNotFound, fmt.Sprintf("model route %s is not available", model), "model_route_not_available")
+			return
+		}
+		if sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAI) && isGPTImageGenerationModel(upstreamModel) {
+			writeAPIError(c, http.StatusBadRequest, "This model is not supported on the Chat Completions endpoint", "invalid_request")
+			return
+		}
+		s.handleProviderGatewayRequest(c, gateway, body, upstreamModel, sourceFormat, fixedAlt)
+		return
+	}
+
 	canonicalModel := canonicalModelForClientModel(s.manifest, spec, model)
 	if sourceFormatEqual(sourceFormat, sdktranslator.FormatOpenAI) && isGPTImageGenerationModel(canonicalModel) {
 		writeAPIError(c, http.StatusBadRequest, "This model is not supported on the Chat Completions endpoint", "invalid_request")
@@ -91,6 +104,41 @@ func (s *relayServer) handleExecutorBody(c *gin.Context, spec *apiKeySpec, body 
 		return
 	}
 	s.handleNonStream(c, body, model, sourceFormat, alt)
+}
+
+func resolveModelRouting(spec *apiKeySpec, clientModel string) (*providerGatewaySpec, string, string) {
+	if spec == nil || spec.ModelRouting == nil {
+		return nil, "", "none"
+	}
+	model := stripModelPrefix(clientModel, spec)
+	separator := strings.Index(model, "/")
+	if separator < 0 {
+		return nil, model, "none"
+	}
+	namespace := strings.ToLower(strings.TrimSpace(model[:separator]))
+	upstreamModel := strings.TrimSpace(model[separator+1:])
+	if namespace == "" || upstreamModel == "" {
+		return nil, "", "missing"
+	}
+	for i := range spec.ModelRouting.Routes {
+		route := &spec.ModelRouting.Routes[i]
+		if !strings.EqualFold(route.Namespace, namespace) {
+			continue
+		}
+		if route.ProviderGateway == nil {
+			return nil, "", "missing"
+		}
+		if len(route.ProviderGateway.UpstreamModels) == 0 {
+			return nil, "", "missing"
+		}
+		for _, candidate := range route.ProviderGateway.UpstreamModels {
+			if strings.EqualFold(candidate, upstreamModel) {
+				return route.ProviderGateway, candidate, "matched"
+			}
+		}
+		return nil, "", "missing"
+	}
+	return nil, "", "missing"
 }
 
 func (s *relayServer) handleProviderGatewayRequest(c *gin.Context, gateway *providerGatewaySpec, body []byte, model string, sourceFormat sdktranslator.Format, fixedAlt string) {

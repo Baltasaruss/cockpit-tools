@@ -525,7 +525,26 @@
       "appSpeed": "速度",
       "appSpeedDesc": "啟動官方 Codex 前寫入對應速度",
       "autoSyncThreads": "自動同步會話",
-      "autoSyncThreadsDesc": "關閉時保持多實例會話隔離；開啟後僅在所有 Codex 實例已停止時，啟動或關閉實例會自動合併本地會話記錄。"
+      "autoSyncThreadsDesc": "關閉時保持多實例會話隔離；開啟後僅在所有 Codex 實例已停止時，啟動或關閉實例會自動合併本地會話記錄。",
+      "modelRouting": {
+        "title": "第三方 API 路由",
+        "summary": "普通模型使用目前訂閱；帶前綴模型（如 cpa/gpt-5.5）轉發到第三方 API。兩者皆依賴本機分流服務。",
+        "rowSummary": "普通模型使用目前訂閱；帶前綴模型（如 cpa/gpt-5.5）轉發到第三方 API。兩者皆依賴本機分流服務。",
+        "confirmEnableTitle": "開啟第三方 API 路由？",
+        "confirmEnableMessage": "開啟後，Codex 的模型請求將透過 Cockpit Tools 本地服務分流。服務未運行時，官方訂閱與第三方模型皆可能無法使用。儲存時將預設啟用開機自啟。\n\n確認開啟嗎？",
+        "confirmEnableAction": "確認開啟",
+        "confirmDisableTitle": "關閉第三方 API 路由？",
+        "confirmDisableMessage": "關閉並生效後將停止本機閘道、恢復官方原生直連，所有第三方模型將不可用。\n\n確認關閉嗎？",
+        "confirmDisableAction": "確認關閉",
+        "modalTip": "開啟後，官方訂閱與第三方模型都會經過本地分流服務。請保持 Cockpit Tools 背景執行；服務異常時會自動復原，連續失敗則退回官方配置。",
+        "modelRequired": "每個已啟用的 API 路由至少需要選擇一個模型。",
+        "runningSaveTitle": "路由配置何時生效？",
+        "runningSaveMessage": "此 Codex 執行個體正在執行。立即取代本地服務會中斷目前對話。\n\n選擇「儲存並重啟 Codex」立即生效；選擇「僅儲存，稍後生效」不會影響目前工作階段。",
+        "saveAndRestart": "儲存並重啟 Codex",
+        "saveForLater": "僅儲存，稍後生效",
+        "restartRollbackFailed": "新路由啟動失敗，恢復原配置後仍無法啟動：",
+        "restartRolledBack": "新路由啟動失敗，已恢復原配置並重新啟動 Codex：{{error}}"
+      }
     },
     "quota": {
       "unbound": "未綁定帳號",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} 個帳號 · {{scope}}",
       "summaryMetaUnconfigured": "未設定 · {{scope}}",
       "memberTitle": "集合成員",
-      "imagePolicy": { "label": "生圖策略", "inherit": "生圖：自動", "enabled": "生圖：啟用", "disabled": "生圖：停用" },
+      "imagePolicy": {
+        "label": "生圖策略",
+        "inherit": "生圖：自動",
+        "enabled": "生圖：啟用",
+        "disabled": "生圖：停用"
+      },
       "memberPriorityLabel": "優先級",
       "memberPriorityLowest": "最低",
       "memberPriorityNormal": "一般",

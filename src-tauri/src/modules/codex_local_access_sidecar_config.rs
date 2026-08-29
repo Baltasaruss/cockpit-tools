@@ -602,9 +602,11 @@ fn sidecar_api_key_manifest_values(collection: &CodexLocalAccessCollection) -> V
             "label": item.label.clone(),
             "key": item.key.trim(),
             "providerGateway": item.provider_gateway.clone(),
+            "modelRouting": item.model_routing.clone(),
             "boundOAuth": bound_oauth,
             "responsesWebsockets": collection.responses_websockets_enabled
-                && item.provider_gateway.is_none(),
+                && item.provider_gateway.is_none()
+                && item.model_routing.is_none(),
             "accountIds": account_ids,
             "modelPrefix": item.model_prefix.clone(),
             "allowedModels": item.allowed_models.clone(),
@@ -767,6 +769,13 @@ fn effective_sidecar_account_ids(collection: &CodexLocalAccessCollection) -> Vec
         for account_id in &api_key.account_ids {
             if seen.insert(account_id.clone()) {
                 account_ids.push(account_id.clone());
+            }
+        }
+        if let Some(model_routing) = &api_key.model_routing {
+            for route in &model_routing.routes {
+                if seen.insert(route.provider_account_id.clone()) {
+                    account_ids.push(route.provider_account_id.clone());
+                }
             }
         }
     }
@@ -1292,7 +1301,9 @@ fn sync_sidecar_auth_file_for_account_with_task_source(
 }
 
 pub fn sync_sidecar_auth_file_for_account(account: &CodexAccount) -> Result<(), String> {
-    sync_sidecar_auth_file_for_account_with_task_source(account, false)
+    let result = sync_sidecar_auth_file_for_account_with_task_source(account, false);
+    sync_provider_gateway_auth_files_for_account_in_background(account.clone());
+    result
 }
 
 /// 通用设置中的 Codex 客户端策略变更后，后台刷新正在使用的 OAuth auth 文件。
@@ -2181,7 +2192,26 @@ fn prepare_sidecar_launch_config_in_dir_sync(
     }
     remove_stale_sidecar_auth_files(&auths_dir, &expected_auth_files)?;
 
-    let model_ids = visible_codex_model_ids_for_collection(collection, Some(&health_snapshot));
+    let mut model_ids = visible_codex_model_ids_for_collection(collection, Some(&health_snapshot));
+    let mut model_id_keys = model_ids
+        .iter()
+        .map(|model| model.trim().to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    for api_key in &collection.api_keys {
+        let Some(model_routing) = api_key.model_routing.as_ref() else {
+            continue;
+        };
+        for route in &model_routing.routes {
+            for upstream_model in &route.provider_gateway.upstream_models {
+                let client_model = format!("{}/{}", route.namespace, upstream_model.trim());
+                if !upstream_model.trim().is_empty()
+                    && model_id_keys.insert(client_model.to_ascii_lowercase())
+                {
+                    model_ids.push(client_model);
+                }
+            }
+        }
+    }
     let app_locale = crate::modules::config::get_user_config().language;
     let manifest = json!({
         "locale": app_locale,

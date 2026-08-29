@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+  CodexInstanceModelRouting,
   InstanceDefaults,
   InstanceInitMode,
   InstanceLaunchMode,
@@ -21,6 +22,7 @@ export type InstanceStoreState = {
     workingDir?: string | null;
     extraArgs?: string;
     bindAccountId?: string | null;
+    modelRouting?: CodexInstanceModelRouting | null;
     launchMode?: InstanceLaunchMode;
     appSpeed?: CodexAppSpeed;
     copySourceInstanceId: string;
@@ -32,6 +34,7 @@ export type InstanceStoreState = {
     workingDir?: string | null;
     extraArgs?: string;
     bindAccountId?: string | null;
+    modelRouting?: CodexInstanceModelRouting | null;
     followLocalAccount?: boolean;
     launchMode?: InstanceLaunchMode;
     appSpeed?: CodexAppSpeed;
@@ -54,6 +57,7 @@ type InstanceService = {
     workingDir?: string | null;
     extraArgs?: string;
     bindAccountId?: string | null;
+    modelRouting?: CodexInstanceModelRouting | null;
     launchMode?: InstanceLaunchMode;
     appSpeed?: CodexAppSpeed;
     copySourceInstanceId: string;
@@ -65,6 +69,7 @@ type InstanceService = {
     workingDir?: string | null;
     extraArgs?: string;
     bindAccountId?: string | null;
+    modelRouting?: CodexInstanceModelRouting | null;
     followLocalAccount?: boolean;
     launchMode?: InstanceLaunchMode;
     appSpeed?: CodexAppSpeed;

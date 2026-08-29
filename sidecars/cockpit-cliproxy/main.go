@@ -89,6 +89,7 @@ func normalizeCockpitLocale(locale string) string {
 }
 
 func main() {
+	ignoreBrokenPipeSignal()
 	configPath := flag.String("config", "", "CLIProxyAPI config file")
 	manifestPath := flag.String("manifest", "", "Cockpit sidecar manifest file")
 	quotaReserveStatePath := flag.String("quota-reserve-state", "", "Cockpit OAuth quota reserve state file")

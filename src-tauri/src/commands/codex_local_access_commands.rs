@@ -391,6 +391,7 @@ pub async fn codex_local_access_activate(
             crate::modules::codex_instance::CODEX_API_SERVICE_BIND_ACCOUNT_ID.to_string(),
         )),
         None,
+        None,
         Some(false),
         None,
         None,

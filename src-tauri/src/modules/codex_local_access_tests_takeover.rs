@@ -155,6 +155,7 @@
                 model_capabilities: HashMap::new(),
                 vision_routing_model: None,
             }),
+            model_routing: None,
             inherit_account_pool: Some(false),
             account_ids: vec!["deepseek-account".to_string()],
             priority_account_ids: Vec::new(),

@@ -730,6 +730,25 @@
           "autoCompactInvalid": "自动压缩阈值必须是大于 0 的整数"
         }
       },
+      "modelRouting": {
+        "title": "第三方 API 路由",
+        "summary": "普通模型使用当前订阅；带前缀模型（如 cpa/gpt-5.5）转发到第三方 API。两者都依赖本地分流服务。",
+        "rowSummary": "普通模型使用当前订阅；带前缀模型（如 cpa/gpt-5.5）转发到第三方 API。两者都依赖本地分流服务。",
+        "confirmEnableTitle": "开启第三方 API 路由？",
+        "confirmEnableMessage": "开启后，Codex 的模型请求将通过 Cockpit Tools 本地服务分流。服务未运行时，官方订阅和第三方模型都可能无法使用。保存时将默认启用开机自启。\n\n确认开启吗？",
+        "confirmEnableAction": "确认开启",
+        "confirmDisableTitle": "关闭第三方 API 路由？",
+        "confirmDisableMessage": "关闭并生效后将停止本地网关、恢复官方原生直连，所有第三方模型将不可用。\n\n确认关闭吗？",
+        "confirmDisableAction": "确认关闭",
+        "modalTip": "开启后，官方订阅和第三方模型都会经过本地分流服务。请保持 Cockpit Tools 后台运行；服务异常时会自动恢复，连续失败则回退官方配置。",
+        "modelRequired": "每个已启用的 API 路由至少需要选择一个模型。",
+        "runningSaveTitle": "路由配置何时生效？",
+        "runningSaveMessage": "此 Codex 实例正在运行。立即替换本地服务会中断当前对话。\n\n选择“保存并重启 Codex”立即生效；选择“仅保存，稍后生效”不会影响当前会话。",
+        "saveAndRestart": "保存并重启 Codex",
+        "saveForLater": "仅保存，稍后生效",
+        "restartRollbackFailed": "新路由启动失败，恢复原配置后仍无法启动：",
+        "restartRolledBack": "新路由启动失败，已恢复原配置并重新启动 Codex：{{error}}"
+      },
       "nameRequired": "请输入实例名称",
       "pathRequired": "请选择实例目录",
       "bindRequired": "请选择要绑定的账号",

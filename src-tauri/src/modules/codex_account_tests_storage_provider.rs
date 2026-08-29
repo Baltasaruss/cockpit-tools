@@ -180,6 +180,81 @@
     }
 
     #[test]
+    fn mixed_model_routing_validation_keeps_oauth_identity_and_api_route_separate() {
+        let _lock = crate::modules::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let _env = TestEnvGuard::new("codex-mixed-model-routing-validation-test");
+        let oauth_account = seed_oauth_account(make_codex_tokens(
+            "subscription@example.com",
+            "acc-subscription",
+            "org-subscription",
+            "subscription",
+            "rt-subscription",
+        ));
+        let api_account = CodexAccount::new_api_key(
+            "cpa-api".to_string(),
+            "CPA".to_string(),
+            "sk-cpa-test".to_string(),
+            CodexApiProviderMode::Custom,
+            Some("https://cpa.example.com/v1".to_string()),
+            Some("cpa".to_string()),
+            Some("CPA".to_string()),
+            vec!["gpt-5.5".to_string(), "grok-4.6".to_string()],
+        );
+        save_account(&api_account).expect("save API account");
+        let routing = crate::models::CodexInstanceModelRouting {
+            enabled: true,
+            version: 1,
+            routes: vec![crate::models::CodexInstanceApiRoute {
+                id: "route-cpa".to_string(),
+                namespace: "CPA".to_string(),
+                provider_account_id: api_account.id.clone(),
+                enabled: true,
+                selected_models: None,
+                extra_models: None,
+            }],
+        };
+
+        let normalized = crate::modules::codex_local_access::validate_mixed_model_routing_config(
+            Some(&oauth_account.id),
+            &routing,
+        )
+        .expect("validate mixed routing");
+
+        assert_eq!(normalized.routes[0].namespace, "cpa");
+        assert_eq!(normalized.routes[0].provider_account_id, api_account.id);
+
+        let empty_selection = crate::models::CodexInstanceModelRouting {
+            routes: vec![crate::models::CodexInstanceApiRoute {
+                selected_models: Some(Vec::new()),
+                ..routing.routes[0].clone()
+            }],
+            ..routing.clone()
+        };
+        let error = crate::modules::codex_local_access::validate_mixed_model_routing_config(
+            Some(&oauth_account.id),
+            &empty_selection,
+        )
+        .expect_err("an enabled route must not accept an empty model allowlist");
+        assert!(error.contains("至少需要选择一个上游模型"));
+
+        let oauth_as_provider = crate::models::CodexInstanceModelRouting {
+            routes: vec![crate::models::CodexInstanceApiRoute {
+                provider_account_id: oauth_account.id.clone(),
+                ..routing.routes[0].clone()
+            }],
+            ..routing
+        };
+        let error = crate::modules::codex_local_access::validate_mixed_model_routing_config(
+            Some(&oauth_account.id),
+            &oauth_as_provider,
+        )
+        .expect_err("OAuth account must not be accepted as an API route");
+        assert!(error.contains("不能使用订阅 OAuth 账号"));
+    }
+
+    #[test]
     fn config_toml_removes_runtime_provider_when_switching_to_builtin_openai() {
         let base_dir = make_temp_dir("codex-config-clean-managed-provider-test");
         let config_path = base_dir.join("config.toml");
@@ -1459,6 +1534,7 @@ supports_websockets = false
             working_dir: None,
             extra_args: String::new(),
             bind_account_id: None,
+            model_routing: None,
             launch_mode: InstanceLaunchMode::App,
             app_speed: crate::models::codex::CodexAppSpeed::Standard,
             created_at: now_timestamp(),
@@ -1523,6 +1599,7 @@ supports_websockets = false
             working_dir: None,
             extra_args: String::new(),
             bind_account_id: None,
+            model_routing: None,
             launch_mode: InstanceLaunchMode::App,
             app_speed: crate::models::codex::CodexAppSpeed::Standard,
             created_at: now_timestamp(),

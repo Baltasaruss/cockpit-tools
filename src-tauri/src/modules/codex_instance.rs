@@ -6,7 +6,10 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::models::codex::CodexAppSpeed;
-use crate::models::{DefaultInstanceSettings, InstanceLaunchMode, InstanceProfile, InstanceStore};
+use crate::models::{
+    CodexInstanceModelRouting, DefaultInstanceSettings, InstanceLaunchMode, InstanceProfile,
+    InstanceStore,
+};
 use crate::modules;
 use crate::modules::instance::InstanceDefaults;
 use crate::modules::instance_store;
@@ -63,6 +66,7 @@ pub struct CreateInstanceParams {
     pub working_dir: Option<String>,
     pub extra_args: String,
     pub bind_account_id: Option<String>,
+    pub model_routing: Option<CodexInstanceModelRouting>,
     pub copy_source_instance_id: Option<String>,
     pub init_mode: Option<String>,
     pub launch_mode: Option<InstanceLaunchMode>,
@@ -76,6 +80,7 @@ pub struct UpdateInstanceParams {
     pub working_dir: Option<String>,
     pub extra_args: Option<String>,
     pub bind_account_id: Option<Option<String>>,
+    pub model_routing: Option<Option<CodexInstanceModelRouting>>,
     pub launch_mode: Option<InstanceLaunchMode>,
     pub app_speed: Option<CodexAppSpeed>,
 }
@@ -106,6 +111,7 @@ pub fn load_default_settings() -> Result<DefaultInstanceSettings, String> {
 
 pub fn update_default_settings(
     bind_account_id: Option<Option<String>>,
+    model_routing: Option<Option<CodexInstanceModelRouting>>,
     extra_args: Option<String>,
     follow_local_account: Option<bool>,
     launch_mode: Option<InstanceLaunchMode>,
@@ -125,6 +131,10 @@ pub fn update_default_settings(
     if let Some(bind) = bind_account_id {
         settings.bind_account_id = bind;
         settings.follow_local_account = false;
+    }
+
+    if let Some(routing) = model_routing {
+        settings.model_routing = routing;
     }
 
     if follow_local_account == Some(false) && settings.bind_account_id.is_none() {
@@ -948,6 +958,11 @@ pub fn create_instance(params: CreateInstanceParams) -> Result<InstanceProfile, 
         } else {
             params.bind_account_id
         },
+        model_routing: if create_empty {
+            None
+        } else {
+            params.model_routing
+        },
         launch_mode: params.launch_mode.unwrap_or_default(),
         app_speed: params.app_speed.unwrap_or_default(),
         created_at: Utc::now().timestamp_millis(),
@@ -999,6 +1014,9 @@ pub fn update_instance(params: UpdateInstanceParams) -> Result<InstanceProfile, 
     }
     if let Some(bind) = params.bind_account_id.clone() {
         instance.bind_account_id = bind;
+    }
+    if let Some(routing) = params.model_routing.clone() {
+        instance.model_routing = routing;
     }
     if let Some(mode) = params.launch_mode {
         instance.launch_mode = mode;

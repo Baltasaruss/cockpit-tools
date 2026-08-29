@@ -3463,6 +3463,7 @@ mod tests {
                 working_dir: None,
                 extra_args: String::new(),
                 bind_account_id: Some(account.id.clone()),
+                model_routing: None,
                 launch_mode: InstanceLaunchMode::Cli,
                 app_speed: CodexAppSpeed::Standard,
                 created_at: 1,

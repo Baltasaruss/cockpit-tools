@@ -1422,6 +1422,8 @@ fn close_installed_sidecar_processes_by_path(timeout_secs: u64) -> Result<usize,
 
 async fn stop_all_sidecar_processes_for_app_shutdown() -> Result<(), String> {
     let mut errors = Vec::new();
+    #[cfg(target_os = "windows")]
+    let preserve_running_mixed_gateway = has_running_persisted_mixed_model_gateway();
 
     let stopped_endpoint = stop_gateway().await;
     if let Some(endpoint) = stopped_endpoint {
@@ -1444,8 +1446,10 @@ async fn stop_all_sidecar_processes_for_app_shutdown() -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Err(error) = close_installed_sidecar_processes_by_path(5) {
-            errors.push(format!("关闭安装目录 sidecar 残留进程失败: {}", error));
+        if !preserve_running_mixed_gateway {
+            if let Err(error) = close_installed_sidecar_processes_by_path(5) {
+                errors.push(format!("关闭安装目录 sidecar 残留进程失败: {}", error));
+            }
         }
     }
 

@@ -417,12 +417,32 @@ pub struct CodexLocalAccessProviderGateway {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexLocalAccessModelRoute {
+    pub id: String,
+    pub namespace: String,
+    pub provider_account_id: String,
+    pub provider_gateway: CodexLocalAccessProviderGateway,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalAccessModelRouting {
+    pub default_route: String,
+    pub failure_policy: String,
+    #[serde(default)]
+    pub routes: Vec<CodexLocalAccessModelRoute>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexLocalAccessApiKey {
     pub id: String,
     pub label: String,
     pub key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_gateway: Option<CodexLocalAccessProviderGateway>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_routing: Option<CodexLocalAccessModelRouting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inherit_account_pool: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

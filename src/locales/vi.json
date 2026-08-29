@@ -525,7 +525,26 @@
       "appSpeed": "Tốc độ",
       "appSpeedDesc": "Ghi tốc độ đã chọn trước khi mở Codex chính thức",
       "autoSyncThreads": "Tự đồng bộ phiên",
-      "autoSyncThreadsDesc": "Tắt để giữ phiên của nhiều instance tách biệt. Khi bật, việc mở hoặc đóng instance sẽ tự gộp bản ghi phiên cục bộ chỉ sau khi mọi instance Codex đã dừng."
+      "autoSyncThreadsDesc": "Tắt để giữ phiên của nhiều instance tách biệt. Khi bật, việc mở hoặc đóng instance sẽ tự gộp bản ghi phiên cục bộ chỉ sau khi mọi instance Codex đã dừng.",
+      "modelRouting": {
+        "title": "Định tuyến API của bên thứ ba",
+        "summary": "Các mô hình không có tiền tố sử dụng gói đăng ký hiện tại; các mô hình có tiền tố như cpa/gpt-5.5 được chuyển tiếp đến API của bên thứ ba. Cả hai đều phụ thuộc vào dịch vụ định tuyến cục bộ.",
+        "rowSummary": "Các mô hình không có tiền tố sử dụng gói đăng ký hiện tại; các mô hình có tiền tố như cpa/gpt-5.5 được chuyển tiếp đến API của bên thứ ba. Cả hai đều phụ thuộc vào dịch vụ định tuyến cục bộ.",
+        "confirmEnableTitle": "Bật định tuyến API của bên thứ ba?",
+        "confirmEnableMessage": "Các yêu cầu mô hình Codex sẽ được định tuyến qua dịch vụ Cockpit Tools cục bộ. Nếu dịch vụ không chạy, cả mô hình đăng ký và bên thứ ba có thể không khả dụng. Khởi chạy khi đăng nhập sẽ được bật khi bạn lưu.\n\nBật định tuyến?",
+        "confirmEnableAction": "Bật",
+        "confirmDisableTitle": "Tắt định tuyến API của bên thứ ba?",
+        "confirmDisableMessage": "Sau khi thay đổi này có hiệu lực, cổng cục bộ sẽ dừng, quyền truy cập đăng ký chính thức sẽ được khôi phục và các mô hình của bên thứ ba sẽ không khả dụng.\n\nTắt định tuyến?",
+        "confirmDisableAction": "Tắt",
+        "modalTip": "Cả mô hình đăng ký và bên thứ ba đều đi qua dịch vụ định tuyến cục bộ. Vui lòng duy trì Cockpit Tools chạy ngầm. Dịch vụ tự động phục hồi và chuyển về cấu hình chính thức sau nhiều lần thất bại.",
+        "modelRequired": "Mỗi tuyến API được bật phải bao gồm ít nhất một mô hình.",
+        "runningSaveTitle": "Khi nào định tuyến có hiệu lực?",
+        "runningSaveMessage": "Phiên bản Codex này đang chạy. Thay thế dịch vụ cục bộ ngay bây giờ sẽ làm gián đoạn cuộc trò chuyện hiện tại.\n\nChọn «Lưu và khởi động lại Codex» để áp dụng ngay, hoặc «Lưu để dùng sau» để giữ nguyên phiên hiện tại.",
+        "saveAndRestart": "Lưu và khởi động lại Codex",
+        "saveForLater": "Lưu để dùng sau",
+        "restartRollbackFailed": "Không thể khởi động tuyến mới và không thể khởi động lại cấu hình gốc: ",
+        "restartRolledBack": "Không thể khởi động tuyến mới. Cấu hình gốc đã được khôi phục và Codex đã khởi động lại: {{error}}"
+      }
     },
     "quota": {
       "unbound": "Tài khoản chưa liên kết",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} tài khoản · {{scope}}",
       "summaryMetaUnconfigured": "Chưa cấu hình · {{scope}}",
       "memberTitle": "Thành viên bộ sưu tập",
-      "imagePolicy": { "label": "Chính sách hình ảnh", "inherit": "Hình ảnh: Tự động", "enabled": "Hình ảnh: Bật", "disabled": "Hình ảnh: Tắt" },
+      "imagePolicy": {
+        "label": "Chính sách hình ảnh",
+        "inherit": "Hình ảnh: Tự động",
+        "enabled": "Hình ảnh: Bật",
+        "disabled": "Hình ảnh: Tắt"
+      },
       "memberPriorityLabel": "Ưu tiên",
       "memberPriorityLowest": "Thấp nhất",
       "memberPriorityNormal": "Bình thường",

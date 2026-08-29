@@ -525,7 +525,26 @@
       "appSpeed": "Vitesse",
       "appSpeedDesc": "Écrit la vitesse choisie avant de lancer Codex officiel",
       "autoSyncThreads": "Sync auto sessions",
-      "autoSyncThreadsDesc": "Désactivé, les sessions des instances restent isolées. Activé, le lancement ou la fermeture d'une instance fusionne automatiquement les sessions locales, uniquement lorsque toutes les instances Codex sont arrêtées."
+      "autoSyncThreadsDesc": "Désactivé, les sessions des instances restent isolées. Activé, le lancement ou la fermeture d'une instance fusionne automatiquement les sessions locales, uniquement lorsque toutes les instances Codex sont arrêtées.",
+      "modelRouting": {
+        "title": "Routage d'API tierce",
+        "summary": "Les modèles sans préfixe utilisent l'abonnement actuel ; les modèles avec préfixe tels que cpa/gpt-5.5 sont transférés vers une API tierce. Les deux dépendent du service de routage local.",
+        "rowSummary": "Les modèles sans préfixe utilisent l'abonnement actuel ; les modèles avec préfixe tels que cpa/gpt-5.5 sont transférés vers une API tierce. Les deux dépendent du service de routage local.",
+        "confirmEnableTitle": "Activer le routage d'API tierce ?",
+        "confirmEnableMessage": "Les requêtes de modèles Codex seront acheminées via le service local Cockpit Tools. Si le service n'est pas en cours d'exécution, les modèles d'abonnement et tiers peuvent être indisponibles. Le lancement au démarrage sera activé lors de l'enregistrement.\n\nActiver le routage ?",
+        "confirmEnableAction": "Activer",
+        "confirmDisableTitle": "Désactiver le routage d'API tierce ?",
+        "confirmDisableMessage": "Une fois cette modification appliquée, la passerelle locale s'arrêtera, l'accès direct à l'abonnement officiel sera restauré et les modèles tiers ne seront plus disponibles.\n\nDésactiver le routage ?",
+        "confirmDisableAction": "Désactiver",
+        "modalTip": "Les modèles d'abonnement et tiers passent tous deux par le service de routage local. Gardez Cockpit Tools en arrière-plan. Le service récupère automatiquement et bascule sur la configuration officielle en cas d'échecs répétés.",
+        "modelRequired": "Chaque route API activée doit inclure au moins un modèle.",
+        "runningSaveTitle": "Quand le routage doit-il prendre effet ?",
+        "runningSaveMessage": "Cette instance Codex est en cours d'exécution. Remplacer le service local maintenant interrompra la conversation en cours.\n\nChoisissez « Enregistrer et redémarrer Codex » pour appliquer maintenant, ou « Enregistrer pour plus tard » pour conserver la session actuelle inchangée.",
+        "saveAndRestart": "Enregistrer et redémarrer Codex",
+        "saveForLater": "Enregistrer pour plus tard",
+        "restartRollbackFailed": "La nouvelle route n'a pas pu démarrer et la configuration d'origine n'a pas pu être redémarrée : ",
+        "restartRolledBack": "La nouvelle route n'a pas pu démarrer. La configuration d'origine a été restaurée et Codex a redémarré : {{error}}"
+      }
     },
     "quota": {
       "unbound": "Compte non lié",
@@ -2323,7 +2342,12 @@
       "summaryMeta": "{{count}} comptes · {{scope}}",
       "summaryMetaUnconfigured": "Non configuré · {{scope}}",
       "memberTitle": "Membres de la collection",
-      "imagePolicy": { "label": "Politique d’image", "inherit": "Image : Auto", "enabled": "Image : Activée", "disabled": "Image : Désactivée" },
+      "imagePolicy": {
+        "label": "Politique d’image",
+        "inherit": "Image : Auto",
+        "enabled": "Image : Activée",
+        "disabled": "Image : Désactivée"
+      },
       "memberPriorityLabel": "Priorité",
       "memberPriorityLowest": "Basse",
       "memberPriorityNormal": "Normale",
