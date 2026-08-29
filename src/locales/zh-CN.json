@@ -5142,6 +5142,11 @@
       "desc": "支持从本地 Cursor 安装导入、粘贴 JWT 令牌或 OAuth 授权登录来管理 Cursor 账号。",
       "reason": "权限范围：读取并写入 Cursor 本地认证存储（state.vscdb），用于账号导入与令牌注入（切号）。",
       "storage": "网络请求范围：刷新配额时携带 JWT 向 cursor.com 官方接口请求使用量、用户信息及订阅信息；不向任何第三方服务器上传数据。"
+    },
+    "filters": {
+      "quotaFailed": "配额查询失败 ({{count}})",
+      "cleanQuotaFailedAction": "删除配额查询失败账号 ({{count}})",
+      "cleanQuotaFailedConfirm": "确定要删除全部 {{count}} 个配额查询失败的账号吗？"
     }
   },
   "breakout": {
