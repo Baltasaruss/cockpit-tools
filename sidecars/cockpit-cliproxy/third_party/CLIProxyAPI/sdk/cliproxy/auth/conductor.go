@@ -71,6 +71,14 @@ type Selector interface {
 	Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error)
 }
 
+// AuthSelectionFailureReporter observes failures that happen before the
+// configured selector is invoked (for example, when the manager's availability
+// pass removes every candidate). Implementations must not mutate auth state.
+// The interface is optional so existing selectors remain source compatible.
+type AuthSelectionFailureReporter interface {
+	ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*Auth, err error) error
+}
+
 type PluginScheduler interface {
 	PickAuth(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, bool, error)
 }

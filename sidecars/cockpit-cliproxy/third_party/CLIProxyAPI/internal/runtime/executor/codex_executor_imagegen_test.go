@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
@@ -143,6 +144,20 @@ func TestEnsureImageGenerationTool_ResponsesLiteFalseMetadataStillInjectsTool(t 
 
 	if got := gjson.GetBytes(result, "tools.0.type").String(); got != "image_generation" {
 		t.Fatalf("tools.0.type = %q, want image_generation; body=%s", got, result)
+	}
+}
+
+func TestEnsureImageGenerationTool_ChatDisableHeaderDoesNotInjectTool(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","input":"hello"}`)
+	headers := make(http.Header)
+	headers.Set(helps.DisableImageGenerationHeader, "chat")
+
+	result := ensureImageGenerationTool(body, "gpt-5.6-sol", nil, headers)
+	if string(result) != string(body) {
+		t.Fatalf("expected chat-scoped disable body to be unchanged, got %s", string(result))
+	}
+	if gjson.GetBytes(result, "tools").Exists() {
+		t.Fatalf("expected no injected tools for chat-scoped disable request, got %s", gjson.GetBytes(result, "tools").Raw)
 	}
 }
 

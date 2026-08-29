@@ -66,7 +66,6 @@ pub mod kiro_account;
 pub mod kiro_instance;
 pub mod kiro_oauth;
 pub mod linux_updater;
-pub mod local_secret_blob;
 pub mod logger;
 pub mod macos_native_menu;
 pub mod main_window_state;

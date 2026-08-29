@@ -106,7 +106,6 @@ type SwitchCodexAccountOptions = {
   reauthTokenGeneration?: number;
   reconcileAfterSwitch?: boolean;
   launchAfterSwitch?: boolean;
-  skipOfficialAccountCheck?: boolean;
 };
 
 interface CodexAccountState {
@@ -258,7 +257,6 @@ export const useCodexAccountStore = create<CodexAccountState>((set, get) => ({
       account = await codexService.switchCodexAccount(accountId, {
         reauthTokenGeneration: options?.reauthTokenGeneration,
         launchAfterSwitch: options?.launchAfterSwitch,
-        skipOfficialAccountCheck: options?.skipOfficialAccountCheck,
       });
     } catch (error) {
       // Token Authority 可能已把账号标记为 requires_reauth。立即回读账号库，

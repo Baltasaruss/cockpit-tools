@@ -614,6 +614,18 @@ type SessionAffinitySelector struct {
 	cache    *SessionCache
 }
 
+// ReportAuthSelectionFailure forwards manager-level availability diagnostics
+// through the session-affinity wrapper to its configured fallback selector.
+func (s *SessionAffinitySelector) ReportAuthSelectionFailure(ctx context.Context, provider, model string, candidates []*Auth, err error) error {
+	if s == nil || s.fallback == nil {
+		return err
+	}
+	if reporter, ok := s.fallback.(AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
+}
+
 // SessionAffinityConfig configures the session affinity selector.
 type SessionAffinityConfig struct {
 	Fallback Selector

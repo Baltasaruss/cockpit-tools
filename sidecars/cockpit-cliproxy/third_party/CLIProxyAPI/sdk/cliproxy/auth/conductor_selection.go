@@ -391,6 +391,20 @@ func (m *Manager) availableAuthsForSelector(selector Selector, auths []*Auth, pr
 	return highestPriorityAuths(selectorAuths), selectorAuths, nil
 }
 
+// reportAuthSelectionFailure forwards manager-level availability failures to
+// the optional selector wrapper responsible for host diagnostics. Keeping this
+// hook here is important: these failures occur before Selector.Pick is called.
+func reportAuthSelectionFailure(ctx context.Context, selector Selector, provider, model string, candidates []*Auth, err error) error {
+	var authErr *Error
+	if !errors.As(err, &authErr) || authErr == nil || (authErr.Code != "auth_not_found" && authErr.Code != "auth_unavailable") {
+		return err
+	}
+	if reporter, ok := selector.(AuthSelectionFailureReporter); ok {
+		return reporter.ReportAuthSelectionFailure(ctx, provider, model, candidates, err)
+	}
+	return err
+}
+
 func selectionArgForSelector(selector Selector, routeModel string) string {
 	if isBuiltInSelector(selector) {
 		return ""
@@ -1272,11 +1286,14 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()
-		return nil, nil, &Error{Code: "auth_not_found", Message: "no auth available"}
+		var err error = &Error{Code: "auth_not_found", Message: "no auth available"}
+		err = reportAuthSelectionFailure(ctx, selector, provider, model, nil, err)
+		return nil, nil, err
 	}
 	available, selectorAuths, errAvailable := m.availableAuthsForSelector(selector, candidates, provider, model, time.Now())
 	if errAvailable != nil {
 		m.mu.RUnlock()
+		errAvailable = reportAuthSelectionFailure(ctx, selector, provider, model, candidates, errAvailable)
 		m.warnLogAuthUnavailable(ctx, []string{provider}, model, opts, tried, errAvailable)
 		return nil, nil, errAvailable
 	}
@@ -1605,11 +1622,14 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 	}
 	if len(candidates) == 0 {
 		m.mu.RUnlock()
-		return nil, nil, "", &Error{Code: "auth_not_found", Message: "no auth available"}
+		var err error = &Error{Code: "auth_not_found", Message: "no auth available"}
+		err = reportAuthSelectionFailure(ctx, selector, "mixed", model, nil, err)
+		return nil, nil, "", err
 	}
 	available, selectorAuths, errAvailable := m.availableAuthsForSelector(selector, candidates, "mixed", model, time.Now())
 	if errAvailable != nil {
 		m.mu.RUnlock()
+		errAvailable = reportAuthSelectionFailure(ctx, selector, "mixed", model, candidates, errAvailable)
 		m.warnLogAuthUnavailable(ctx, providers, model, opts, tried, errAvailable)
 		return nil, nil, "", errAvailable
 	}

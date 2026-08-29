@@ -5,6 +5,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
+use uuid::Uuid;
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTH_ENDPOINT: &str = "https://auth.openai.com/oauth/authorize";
@@ -23,7 +25,9 @@ const OAUTH_CALLBACK_PORT: u16 = 1455;
 const OAUTH_PORT_IN_USE_CODE: &str = "CODEX_OAUTH_PORT_IN_USE";
 const OAUTH_STATE_FILE: &str = "codex_oauth_pending.json";
 const OAUTH_WINDOW_LABEL: &str = "codex-oauth-incognito";
-const OAUTH_TIMEOUT_SECONDS: i64 = 300;
+const OAUTH_TIMEOUT_SECONDS: i64 = 10 * 60;
+const OFFICIAL_HOSTED_AUTH_ENDPOINT: &str = "https://chatgpt.com/codex/desktop-auth";
+const OFFICIAL_CLIENT_IDENTITY_FILE: &str = "codex-official-client-identity.txt";
 const TOKEN_REFRESH_SKEW_SECONDS: i64 = 300;
 pub const ID_TOKEN_REFRESH_LEAD_SECONDS: i64 = 10 * 60;
 const TOKEN_REFRESH_TIMEOUT: Duration = Duration::from_secs(25);
@@ -113,6 +117,7 @@ struct OAuthState {
 lazy_static::lazy_static! {
     static ref OAUTH_STATE: Arc<Mutex<Option<OAuthState>>> = Arc::new(Mutex::new(None));
     static ref COMPLETE_ATTEMPT_SEQ: AtomicU64 = AtomicU64::new(0);
+    static ref OFFICIAL_CLIENT_STABLE_ID: Mutex<Option<String>> = Mutex::new(None);
 }
 
 fn generate_base64url_token() -> String {
@@ -554,23 +559,85 @@ fn parse_callback_url(callback_url: &str, port: u16) -> Result<Url, String> {
 }
 
 fn build_auth_url(redirect_uri: &str, code_challenge: &str, state: &str) -> String {
+    let mut url = Url::parse(AUTH_ENDPOINT).expect("valid Codex OAuth authorize endpoint");
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("response_type", "code");
+        query.append_pair("client_id", CLIENT_ID);
+        query.append_pair("redirect_uri", redirect_uri);
+        query.append_pair("scope", SCOPES);
+        query.append_pair("code_challenge", code_challenge);
+        query.append_pair("code_challenge_method", "S256");
+        query.append_pair("id_token_add_organizations", "true");
+        query.append_pair("codex_cli_simplified_flow", "true");
+        query.append_pair("codex_streamlined_login", "true");
+        query.append_pair("state", state);
+        query.append_pair("originator", ORIGINATOR);
+        query.append_pair("codex_app_version", &official_client_version());
+        let stable_id = official_client_stable_id();
+        query.append_pair("source_surface_stable_id", &stable_id);
+        query.append_pair("codex_origin_stable_id", &stable_id);
+    }
+    hosted_auth_url(&url.to_string())
+}
+
+/// 用户设置优先；留空时使用远端配置缓存，并在无缓存时回退内置默认值。
+fn official_client_version() -> String {
+    let configured = crate::modules::config::get_user_config().codex_oauth_app_version;
+    if let Some(version) =
+        crate::modules::remote_config::normalize_codex_oauth_app_version(&configured)
+    {
+        return version;
+    }
+    crate::modules::remote_config::cached_codex_oauth_app_version()
+}
+
+/// 为两个 stable ID 提供同一个持久化值；它们用于官方登录包装的客户端关联标识。
+fn official_client_stable_id() -> String {
+    if let Ok(mut cached) = OFFICIAL_CLIENT_STABLE_ID.lock() {
+        if let Some(value) = cached.as_ref() {
+            return value.clone();
+        }
+
+        let path = crate::modules::account::get_data_dir()
+            .ok()
+            .map(|dir| dir.join(OFFICIAL_CLIENT_IDENTITY_FILE));
+        if let Some(path) = path.as_ref() {
+            if let Ok(value) = fs::read_to_string(path) {
+                let value = value.trim();
+                if !value.is_empty() {
+                    let value = value.to_string();
+                    *cached = Some(value.clone());
+                    return value;
+                }
+            }
+        }
+
+        let value = Uuid::new_v4().to_string();
+        if let Some(path) = path {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(path, &value);
+        }
+        *cached = Some(value.clone());
+        value
+    } else {
+        Uuid::new_v4().to_string()
+    }
+}
+
+/// 将授权地址包装成官方桌面使用的 hosted login 地址。
+fn hosted_auth_url(auth_url: &str) -> String {
     format!(
-        "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state={}&originator={}",
-        AUTH_ENDPOINT,
-        CLIENT_ID,
-        urlencoding::encode(redirect_uri),
-        urlencoding::encode(SCOPES),
-        code_challenge,
-        state,
-        urlencoding::encode(ORIGINATOR)
+        "{}?authorize_url={}&codex_streamlined_login=true&no_universal_links=1",
+        OFFICIAL_HOSTED_AUTH_ENDPOINT,
+        urlencoding::encode(auth_url)
     )
 }
 
 fn authorize_url_matches_pending(url: &Url, pending: &OAuthState) -> bool {
-    url.scheme() == "https"
-        && url.host_str() == Some("auth.openai.com")
-        && url.path() == "/oauth/authorize"
-        && Url::parse(&pending.auth_url).is_ok_and(|expected| expected == *url)
+    Url::parse(&pending.auth_url).is_ok_and(|expected| expected == *url)
 }
 
 fn is_callback_navigation(url: &Url, callback_port: u16) -> bool {
@@ -1447,7 +1514,7 @@ pub async fn refresh_access_token_with_fallback(
 #[cfg(test)]
 mod tests {
     use super::{
-        authorize_url_matches_pending, is_callback_navigation, is_id_token_expired,
+        authorize_url_matches_pending, build_auth_url, is_callback_navigation, is_id_token_expired,
         is_id_token_refresh_due, is_token_expired, parse_device_poll_interval,
         resolve_exchange_redirect_uri, resolve_refreshed_id_token, OAuthState,
         DEVICE_DEFAULT_POLL_SECONDS, DEVICE_EXCHANGE_REDIRECT_URI, ID_TOKEN_REFRESH_LEAD_SECONDS,
@@ -1464,6 +1531,65 @@ mod tests {
     #[test]
     fn oauth_originator_matches_current_desktop_client() {
         assert_eq!(ORIGINATOR, "Codex Desktop");
+    }
+
+    #[test]
+    fn browser_oauth_uses_official_hosted_url_without_app_server() {
+        let auth_url = build_auth_url(
+            "http://localhost:1455/auth/callback",
+            "challenge-1",
+            "state-1",
+        );
+        let hosted = url::Url::parse(&auth_url).expect("parse hosted auth url");
+        assert_eq!(hosted.host_str(), Some("chatgpt.com"));
+        assert_eq!(hosted.path(), "/codex/desktop-auth");
+
+        let hosted_params = hosted
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            hosted_params
+                .get("codex_streamlined_login")
+                .map(|value| value.as_ref()),
+            Some("true")
+        );
+        assert_eq!(
+            hosted_params
+                .get("no_universal_links")
+                .map(|value| value.as_ref()),
+            Some("1")
+        );
+
+        let authorize_url = hosted_params
+            .get("authorize_url")
+            .expect("hosted URL contains authorize_url");
+        let authorize = url::Url::parse(authorize_url).expect("parse authorize URL");
+        assert_eq!(authorize.host_str(), Some("auth.openai.com"));
+        assert_eq!(authorize.path(), "/oauth/authorize");
+        let params = authorize
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            params.get("redirect_uri").map(|value| value.as_ref()),
+            Some("http://localhost:1455/auth/callback")
+        );
+        assert_eq!(
+            params.get("code_challenge").map(|value| value.as_ref()),
+            Some("challenge-1")
+        );
+        assert_eq!(
+            params.get("state").map(|value| value.as_ref()),
+            Some("state-1")
+        );
+        assert_eq!(
+            params.get("originator").map(|value| value.as_ref()),
+            Some("Codex Desktop")
+        );
+        assert!(params.contains_key("codex_app_version"));
+        let source_id = params
+            .get("source_surface_stable_id")
+            .expect("source stable ID");
+        assert_eq!(params.get("codex_origin_stable_id"), Some(source_id));
     }
 
     #[test]
@@ -1501,8 +1627,8 @@ mod tests {
     }
 
     #[test]
-    fn incognito_window_accepts_only_current_official_authorize_url() {
-        let url = "https://auth.openai.com/oauth/authorize?state=state-1";
+    fn incognito_window_accepts_only_current_hosted_authorize_url() {
+        let url = "https://chatgpt.com/codex/desktop-auth?authorize_url=https%3A%2F%2Fauth.openai.com%2Foauth%2Fauthorize%3Fstate%3Dstate-1";
         let pending = pending(url);
         assert!(authorize_url_matches_pending(
             &url::Url::parse(url).unwrap(),

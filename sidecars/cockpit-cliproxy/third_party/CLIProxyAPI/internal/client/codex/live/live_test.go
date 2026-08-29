@@ -39,6 +39,7 @@ type captureExecutor struct {
 	body         []byte
 	selectedAuth *auth.Auth
 	responseBody io.ReadCloser
+	refreshErr   error
 	statusCode   int
 	statuses     []int
 	httpCalls    atomic.Int32
@@ -57,6 +58,9 @@ func (*captureExecutor) ExecuteStream(context.Context, *auth.Auth, coreexecutor.
 
 func (e *captureExecutor) Refresh(_ context.Context, credential *auth.Auth) (*auth.Auth, error) {
 	e.refreshCalls.Add(1)
+	if e.refreshErr != nil {
+		return nil, e.refreshErr
+	}
 	updated := credential.Clone()
 	if updated.Metadata == nil {
 		updated.Metadata = make(map[string]any)
@@ -640,6 +644,39 @@ func TestHandlerRefreshesUnauthorizedHomeSelectionOnce(t *testing.T) {
 	}
 }
 
+func TestHandlerHomeRefreshFailurePreservesUpstreamUnauthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager := auth.NewManager(nil, nil, nil)
+	manager.SetConfig(&config.Config{Home: config.HomeConfig{Enabled: true}})
+	registry := executionregistry.New()
+	manager.PublishHomeDispatch(&homeDispatcher{}, registry, 1)
+	const upstreamBody = `{"error":{"message":"upstream live token expired","type":"authentication_error"}}`
+	executor := &captureExecutor{
+		statusCode:   http.StatusUnauthorized,
+		responseBody: io.NopCloser(strings.NewReader(upstreamBody)),
+		refreshErr:   errors.New("credential refresh temporarily unavailable"),
+	}
+	manager.RegisterExecutor(executor)
+	handler := NewHandler(manager, nil)
+	router := gin.New()
+	router.POST("/v1/live", handler.Handle)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/live", strings.NewReader(`{"model":"gpt-live-1-codex","sdp":"v=0"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized || recorder.Body.String() != upstreamBody {
+		t.Fatalf("response = %d %s, want original upstream 401 body", recorder.Code, recorder.Body.String())
+	}
+	if executor.refreshCalls.Load() != 1 || executor.httpCalls.Load() != 1 {
+		t.Fatalf("refresh/http calls = %d/%d, want 1/1", executor.refreshCalls.Load(), executor.httpCalls.Load())
+	}
+	if errDrain := registry.Drain(context.Background()); errDrain != nil {
+		t.Fatalf("Drain() error = %v", errDrain)
+	}
+}
+
 func TestHandlerUsesLiveModelForHomeDispatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -889,6 +926,61 @@ func TestHandleSidebandRefreshesUnauthorizedHomeHandshakeOnce(t *testing.T) {
 	second := <-upstreamHeaders
 	if first.Get("Authorization") != "Bearer home-live-token" || second.Get("Authorization") != "Bearer refreshed-home-live-token" {
 		t.Fatalf("upstream Authorization sequence = %q, %q", first.Get("Authorization"), second.Get("Authorization"))
+	}
+}
+
+func TestHandleSidebandHomeRefreshFailurePreservesUpstreamUnauthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const upstreamBody = `{"error":{"message":"upstream sideband token expired","type":"authentication_error"}}`
+	var upstreamCalls atomic.Int32
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("X-Request-Id", "sideband-request-id")
+		writer.WriteHeader(http.StatusUnauthorized)
+		_, _ = writer.Write([]byte(upstreamBody))
+	}))
+	defer upstreamServer.Close()
+
+	manager := auth.NewManager(nil, nil, nil)
+	manager.SetConfig(&config.Config{Home: config.HomeConfig{Enabled: true}})
+	registry := executionregistry.New()
+	manager.PublishHomeDispatch(&homeDispatcher{}, registry, 1)
+	executor := &captureExecutor{refreshErr: errors.New("credential refresh temporarily unavailable")}
+	manager.RegisterExecutor(executor)
+	selection, errSelect := manager.SelectHomeAuthByKind(context.Background(), "codex", defaultLiveModel, auth.AuthKindOAuth, coreexecutor.Options{})
+	if errSelect != nil {
+		t.Fatalf("SelectHomeAuthByKind() error = %v", errSelect)
+	}
+	selection.Retain()
+
+	handler := NewHandler(manager, nil)
+	handler.sidebandAPIBaseURL = "ws" + strings.TrimPrefix(upstreamServer.URL, "http") + "/v1"
+	handler.sessions.put("call-home-sideband-refresh-failure", liveSession{
+		authID:        "home-codex-live",
+		model:         defaultLiveModel,
+		homeSelection: selection,
+	})
+	router := gin.New()
+	router.GET("/v1/live/:call_id", handler.HandleSideband)
+	request := httptest.NewRequest(http.MethodGet, "/v1/live/call-home-sideband-refresh-failure", nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized || recorder.Body.String() != upstreamBody {
+		t.Fatalf("response = %d %s, want original upstream 401 body", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("X-Request-Id") != "sideband-request-id" {
+		t.Fatalf("X-Request-Id = %q, want upstream request ID", recorder.Header().Get("X-Request-Id"))
+	}
+	if executor.refreshCalls.Load() != 1 || upstreamCalls.Load() != 1 {
+		t.Fatalf("refresh/upstream calls = %d/%d, want 1/1", executor.refreshCalls.Load(), upstreamCalls.Load())
+	}
+	selection.End("test_complete")
+	if errDrain := registry.Drain(context.Background()); errDrain != nil {
+		t.Fatalf("Drain() error = %v", errDrain)
 	}
 }
 

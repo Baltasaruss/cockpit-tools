@@ -324,32 +324,28 @@ func (h *Handler) Handle(c *gin.Context) {
 	if selection != nil && resp.StatusCode == http.StatusUnauthorized {
 		h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", model)
 		helps.RecordAPIResponseMetadata(ctx, runtimeConfig, resp.StatusCode, callResponseHeaders(resp.Header))
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-		if errClose := resp.Body.Close(); errClose != nil {
-			log.Errorf("codex live: close unauthorized response body error: %v", errClose)
-		}
+		unauthorizedBody := readAndCloseUpstreamErrorBody(resp, "codex live unauthorized response")
 		refreshed, didRefresh, errRefresh := h.authManager.RefreshHomeSelectionAfterUnauthorized(ctx, selection, selected)
-		if errRefresh != nil {
+		if errRefresh != nil && ctx.Err() != nil {
 			selection.End("refresh_failed")
 			writeSelectionError(c, errRefresh)
 			return
 		}
-		if !didRefresh || refreshed == nil {
-			selection.End("refresh_unavailable")
-			writeLiveError(c, http.StatusUnauthorized, "Codex credential unauthorized")
-			return
-		}
-		selected = refreshed
-		logging.SetGinCPATraceID(c, selected.EnsureIndex())
-		resp, errRequest = performRequest(selected)
-		if errRequest != nil {
-			selection.End("retry_failed")
-			helps.RecordAPIResponseError(ctx, runtimeConfig, errRequest)
-			writeLiveError(c, clienterror.HTTPStatusFromErrorOr(errRequest, http.StatusBadGateway), errRequest.Error())
-			return
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", model)
+		if errRefresh != nil || !didRefresh || refreshed == nil {
+			resp.Body = io.NopCloser(bytes.NewReader(unauthorizedBody))
+		} else {
+			selected = refreshed
+			logging.SetGinCPATraceID(c, selected.EnsureIndex())
+			resp, errRequest = performRequest(selected)
+			if errRequest != nil {
+				selection.End("retry_failed")
+				helps.RecordAPIResponseError(ctx, runtimeConfig, errRequest)
+				writeLiveError(c, clienterror.HTTPStatusFromErrorOr(errRequest, http.StatusBadGateway), errRequest.Error())
+				return
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", model)
+			}
 		}
 	}
 
@@ -528,6 +524,22 @@ func readLimitedBody(body io.Reader) ([]byte, error) {
 		return nil, errBodyTooLarge
 	}
 	return payload, nil
+}
+
+func readAndCloseUpstreamErrorBody(response *http.Response, label string) []byte {
+	if response == nil || response.Body == nil {
+		return nil
+	}
+	body := response.Body
+	response.Body = nil
+	payload, errRead := io.ReadAll(io.LimitReader(body, 1<<20))
+	if errRead != nil {
+		log.WithError(errRead).Debugf("%s: read response body", label)
+	}
+	if errClose := body.Close(); errClose != nil {
+		log.WithError(errClose).Debugf("%s: close response body", label)
+	}
+	return payload
 }
 
 func prepareCallRequest(body []byte, contentType string) ([]byte, string, string, error) {

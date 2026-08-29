@@ -113,13 +113,19 @@ func (h *Handler) HandleDirectWebsocket(c *gin.Context) {
 	upstream, handshakeResponse, errDial := dialUpstream(selected)
 	if errDial != nil && selection != nil && handshakeResponse != nil && handshakeResponse.StatusCode == http.StatusUnauthorized {
 		h.authManager.ReportHomeUnauthorized(ctx, selected, "codex", selectionModel)
-		closeHandshakeBody(handshakeResponse, "direct websocket unauthorized")
+		unauthorizedBody := readAndCloseUpstreamErrorBody(handshakeResponse, "codex realtime websocket unauthorized response")
 		refreshed, didRefresh, errRefresh := h.authManager.RefreshHomeSelectionAfterUnauthorized(ctx, selection, selected)
-		if errRefresh != nil {
+		if errRefresh != nil && ctx.Err() != nil {
 			writeSelectionError(c, errRefresh)
 			return
 		}
-		if didRefresh && refreshed != nil {
+		if errRefresh != nil || !didRefresh || refreshed == nil {
+			helps.RecordAPIWebsocketHandshake(ctx, h.currentConfig(), handshakeResponse.StatusCode, callResponseHeaders(handshakeResponse.Header))
+			helps.RecordAPIWebsocketError(ctx, h.currentConfig(), "dial", errDial)
+			if writeUpstreamHandshakeResponse(c, handshakeResponse, unauthorizedBody) {
+				return
+			}
+		} else {
 			selected = refreshed
 			logging.SetGinCPATraceID(c, selected.EnsureIndex())
 			upstream, handshakeResponse, errDial = dialUpstream(selected)
@@ -239,6 +245,19 @@ func copyRealtimeHandshakeHeaders(destination, source http.Header) {
 			destination.Add(name, value)
 		}
 	}
+}
+
+func writeUpstreamHandshakeResponse(c *gin.Context, response *http.Response, body []byte) bool {
+	if c == nil || response == nil || response.StatusCode <= 0 || len(body) == 0 {
+		return false
+	}
+	copyRealtimeHandshakeHeaders(c.Writer.Header(), response.Header)
+	if contentType := response.Header.Get("Content-Type"); contentType != "" {
+		c.Header("Content-Type", contentType)
+	}
+	c.Status(response.StatusCode)
+	_, _ = c.Writer.Write(body)
+	return true
 }
 
 func closeHandshakeBody(response *http.Response, label string) {

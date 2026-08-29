@@ -4,6 +4,7 @@ import {
   CircleAlert,
   KeyRound,
   Play,
+  RefreshCw,
   Save,
   Server,
   SlidersHorizontal,
@@ -22,8 +23,24 @@ import { useTranslation } from "react-i18next";
 import { useEscClose } from "../../hooks/useEscClose";
 import {
   saveCodexInstanceQuickConfig,
+  saveCodexInstanceConfiguration,
   getCodexInstanceQuickConfig,
 } from "../../services/codexInstanceService";
+import { useCodexAccountStore } from "../../stores/useCodexAccountStore";
+import { useCodexInstanceStore } from "../../stores/useCodexInstanceStore";
+import type { CodexInstanceApiRoute } from "../../types/instance";
+import {
+  CodexModelRoutingFields,
+  buildCodexModelRoutingValue,
+  createCodexModelSourceResolver,
+  collectRouteUpstreamModels,
+  eligibleCodexModelRoutingAccounts,
+  shortCodexRouteAccountLabel,
+  syncExperimentalModelsWithRouting,
+  toggleRouteModelInRoutes,
+} from "./CodexModelRoutingFields";
+import { forceRefreshCodexTokens } from "../../services/codexService";
+import { requestCodexOpenAddAccount } from "../../utils/codexAddAccountRequest";
 import type {
   CodexAccount,
   CodexExperimentalModelDefinition,
@@ -34,7 +51,9 @@ import {
   getCodexAuthMetadata,
   getCodexSubscriptionPresentationForAccount,
   isCodexApiKeyAccount,
+  isStandardCodexOAuthAccount,
 } from "../../types/codex";
+import { getCodexJwtExpiration } from "../../utils/codexSwitchAuthFailure";
 import type { UnifiedQuotaMetric } from "../../presentation/platformAccountPresentation";
 import { buildCodexAccountPresentation } from "../../presentation/platformAccountPresentation";
 import { ModalErrorMessage, useModalErrorState } from "../ModalErrorMessage";
@@ -54,6 +73,7 @@ export interface CodexLaunchPreviewFact {
   value: string;
   monospace?: boolean;
   wide?: boolean;
+  tone?: "warning" | "danger";
 }
 
 export interface CodexLaunchPreviewUsage {
@@ -123,7 +143,7 @@ export function CodexLaunchPreviewModal({
   onClose,
   onExecute,
 }: CodexLaunchPreviewModalProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [loadedConfig, setLoadedConfig] = useState<CodexQuickConfig | null>(
     null,
   );
@@ -138,9 +158,62 @@ export function CodexLaunchPreviewModal({
   const [executing, setExecuting] = useState<"switch" | "launch" | null>(null);
   const [repairOpen, setRepairOpen] = useState(false);
   const [modelConfigOpen, setModelConfigOpen] = useState(false);
+  const [forceRefreshing, setForceRefreshing] = useState(false);
+  const [manualRefreshResult, setManualRefreshResult] = useState<{
+    status: "running" | "success" | "error";
+    error?: string;
+  } | null>(null);
+  const [manualRefreshedAccount, setManualRefreshedAccount] =
+    useState<CodexAccount | null>(null);
   const [modelConfigSnapshot, setModelConfigSnapshot] =
     useState<ModelConfigSnapshot | null>(null);
+  const [routingEnabled, setRoutingEnabled] = useState(false);
+  const [routingRoutes, setRoutingRoutes] = useState<CodexInstanceApiRoute[]>(
+    [],
+  );
   const [notice, setNotice] = useState<string | null>(null);
+  const accounts = useCodexAccountStore((state) => state.accounts);
+  const fetchAccounts = useCodexAccountStore((state) => state.fetchAccounts);
+  const instances = useCodexInstanceStore((state) => state.instances);
+  const selectedInstance = useMemo(
+    () =>
+      instances.find((item) => item.id === instanceId) ??
+      (instanceId === DEFAULT_CODEX_INSTANCE_ID
+        ? instances.find((item) => item.isDefault)
+        : undefined),
+    [instanceId, instances],
+  );
+  const resolveModelSource = useMemo(
+    () =>
+      createCodexModelSourceResolver(
+        routingRoutes,
+        accounts,
+        t,
+      ),
+    [accounts, routingRoutes, t],
+  );
+  const availableChannels = useMemo(() => {
+    const providerAccounts = eligibleCodexModelRoutingAccounts(accounts);
+    return routingRoutes
+      .filter((route) => route.enabled)
+      .map((route) => {
+        const provider = providerAccounts.find(
+          (acc) => acc.id === route.providerAccountId,
+        );
+        const upstreamModels = collectRouteUpstreamModels(route, provider);
+        const name = shortCodexRouteAccountLabel(
+          provider,
+          provider?.email,
+        );
+        return {
+          id: route.id,
+          namespace: route.namespace,
+          providerName: name,
+          models: route.selectedModels ?? upstreamModels,
+        };
+      })
+      .filter((group) => group.models.length > 0);
+  }, [accounts, routingRoutes]);
   const {
     message: error,
     scrollKey: errorScrollKey,
@@ -152,6 +225,7 @@ export function CodexLaunchPreviewModal({
     saving ||
     changingInstance ||
     runningActionId !== null ||
+    forceRefreshing ||
     executing !== null;
   const requestClose = useCallback(() => {
     const hasStackedModal = Array.from(
@@ -161,7 +235,10 @@ export function CodexLaunchPreviewModal({
     );
     if (!hasStackedModal) onClose();
   }, [onClose]);
-  useEscClose(!busy && !repairOpen && !modelConfigOpen, requestClose);
+  useEscClose(
+    !busy && !repairOpen && !modelConfigOpen && !manualRefreshResult,
+    requestClose,
+  );
 
   const applyLoadedConfig = useCallback((config: CodexQuickConfig) => {
     setLoadedConfig(config);
@@ -182,9 +259,26 @@ export function CodexLaunchPreviewModal({
     setDefaultModelId(null);
     setModelsError(null);
     setNotice(null);
+    setManualRefreshResult(null);
+    setManualRefreshedAccount(null);
+    const routing = selectedInstance?.modelRouting;
+    setRoutingEnabled(Boolean(routing?.enabled));
+    setRoutingRoutes(routing?.routes?.map((route) => ({ ...route })) ?? []);
     void getCodexInstanceQuickConfig(instanceId)
       .then((config) => {
-        if (active) applyLoadedConfig(config);
+        if (active) {
+          applyLoadedConfig(config);
+          if (routing?.enabled && routing.routes?.length) {
+            setModels(
+              syncExperimentalModelsWithRouting(
+                config.experimental_model_catalog_models,
+                routing.routes,
+                accounts,
+                true,
+              ),
+            );
+          }
+        }
       })
       .catch((loadError) => {
         if (!active) return;
@@ -201,37 +295,132 @@ export function CodexLaunchPreviewModal({
     return () => {
       active = false;
     };
-  }, [account?.id, applyLoadedConfig, instanceId, setError, t]);
+  }, [account?.id, applyLoadedConfig, instanceId, selectedInstance, setError, t]);
 
+  const nextModelRouting = useMemo(
+    () => buildCodexModelRoutingValue(routingEnabled, routingRoutes),
+    [routingEnabled, routingRoutes],
+  );
+  const routingDirty = useMemo(
+    () =>
+      JSON.stringify(selectedInstance?.modelRouting ?? null) !==
+      JSON.stringify(nextModelRouting),
+    [nextModelRouting, selectedInstance?.modelRouting],
+  );
   const dirty = useMemo(() => {
-    if (!loadedConfig) return false;
+    if (!loadedConfig && !routingDirty) return false;
     return (
-      loadedConfig.experimental_model_catalog_enabled !== catalogEnabled ||
-      JSON.stringify(loadedConfig.experimental_model_catalog_models) !==
-        JSON.stringify(models) ||
-      (loadedConfig.experimental_model_catalog_default_model_id ?? null) !==
-        defaultModelId
+      routingDirty ||
+      (loadedConfig != null &&
+        (loadedConfig.experimental_model_catalog_enabled !== catalogEnabled ||
+          JSON.stringify(loadedConfig.experimental_model_catalog_models) !==
+            JSON.stringify(models) ||
+          (loadedConfig.experimental_model_catalog_default_model_id ?? null) !==
+            defaultModelId))
     );
-  }, [catalogEnabled, defaultModelId, loadedConfig, models]);
+  }, [
+    catalogEnabled,
+    defaultModelId,
+    loadedConfig,
+    models,
+    routingDirty,
+  ]);
 
   const persistDraft = useCallback(async () => {
-    if (!loadedConfig || (catalogEnabled && modelsError)) {
+    if (!loadedConfig || (catalogEnabled && modelsError && !routingEnabled)) {
       if (catalogEnabled && modelsError) setError(modelsError);
       return false;
     }
     if (!dirty) return true;
+    if (routingEnabled) {
+      if (routingRoutes.length === 0) {
+        setError(
+          t(
+            "instances.form.modelRouting.routeRequired",
+            "请至少添加一个 API 模型路由。",
+          ),
+        );
+        return false;
+      }
+      const providerAccounts = eligibleCodexModelRoutingAccounts(accounts);
+      for (const route of routingRoutes) {
+        const namespace = route.namespace.trim().toLowerCase();
+        if (
+          !/^[a-z0-9][a-z0-9_-]{1,31}$/.test(namespace) ||
+          ["official", "subscription", "openai", "codex", "oauth"].includes(
+            namespace,
+          )
+        ) {
+          setError(
+            t(
+              "instances.form.modelRouting.invalidNamespace",
+              "命名空间需为 2-32 位小写字母、数字、下划线或连字符，且不能使用保留名称。",
+            ),
+          );
+          return false;
+        }
+        if (
+          !providerAccounts.some(
+            (account) => account.id === route.providerAccountId,
+          )
+        ) {
+          setError(
+            t(
+              "instances.form.modelRouting.providerRequired",
+              "每个模型路由都必须选择一个 API 账号。",
+            ),
+          );
+          return false;
+        }
+        if (
+          route.enabled &&
+          route.selectedModels !== undefined &&
+          route.selectedModels.filter((model) => model.trim()).length === 0
+        ) {
+          setError(
+            t(
+              "instances.form.modelRouting.modelRequired",
+              "每个已启用的 API 路由至少需要选择一个模型。",
+            ),
+          );
+          return false;
+        }
+      }
+    }
     setSaving(true);
     setNotice(null);
     setError(null);
     try {
-      const saved = await saveCodexInstanceQuickConfig(
-        instanceId,
-        undefined,
-        undefined,
-        catalogEnabled,
-        models,
-        defaultModelId,
-      );
+      let nextModels = models;
+      let nextCatalogEnabled = catalogEnabled;
+      if (routingEnabled) {
+        nextModels = syncExperimentalModelsWithRouting(
+          models,
+          routingRoutes,
+          accounts,
+          true,
+        );
+        nextCatalogEnabled = true;
+      }
+      const saved = routingDirty
+        ? (
+            await saveCodexInstanceConfiguration({
+              instanceId,
+              modelRouting: nextModelRouting,
+              deferBindAccountApplication: true,
+              experimentalModelCatalogEnabled: nextCatalogEnabled,
+              experimentalModelCatalogModels: nextModels,
+              experimentalModelCatalogDefaultModelId: defaultModelId,
+            })
+          ).quickConfig
+        : await saveCodexInstanceQuickConfig(
+            instanceId,
+            undefined,
+            undefined,
+            nextCatalogEnabled,
+            nextModels,
+            defaultModelId,
+          );
       applyLoadedConfig(saved);
       setNotice(
         t(
@@ -252,6 +441,7 @@ export function CodexLaunchPreviewModal({
       setSaving(false);
     }
   }, [
+    accounts,
     applyLoadedConfig,
     catalogEnabled,
     defaultModelId,
@@ -260,6 +450,10 @@ export function CodexLaunchPreviewModal({
     models,
     modelsError,
     instanceId,
+    nextModelRouting,
+    routingDirty,
+    routingEnabled,
+    routingRoutes,
     setError,
     t,
   ]);
@@ -398,7 +592,66 @@ export function CodexLaunchPreviewModal({
       },
     ];
   }, [account, accountAuthMetadata, accountSubscription, isApiKeySubject, t]);
-  const displayFacts = summary?.facts ?? fallbackFacts;
+  const tokenExpiryFacts = useMemo<CodexLaunchPreviewFact[]>(() => {
+    const tokenAccount = manualRefreshedAccount ?? account;
+    if (!tokenAccount || !isStandardCodexOAuthAccount(tokenAccount)) return [];
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const locale = i18n.resolvedLanguage || i18n.language;
+    const relativeTime = new Intl.RelativeTimeFormat(locale, {
+      numeric: "auto",
+    });
+    const formatExpiry = (expiresAt: number | null) => {
+      if (expiresAt === null) {
+        return t("codex.switchProgress.detail.expiryUnknown");
+      }
+      const diffSeconds = expiresAt - nowSeconds;
+      const absoluteSeconds = Math.abs(diffSeconds);
+      let unit: Intl.RelativeTimeFormatUnit = "minute";
+      let divisor = 60;
+      if (absoluteSeconds >= 36 * 60 * 60) {
+        unit = "day";
+        divisor = 24 * 60 * 60;
+      } else if (absoluteSeconds >= 90 * 60) {
+        unit = "hour";
+        divisor = 60 * 60;
+      }
+      const relativeValue =
+        diffSeconds < 0
+          ? Math.floor(diffSeconds / divisor)
+          : Math.max(1, Math.ceil(diffSeconds / divisor));
+      return t("codex.switchProgress.detail.expiresAt", {
+        time: new Date(expiresAt * 1000).toLocaleString(locale),
+        relative: relativeTime.format(relativeValue, unit),
+      });
+    };
+    const buildFact = (
+      label: string,
+      token: string | undefined,
+      refreshLeadSeconds: number,
+    ): CodexLaunchPreviewFact => {
+      const expiresAt = getCodexJwtExpiration(token?.trim() || "");
+      return {
+        label,
+        value: formatExpiry(expiresAt),
+        tone:
+          expiresAt !== null && expiresAt <= nowSeconds
+            ? "danger"
+            : expiresAt !== null && expiresAt <= nowSeconds + refreshLeadSeconds
+              ? "warning"
+              : undefined,
+      };
+    };
+
+    return [
+      buildFact("access_token", tokenAccount.tokens?.access_token, 5 * 60),
+      buildFact("id_token", tokenAccount.tokens?.id_token, 10 * 60),
+    ];
+  }, [account, i18n.language, i18n.resolvedLanguage, manualRefreshedAccount, t]);
+  const displayFacts = [
+    ...(summary?.facts ?? fallbackFacts),
+    ...tokenExpiryFacts,
+  ];
   const displayQuotaItems =
     summary?.quotaItems ?? accountPresentation?.quotaItems.slice(0, 3) ?? [];
   const displayActions = actions ?? [];
@@ -498,6 +751,53 @@ export function CodexLaunchPreviewModal({
     },
     [busy, setError],
   );
+
+  const handleForceRefresh = useCallback(async () => {
+    if (!account || !isStandardCodexOAuthAccount(account) || forceRefreshing) {
+      return;
+    }
+    setForceRefreshing(true);
+    setManualRefreshResult({ status: "running" });
+    setNotice(null);
+    setError(null);
+    try {
+      const refreshed = await forceRefreshCodexTokens(account.id);
+      useCodexAccountStore.getState().applyAccountSnapshot(refreshed);
+      setManualRefreshedAccount(refreshed);
+      setManualRefreshResult({ status: "success" });
+    } catch (refreshError) {
+      setManualRefreshResult({
+        status: "error",
+        error: String(refreshError).replace(/^Error:\s*/, ""),
+      });
+    } finally {
+      setForceRefreshing(false);
+    }
+  }, [account, forceRefreshing, setError]);
+
+  const closeManualRefreshResult = useCallback(() => {
+    if (forceRefreshing) return;
+    setManualRefreshResult(null);
+  }, [forceRefreshing]);
+
+  const handleManualRefreshReauthorize = useCallback(() => {
+    if (!account || forceRefreshing) return;
+    setManualRefreshResult(null);
+    onClose();
+    window.dispatchEvent(
+      new CustomEvent("app-request-navigate", { detail: "codex" }),
+    );
+    requestCodexOpenAddAccount({
+      tab: "oauth",
+      targetAccountId: account.id,
+      ...(mode === "instance"
+        ? {
+            retryInstanceLaunchAfterOAuth: true,
+            retryInstanceId: instanceId,
+          }
+        : {}),
+    });
+  }, [account, forceRefreshing, instanceId, mode, onClose]);
 
   const renderFooterAction = (action: CodexLaunchPreviewAction) => (
     <div
@@ -642,7 +942,12 @@ export function CodexLaunchPreviewModal({
                   {displayFacts.map((fact, index) => (
                     <div
                       key={`${fact.label}-${index}`}
-                      className={fact.wide ? "is-wide" : undefined}
+                      className={[
+                        fact.wide ? "is-wide" : "",
+                        fact.tone ? `is-${fact.tone}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
                     >
                       <span>{fact.label}</span>
                       <strong
@@ -727,6 +1032,67 @@ export function CodexLaunchPreviewModal({
             </section>
 
             <div className="codex-launch-preview-tool-list">
+              {mode !== "apiService" &&
+                account &&
+                isStandardCodexOAuthAccount(account) &&
+                (selectedInstance?.launchMode ?? "app") !== "cli" && (
+                  <CodexModelRoutingFields
+                    variant="row"
+                    enabled={routingEnabled}
+                    routes={routingRoutes}
+                    accounts={accounts}
+                    running={Boolean(selectedInstance?.running)}
+                    onEnabledChange={(nextEnabled) => {
+                      setRoutingEnabled(nextEnabled);
+                      setModels((prevModels) =>
+                        syncExperimentalModelsWithRouting(
+                          prevModels,
+                          routingRoutes,
+                          accounts,
+                          nextEnabled,
+                        ),
+                      );
+                    }}
+                    onRoutesChange={(nextRoutes) => {
+                      setRoutingRoutes(nextRoutes);
+                      setModels((prevModels) =>
+                        syncExperimentalModelsWithRouting(
+                          prevModels,
+                          nextRoutes,
+                          accounts,
+                          routingEnabled,
+                        ),
+                      );
+                    }}
+                    onAccountsRefresh={fetchAccounts}
+                  />
+                )}
+              <section className="codex-launch-preview-tool-row">
+                <div className="codex-launch-preview-tool-icon">
+                  <RefreshCw size={16} />
+                </div>
+                <div className="codex-launch-preview-tool-copy">
+                  <h3>{t("codex.launchPreview.forceRefreshTitle")}</h3>
+                  <p>{t("codex.launchPreview.forceRefreshDescription")}</p>
+                  <div className="codex-launch-preview-tool-meta">
+                    <span>
+                      {account && isStandardCodexOAuthAccount(account)
+                        ? t("codex.launchPreview.forceRefreshReady")
+                        : t("codex.launchPreview.forceRefreshUnavailable")}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm codex-launch-preview-tool-action"
+                  onClick={() => void handleForceRefresh()}
+                  disabled={busy || !account || !isStandardCodexOAuthAccount(account)}
+                >
+                  {forceRefreshing
+                    ? t("codex.launchPreview.forceRefreshRunning")
+                    : t("codex.launchPreview.forceRefreshAction")}
+                </button>
+              </section>
               <section className="codex-launch-preview-tool-row">
                 <div className="codex-launch-preview-tool-icon">
                   <SlidersHorizontal size={16} />
@@ -897,6 +1263,87 @@ export function CodexLaunchPreviewModal({
         </div>
       </div>
 
+      {manualRefreshResult && (
+        <div className="modal-overlay codex-launch-preview-refresh-overlay">
+          <div
+            className="modal codex-launch-preview-refresh-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="codex-launch-preview-refresh-title"
+          >
+            <div className="modal-header">
+              <div className="codex-launch-preview-refresh-heading">
+                <RefreshCw size={18} />
+                <div>
+                  <h2 id="codex-launch-preview-refresh-title">
+                    {t("codex.launchPreview.forceRefreshTitle")}
+                  </h2>
+                  <p>
+                    {manualRefreshResult.status === "running"
+                      ? t("codex.launchPreview.forceRefreshRunning")
+                      : manualRefreshResult.status === "success"
+                        ? t("codex.launchPreview.forceRefreshSuccess")
+                        : t("codex.launchPreview.forceRefreshDescription")}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeManualRefreshResult}
+                disabled={forceRefreshing}
+                aria-label={t("common.close", "关闭")}
+              >
+                <X />
+              </button>
+            </div>
+            <div className="modal-body codex-launch-preview-refresh-body">
+              {manualRefreshResult.status === "error" ? (
+                <ModalErrorMessage message={manualRefreshResult.error} />
+              ) : (
+                <div className="codex-launch-preview-refresh-status success">
+                  <Save size={16} />
+                  <span>
+                    {manualRefreshResult.status === "running"
+                      ? t("codex.launchPreview.forceRefreshRunning")
+                      : t("codex.launchPreview.forceRefreshSuccess")}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer codex-launch-preview-refresh-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={closeManualRefreshResult}
+                disabled={forceRefreshing}
+              >
+                {t("common.cancel", "取消")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => void handleForceRefresh()}
+                disabled={forceRefreshing}
+              >
+                {forceRefreshing
+                  ? t("codex.launchPreview.forceRefreshRunning")
+                  : t("codex.launchPreview.forceRefreshRetry", "重新检测")}
+              </button>
+              {manualRefreshResult.status === "error" && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void handleManualRefreshReauthorize()}
+                >
+                  {t("common.reauthorize", "重新授权")}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <CodexSessionVisibilityRepairModal
         open={repairOpen}
         onClose={() => setRepairOpen(false)}
@@ -932,6 +1379,8 @@ export function CodexLaunchPreviewModal({
                 models={models}
                 defaultModelId={defaultModelId}
                 mode="inline"
+                availableChannels={availableChannels}
+                resolveModelSource={resolveModelSource}
                 onChange={(nextModels) => {
                   setModels(nextModels);
                   setNotice(null);
@@ -943,6 +1392,16 @@ export function CodexLaunchPreviewModal({
                   setError(null);
                 }}
                 onValidationChange={setModelsError}
+                onModelRemoved={(removedId) => {
+                  setRoutingRoutes((prevRoutes) =>
+                    toggleRouteModelInRoutes(prevRoutes, removedId, accounts, "remove"),
+                  );
+                }}
+                onModelAdded={(addedId) => {
+                  setRoutingRoutes((prevRoutes) =>
+                    toggleRouteModelInRoutes(prevRoutes, addedId, accounts, "add"),
+                  );
+                }}
                 disabled={busy}
               />
             </div>
@@ -967,6 +1426,7 @@ export function CodexLaunchPreviewModal({
           </div>
         </div>
       )}
+
     </>
   );
 }
