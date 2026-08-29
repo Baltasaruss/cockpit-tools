@@ -141,6 +141,41 @@
           "actionLabel": "Send feedback"
         }
       }
+    },
+    {
+      "id": "codex-windows-login-switch-2026-08-29",
+      "type": "info",
+      "priority": 110,
+      "title": "Windows 用户切号跳转登录页问题说明",
+      "summary": "仅使用官方 ChatGPT 客户端也可能遇到切号后跳转登录页的问题。目前 Windows 更新到 ChatGPT 26.825 或更高版本后基本可以恢复。",
+      "content": "近期发现，仅使用官方 ChatGPT 客户端也可能在切换账号后跳转到登录页面，并非只有使用第三方工具才会出现。\n\n目前测试显示，Windows 用户将 ChatGPT 更新到 26.825 或更高版本后，登录跳转问题基本可以恢复。遇到类似问题的用户，建议及时更新官方客户端后再测试。macOS 目前仍可能出现类似问题。",
+      "action": {
+        "type": "url",
+        "target": "https://github.com/jlcodes99/cockpit-tools/issues/new",
+        "label": "提交反馈"
+      },
+      "targetVersions": "*",
+      "targetLanguages": [
+        "*"
+      ],
+      "showOnce": true,
+      "popup": true,
+      "createdAt": "2026-08-29T00:00:00Z",
+      "expiresAt": null,
+      "locales": {
+        "en": {
+          "title": "Windows users: sign-in redirect after account switching",
+          "summary": "The official ChatGPT client can also redirect to sign-in after switching accounts. On Windows, updating to ChatGPT 26.825 or later has generally restored normal behavior in current testing.",
+          "content": "We found that the official ChatGPT client can redirect to the sign-in page after switching accounts even when no third-party tool is used.\n\nCurrent testing shows that Windows users generally recover normal behavior after updating ChatGPT to 26.825 or later. If you encounter this issue, update the official client and test again. Similar behavior may still occur on macOS.",
+          "actionLabel": "Send feedback"
+        },
+        "en-US": {
+          "title": "Windows users: sign-in redirect after account switching",
+          "summary": "The official ChatGPT client can also redirect to sign-in after switching accounts. On Windows, updating to ChatGPT 26.825 or later has generally restored normal behavior in current testing.",
+          "content": "We found that the official ChatGPT client can redirect to the sign-in page after switching accounts even when no third-party tool is used.\n\nCurrent testing shows that Windows users generally recover normal behavior after updating ChatGPT to 26.825 or later. If you encounter this issue, update the official client and test again. Similar behavior may still occur on macOS.",
+          "actionLabel": "Send feedback"
+        }
+      }
     }
   ]
 }
