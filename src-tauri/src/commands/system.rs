@@ -6,6 +6,18 @@ include!("system_backup_webdav.rs");
 include!("system_network_general.rs");
 include!("system_app_commands.rs");
 
+#[tauri::command]
+pub fn load_ui_preferences() -> Result<modules::ui_preferences::UiPreferences, String> {
+    modules::ui_preferences::load_ui_preferences()
+}
+
+#[tauri::command]
+pub fn save_ui_preferences(
+    values: std::collections::BTreeMap<String, String>,
+) -> Result<modules::ui_preferences::UiPreferences, String> {
+    modules::ui_preferences::save_ui_preferences(values)
+}
+
 #[cfg(test)]
 mod tests {
     include!("system_tests.rs");
