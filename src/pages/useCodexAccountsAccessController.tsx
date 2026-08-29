@@ -212,6 +212,42 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
     validateApiKeyCredentialInputs,
     visibleApiKeyAccountIds,
   } = context;
+
+  useEffect(() => {
+    const clearCancelledSwitchingState = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          type?: string;
+          accountId?: string;
+          cancelled?: boolean;
+        }>
+      ).detail;
+      if (
+        !detail ||
+        (detail.type !== "cancelled" && detail.cancelled !== true) ||
+        !detail.accountId
+      ) {
+        return;
+      }
+      // 后端切换事务仍会在安全检查点继续收尾，但用户已经取消后，账号卡片不应
+      // 等待原 Promise 最终返回才停止旋转。只清理当前对应账号，避免影响其它操作。
+      setSwitching((currentAccountId) =>
+        currentAccountId === detail.accountId ? null : currentAccountId,
+      );
+    };
+
+    window.addEventListener(
+      "codex-switch-progress",
+      clearCancelledSwitchingState,
+    );
+    return () => {
+      window.removeEventListener(
+        "codex-switch-progress",
+        clearCancelledSwitchingState,
+      );
+    };
+  }, [setSwitching]);
+
   const resolveBoundOAuthAccount = useCallback(
       (account: CodexAccount) => {
         const boundId = (account.bound_oauth_account_id || "").trim();
@@ -408,15 +444,6 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
           return t(
             "codex.authError.unsupportedCountryRegion",
             "当前网络地区不支持刷新 Codex 授权。OpenAI 授权服务拒绝了当前网络出口的刷新请求，请切换到支持的网络地区后重试。",
-          );
-        }
-        if (
-          lower.includes("refresh_token_reused") ||
-          raw.includes("refresh_token 已被其它客户端或实例使用过")
-        ) {
-          return t(
-            "codex.authError.refreshTokenReused",
-            "Codex 授权已失效：refresh_token 已被其它客户端或实例使用过。请重新登录，并避免官方 Codex、其它实例或外部工具同时刷新同一账号。",
           );
         }
         if (
@@ -3140,6 +3167,14 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
         } | null;
         if (payload?.platformId !== "codex") return;
         if (payload.reason === "delete") return;
+        if (
+          payload.reason === "client-auth-observation" ||
+          payload.reason === "client-auth-launch"
+        ) {
+          // CDP 已完成连续确认并落盘，立即回读权威账号快照，避免卡片等待轮询。
+          await Promise.all([fetchAccounts(), fetchCurrentAccount()]);
+          return;
+        }
         if (payload.accountId) {
           await refreshApiKeyUsageByAccountId(payload.accountId, {
             force: false,
@@ -3171,7 +3206,7 @@ export function useCodexAccountsAccessController(context: CodexAccountsAccessCon
         unlistenAccountsChanged?.();
         unlistenCurrentChanged?.();
       };
-    }, [refreshApiKeyUsageByAccountId]);
+    }, [fetchAccounts, fetchCurrentAccount, refreshApiKeyUsageByAccountId]);
   
     const formatApiKeyUsageMoney = useCallback(
       (value?: number | null, unit?: string | null): string =>

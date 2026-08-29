@@ -94,6 +94,7 @@ export interface CodexAccount {
   client_auth_status?: "available" | "login_required" | "unknown" | string | null;
   last_client_auth_observed_at?: number | null;
   last_client_login_redirect_at?: number | null;
+  last_client_launch_at?: number | null;
   last_client_auth_instance_id?: string | null;
   quota?: CodexQuota;
   quota_error?: CodexQuotaErrorInfo;

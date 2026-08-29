@@ -555,7 +555,9 @@
       "progress": "시작 진행률",
       "conflictTitle": "계정이 사용 중입니다",
       "completedTitle": "인스턴스가 시작됨",
+      "cancelledTitle": "실행이 취소되었습니다",
       "failedTitle": "인스턴스 시작 실패",
+      "skipAndLaunch": "건너뛰고 실행",
       "conflictAccount": "계정: {{account}}",
       "conflictDescription": "이 계정은 {{owners}}에서 실행 중입니다. 공식 인스턴스 간 refresh_token 충돌을 막기 위해 OAuth 계정 하나는 인스턴스 하나에서만 실행할 수 있습니다.",
       "locate": "인스턴스 찾기",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "이 계정 유형에서는 사용할 수 없음",
       "forceRefreshAction": "지금 새로 고침",
       "forceRefreshRunning": "Token 새로 고침 중…",
-      "forceRefreshSuccess": "Token이 성공적으로 새로 고쳐졌습니다"
+      "forceRefreshSuccess": "Token이 성공적으로 새로 고쳐졌습니다",
+      "forceRefreshRetry": "다시 확인"
     },
     "switch": "전환",
     "switched": "{{email}}(으)로 전환했습니다",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "클라이언트 로그인 필요",
       "reauthorizeTitle": "Codex 인증 만료",
-      "apiOnlyDescription": "이 계정의 클라이언트는 다시 인증해야 합니다. API 서비스는 계속 사용할 수 있습니다.",
-      "observationStatus": "최근 확인 결과 이 계정의 클라이언트는 다시 인증해야 합니다.",
+      "apiOnlyDescription": "현재 클라이언트가 로그인 페이지로 이동했습니다. 클라이언트를 복구하려면 다시 인증하세요. 당분간 API 서비스는 계속 사용할 수 있습니다.",
+      "observationStatus": "로그인 페이지로의 이동이 감지되었습니다",
       "observationTime": "최근 확인: {{time}}",
       "loginRedirectTime": "최근 로그인 페이지 리디렉션: {{time}}",
       "observationInstance": "확인된 인스턴스: {{instance}}",
+      "launchTime": "인스턴스 시작 시간: {{time}}",
       "reauthorizeDescription": "로그인 정보를 갱신할 수 없고 access_token도 API 서비스에서 사용할 수 없습니다. 계속하려면 다시 인증하세요.",
       "idTokenUnavailable": "클라이언트 ID 정보가 만료되었으며 자동 갱신 후에도 유효한 id_token을 받지 못했습니다.",
       "reasonLabel": "원인",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "인증은 업데이트되었지만 인스턴스를 시작하지 못했습니다: {{error}}",
       "reauthorizedAndStartedInstance": "재인증 후 인스턴스를 시작했습니다",
       "apiOnlyBadge": "인증 필요",
-      "skipAuthCheck": "확인을 건너뛰고 계속"
+      "clearClientAuth": "경고 지우기",
+      "clearClientAuthSuccess": "클라이언트 경고를 지웠습니다",
+      "clearClientAuthFailed": "클라이언트 경고를 지우지 못했습니다: {{error}}"
     },
     "current": "현재",
     "empty": {

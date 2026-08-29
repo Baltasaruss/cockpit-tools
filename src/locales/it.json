@@ -555,7 +555,9 @@
       "progress": "Avanzamento avvio",
       "conflictTitle": "Account già in uso",
       "completedTitle": "Istanza avviata",
+      "cancelledTitle": "Avvio annullato",
       "failedTitle": "Avvio istanza non riuscito",
+      "skipAndLaunch": "Ignora e avvia",
       "conflictAccount": "Account: {{account}}",
       "conflictDescription": "Questo account è in esecuzione in {{owners}}. Per evitare che le istanze ufficiali competano per il refresh_token, un account OAuth può essere eseguito in una sola istanza.",
       "locate": "Trova istanza",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "Non disponibile per questo tipo di account",
       "forceRefreshAction": "Aggiorna ora",
       "forceRefreshRunning": "Aggiornamento Token…",
-      "forceRefreshSuccess": "Token aggiornato correttamente"
+      "forceRefreshSuccess": "Token aggiornato correttamente",
+      "forceRefreshRetry": "Ricontrolla"
     },
     "switch": "Cambia",
     "switched": "Passato a {{email}}",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Accesso client richiesto",
       "reauthorizeTitle": "Autorizzazione Codex scaduta",
-      "apiOnlyDescription": "Il client di questo account richiede una nuova autorizzazione. Il servizio API è ancora disponibile.",
-      "observationStatus": "L'ultimo controllo ha rilevato che il client di questo account richiede una nuova autorizzazione.",
+      "apiOnlyDescription": "Il client corrente ha raggiunto la pagina di accesso. Autorizzalo di nuovo per ripristinarne l'uso; il servizio API resta utilizzabile per ora.",
+      "observationStatus": "Rilevato un reindirizzamento alla pagina di accesso",
       "observationTime": "Ultimo controllo: {{time}}",
       "loginRedirectTime": "Ultimo reindirizzamento alla pagina di accesso: {{time}}",
       "observationInstance": "Istanza osservata: {{instance}}",
+      "launchTime": "Ora di avvio dell’istanza: {{time}}",
       "reauthorizeDescription": "Non è stato possibile aggiornare le credenziali e access_token non è più disponibile per il servizio API. Autorizza di nuovo l’account per continuare.",
       "idTokenUnavailable": "L’identità del client è scaduta e l’aggiornamento automatico non ha restituito un id_token valido.",
       "reasonLabel": "Motivo",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "Autorizzazione aggiornata, ma l’istanza non è stata avviata: {{error}}",
       "reauthorizedAndStartedInstance": "Riautorizzato e istanza avviata",
       "apiOnlyBadge": "Accesso richiesto",
-      "skipAuthCheck": "Ignora controllo e continua"
+      "clearClientAuth": "Cancella avviso",
+      "clearClientAuthSuccess": "Avviso del client cancellato",
+      "clearClientAuthFailed": "Impossibile cancellare l’avviso del client: {{error}}"
     },
     "current": "Attuale",
     "empty": {

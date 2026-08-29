@@ -785,7 +785,9 @@
       "progress": "启动进度",
       "conflictTitle": "账号正在其他实例中使用",
       "completedTitle": "实例启动完成",
+      "cancelledTitle": "已取消启动",
       "failedTitle": "实例启动失败",
+      "skipAndLaunch": "跳过并启动",
       "conflictAccount": "账号：{{account}}",
       "conflictDescription": "该账号正在 {{owners}} 中运行。为避免多个官方实例竞争 refresh_token，同一 OAuth 账号只能运行在一个实例中。",
       "locate": "定位现有实例",
@@ -2332,7 +2334,8 @@
       "forceRefreshUnavailable": "当前账号类型不可用",
       "forceRefreshAction": "立即刷新",
       "forceRefreshRunning": "正在刷新 Token…",
-      "forceRefreshSuccess": "Token 刷新成功"
+      "forceRefreshSuccess": "Token 刷新成功",
+      "forceRefreshRetry": "重新检测"
     },
     "switch": "切换",
     "switched": "已切换至 {{email}}",
@@ -2349,11 +2352,15 @@
     "switchAuth": {
       "apiOnlyTitle": "客户端需授权",
       "reauthorizeTitle": "Codex 授权已失效",
-      "apiOnlyDescription": "检测到当前账号的客户端需要重新授权，API 服务仍可用。",
-      "observationStatus": "最近一次检测到当前账号的客户端需要重新授权。",
+      "apiOnlyDescription": "检测到当前客户端已跳转到登录页面。你可以重新授权以恢复客户端使用；如果暂时只使用 API 服务，仍可继续使用。",
+      "clearClientAuth": "清除异常标识",
+      "clearClientAuthSuccess": "已清除客户端异常标识",
+      "clearClientAuthFailed": "清除客户端异常标识失败：{{error}}",
+      "observationStatus": "检测到跳转到登录页面",
       "observationTime": "最近一次检测时间：{{time}}",
       "loginRedirectTime": "最近一次跳转登录页：{{time}}",
       "observationInstance": "检测实例：{{instance}}",
+      "launchTime": "本次实例启动时间：{{time}}",
       "reauthorizeDescription": "当前登录凭据无法自动更新，且 access_token 已不可用于 API 服务。请重新授权后继续使用。",
       "idTokenUnavailable": "客户端身份凭据已过期，自动更新后仍未获得有效的 id_token。",
       "reasonLabel": "原因",
@@ -2366,8 +2373,7 @@
       "startingInstanceAfterReauth": "授权成功，正在重新启动实例...",
       "startInstanceAfterReauthFailed": "授权已更新，但实例启动失败：{{error}}",
       "reauthorizedAndStartedInstance": "重新授权并启动实例成功",
-      "apiOnlyBadge": "客户端需授权",
-      "skipAuthCheck": "跳过检查并继续"
+      "apiOnlyBadge": "客户端需授权"
     },
     "switchProgress": {
       "completed": "切换完成",

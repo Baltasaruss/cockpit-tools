@@ -555,7 +555,9 @@
       "progress": "Tiến độ khởi động",
       "conflictTitle": "Tài khoản đang được sử dụng",
       "completedTitle": "Đã khởi động phiên bản",
+      "cancelledTitle": "Đã hủy khởi chạy",
       "failedTitle": "Không thể khởi động phiên bản",
+      "skipAndLaunch": "Bỏ qua và khởi chạy",
       "conflictAccount": "Tài khoản: {{account}}",
       "conflictDescription": "Tài khoản này đang chạy trong {{owners}}. Để các phiên bản chính thức không tranh chấp refresh_token, một tài khoản OAuth chỉ được chạy trong một phiên bản.",
       "locate": "Tìm phiên bản",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "Không khả dụng cho loại tài khoản này",
       "forceRefreshAction": "Làm mới ngay",
       "forceRefreshRunning": "Đang làm mới Token…",
-      "forceRefreshSuccess": "Đã làm mới Token thành công"
+      "forceRefreshSuccess": "Đã làm mới Token thành công",
+      "forceRefreshRetry": "Kiểm tra lại"
     },
     "switch": "Chuyển",
     "switched": "Đã chuyển sang {{email}}",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Ứng dụng cần đăng nhập",
       "reauthorizeTitle": "Ủy quyền Codex đã hết hạn",
-      "apiOnlyDescription": "Ứng dụng của tài khoản này cần được cấp quyền lại. Dịch vụ API vẫn khả dụng.",
-      "observationStatus": "Lần kiểm tra gần nhất phát hiện ứng dụng của tài khoản này cần được cấp quyền lại.",
+      "apiOnlyDescription": "Ứng dụng hiện tại đã chuyển đến trang đăng nhập. Hãy cấp quyền lại để khôi phục ứng dụng; bạn vẫn có thể tiếp tục dùng Dịch vụ API trong lúc này.",
+      "observationStatus": "Đã phát hiện chuyển hướng đến trang đăng nhập",
       "observationTime": "Lần kiểm tra gần nhất: {{time}}",
       "loginRedirectTime": "Lần chuyển hướng gần nhất đến trang đăng nhập: {{time}}",
       "observationInstance": "Phiên bản được kiểm tra: {{instance}}",
+      "launchTime": "Thời điểm khởi chạy phiên bản: {{time}}",
       "reauthorizeDescription": "Không thể làm mới thông tin đăng nhập và access_token không còn dùng được cho dịch vụ API. Hãy ủy quyền lại tài khoản để tiếp tục.",
       "idTokenUnavailable": "Danh tính ứng dụng đã hết hạn và quá trình làm mới tự động không trả về id_token hợp lệ.",
       "reasonLabel": "Lý do",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "Đã cập nhật ủy quyền nhưng không thể khởi động phiên: {{error}}",
       "reauthorizedAndStartedInstance": "Đã ủy quyền lại và khởi động phiên",
       "apiOnlyBadge": "Cần đăng nhập",
-      "skipAuthCheck": "Bỏ qua kiểm tra và tiếp tục"
+      "clearClientAuth": "Xóa cảnh báo",
+      "clearClientAuthSuccess": "Đã xóa cảnh báo ứng dụng",
+      "clearClientAuthFailed": "Không thể xóa cảnh báo ứng dụng: {{error}}"
     },
     "current": "Hiện tại",
     "empty": {

@@ -555,7 +555,9 @@
       "progress": "Başlatma ilerlemesi",
       "conflictTitle": "Hesap kullanımda",
       "completedTitle": "Örnek başlatıldı",
+      "cancelledTitle": "Başlatma iptal edildi",
       "failedTitle": "Örnek başlatılamadı",
+      "skipAndLaunch": "Atla ve başlat",
       "conflictAccount": "Hesap: {{account}}",
       "conflictDescription": "Bu hesap {{owners}} içinde çalışıyor. Resmî örneklerin refresh_token için yarışmasını önlemek amacıyla bir OAuth hesabı yalnızca bir örnekte çalışabilir.",
       "locate": "Örneği bul",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "Bu hesap türü için kullanılamaz",
       "forceRefreshAction": "Şimdi yenile",
       "forceRefreshRunning": "Token yenileniyor…",
-      "forceRefreshSuccess": "Token başarıyla yenilendi"
+      "forceRefreshSuccess": "Token başarıyla yenilendi",
+      "forceRefreshRetry": "Yeniden denetle"
     },
     "switch": "Değiştir",
     "switched": "{{email}} hesabına geçildi",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "İstemci girişi gerekli",
       "reauthorizeTitle": "Codex yetkilendirmesi sona erdi",
-      "apiOnlyDescription": "Bu hesabın istemcisinin yeniden yetkilendirilmesi gerekiyor. API hizmeti kullanılmaya devam edilebilir.",
-      "observationStatus": "Son kontrol, bu hesabın istemcisinin yeniden yetkilendirilmesi gerektiğini tespit etti.",
+      "apiOnlyDescription": "Geçerli istemci giriş sayfasına yönlendirildi. İstemciyi geri yüklemek için yeniden yetkilendirin; API hizmeti şimdilik kullanılmaya devam edilebilir.",
+      "observationStatus": "Giriş sayfasına yönlendirme algılandı",
       "observationTime": "Son kontrol: {{time}}",
       "loginRedirectTime": "Son giriş sayfası yönlendirmesi: {{time}}",
       "observationInstance": "Gözlemlenen örnek: {{instance}}",
+      "launchTime": "Örneğin başlatılma zamanı: {{time}}",
       "reauthorizeDescription": "Giriş bilgileri yenilenemedi ve access_token artık API hizmetinde kullanılamıyor. Devam etmek için hesabı yeniden yetkilendirin.",
       "idTokenUnavailable": "İstemci kimliği sona erdi ve otomatik yenileme geçerli bir id_token döndürmedi.",
       "reasonLabel": "Neden",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "Yetkilendirme güncellendi ancak örnek başlatılamadı: {{error}}",
       "reauthorizedAndStartedInstance": "Yeniden yetkilendirildi ve örnek başlatıldı",
       "apiOnlyBadge": "Giriş gerekli",
-      "skipAuthCheck": "Kontrolü atla ve devam et"
+      "clearClientAuth": "Uyarıyı temizle",
+      "clearClientAuthSuccess": "İstemci uyarısı temizlendi",
+      "clearClientAuthFailed": "İstemci uyarısı temizlenemedi: {{error}}"
     },
     "current": "Geçerli",
     "empty": {

@@ -5,6 +5,69 @@
   backdrop-filter: blur(12px) saturate(110%);
 }
 
+.codex-launch-preview-refresh-overlay {
+  z-index: 10040;
+  padding: 24px;
+  background: rgb(15 23 42 / 38%);
+  backdrop-filter: blur(4px);
+}
+
+.codex-launch-preview-refresh-modal {
+  width: min(560px, calc(100vw - 40px));
+  max-width: 560px;
+  border-color: var(--border-light);
+  box-shadow: 0 28px 72px rgb(15 23 42 / 34%);
+}
+
+.codex-launch-preview-refresh-heading {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  gap: 12px;
+  min-width: 0;
+  color: var(--accent-primary, #3b82f6);
+}
+
+.codex-launch-preview-refresh-heading > div {
+  min-width: 0;
+}
+
+.codex-launch-preview-refresh-heading h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 720;
+}
+
+.codex-launch-preview-refresh-heading p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.codex-launch-preview-refresh-body {
+  padding: 20px 24px 8px;
+}
+
+.codex-launch-preview-refresh-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--success, #22c55e) 24%, transparent);
+  border-radius: 10px;
+  color: var(--success, #22c55e);
+  background: color-mix(in srgb, var(--success, #22c55e) 10%, transparent);
+  font-size: 14px;
+}
+
+.codex-launch-preview-refresh-footer {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .codex-launch-preview-overlay + .codex-local-access-hide-confirm-overlay {
   z-index: 10050;
 }
@@ -870,13 +933,18 @@
 
 @media (max-width: 720px) {
   .codex-launch-preview-overlay,
-  .codex-launch-preview-model-config-overlay {
+  .codex-launch-preview-model-config-overlay,
+  .codex-launch-preview-refresh-overlay {
     padding: 10px;
   }
 
   .codex-launch-preview-modal {
     width: calc(100vw - 20px);
     max-height: calc(100vh - 20px);
+  }
+
+  .codex-launch-preview-refresh-modal {
+    width: calc(100vw - 20px);
   }
 
   .codex-launch-preview-modal .modal-header {

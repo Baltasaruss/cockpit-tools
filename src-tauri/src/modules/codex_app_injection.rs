@@ -21,7 +21,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, UNIX_EPOCH};
 #[cfg(not(target_os = "macos"))]
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinSet;
 use tokio::time::{timeout, Duration};
@@ -34,6 +34,8 @@ const INJECTION_INTERVAL: Duration = Duration::from_secs(2);
 const QUOTA_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 const AUTH_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
 const AUTH_IDENTITY_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+const AUTH_NETWORK_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(30);
+const AUTH_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(1);
 const AUTH_NETWORK_CAPTURE_WINDOW: Duration = Duration::from_secs(4);
 const AUTH_NETWORK_BODY_PREVIEW_LIMIT: usize = 4096;
 
@@ -454,8 +456,8 @@ pub fn restore_running_profiles(app: AppHandle) -> Result<usize, String> {
     for (instance_id, profile_dir, pid, bind_account_id) in candidates {
         let Some(port) = remote_debugging_port_for_pid(pid) else {
             if should_enable_cdp(bind_account_id.as_deref()) {
-                logger::log_warn(&format!(
-                    "[Codex App Injection] 跳过恢复，运行中的实例缺少 CDP 端口: instance_id={}, pid={}",
+                logger::log_codex_auth_diagnostic(&format!(
+                    "[Codex Auth CDP] restore_skipped: instance_id={}, pid={}, reason=missing_remote_debugging_port",
                     instance_id, pid
                 ));
             }
@@ -470,8 +472,8 @@ pub fn restore_running_profiles(app: AppHandle) -> Result<usize, String> {
             bind_account_id.clone(),
         );
         restored += 1;
-        logger::log_info(&format!(
-            "[Codex CDP] 已恢复运行中实例: instance_id={}, pid={}, port={}, injection_enabled={}, auth_observation_enabled={}",
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] restored_running_instance: instance_id={}, pid={}, port={}, injection_enabled={}, auth_observation_enabled={}",
             instance_id,
             pid,
             port,
@@ -520,6 +522,7 @@ pub fn stop_all() {
 }
 
 fn start_auth_diagnostics_for_profile(
+    app: AppHandle,
     instance_id: &str,
     profile_dir: &Path,
     port: u16,
@@ -540,6 +543,7 @@ fn start_auth_diagnostics_for_profile(
             bind_account_id.as_deref().unwrap_or(""),
         ));
         run_auth_diagnostic_loop(
+            app,
             instance_id,
             profile_key_for_task,
             profile_dir_for_task,
@@ -563,6 +567,7 @@ pub fn start_for_profile(
     let Some(port) = port else { return };
     if auth_observation_enabled(bind_account_id.as_deref()) {
         start_auth_diagnostics_for_profile(
+            app.clone(),
             &instance_id,
             &profile_dir,
             port,
@@ -737,16 +742,25 @@ struct AuthPageSnapshot {
     #[serde(default)]
     ready_state: String,
     #[serde(default)]
-    login_route: bool,
+    physical_url: String,
     #[serde(default)]
-    login_text: bool,
+    route_source: String,
     #[serde(default)]
-    auth_error_text: bool,
+    login_ui_signal: bool,
+    #[serde(default)]
+    login_ui_markers: Vec<String>,
 }
 
 impl AuthPageSnapshot {
     fn login_signal(&self) -> bool {
-        self.login_route || self.login_text
+        // 官方桌面端使用 MemoryRouter，物理 pathname 通常保持 /index.html。
+        // 只有完整 LoginRoute 组合特征才作为 /login 的等价证据；单独的标题或
+        // 普通错误文字不参与状态判定。
+        is_official_login_route(&self.route) || self.has_login_ui_signal()
+    }
+
+    fn has_login_ui_signal(&self) -> bool {
+        self.login_ui_signal && has_login_route_markers(&self.login_ui_markers)
     }
 }
 
@@ -755,11 +769,12 @@ struct AuthDiagnosticObservation {
     cdp_available: bool,
     target_count: usize,
     route: String,
+    route_source: String,
     title: String,
     ready_state: String,
     login_route: bool,
-    login_text: bool,
-    auth_error_text: bool,
+    login_ui_signal: bool,
+    login_ui_markers: Vec<String>,
 }
 
 impl AuthDiagnosticObservation {
@@ -768,35 +783,64 @@ impl AuthDiagnosticObservation {
             cdp_available: false,
             target_count: 0,
             route: String::new(),
+            route_source: String::new(),
             title: String::new(),
             ready_state: String::new(),
             login_route: false,
-            login_text: false,
-            auth_error_text: false,
+            login_ui_signal: false,
+            login_ui_markers: Vec::new(),
         }
     }
 
     fn login_signal(&self) -> bool {
-        self.login_route || self.login_text
+        self.login_route || self.login_ui_signal
     }
+}
+
+fn is_official_login_route(route: &str) -> bool {
+    route.trim_end_matches('/') == "/login"
+}
+
+fn has_login_route_markers(markers: &[String]) -> bool {
+    markers.iter().any(|marker| marker == "login_title")
+        && markers
+            .iter()
+            .any(|marker| marker == "login_primary_action")
 }
 
 const AUTH_DIAGNOSTIC_SCRIPT: &str = r#"
 (() => {
   const href = String(location.href || "");
   const path = String(location.pathname || "");
-  const hash = String(location.hash || "").split(/[?#]/, 1)[0].slice(0, 160);
-  const route = (hash || path).slice(0, 160);
-  const text = String(document.body?.innerText || "").slice(0, 12000).toLowerCase();
-  const routeText = `${path} ${hash}`.toLowerCase();
+  const hash = String(location.hash || "").split(/[?#]/, 1)[0];
+  const normalizeRoute = (value) => {
+    const normalized = String(value || "").replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
+    return normalized || "/";
+  };
+  const pathRoute = normalizeRoute(path);
+  const hashRoute = normalizeRoute(hash);
+  const route = (hash && hashRoute !== "/" ? hashRoute : pathRoute).slice(0, 160);
+  const textOf = (selector) => Array.from(document.querySelectorAll(selector))
+    .map((node) => String(node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160))
+    .filter(Boolean);
+  const headings = textOf("h1,h2").join(" ");
+  const controls = textOf("button,a").join(" ");
+  const loginUiMarkers = [];
+  if (/sign in to chatgpt|登录 chatgpt/i.test(headings)) loginUiMarkers.push("login_title");
+  if (/continue to sign in|继续登录|sign in with chatgpt|使用 chatgpt 登录/i.test(controls)) {
+    loginUiMarkers.push("login_primary_action");
+  }
+  if (/sign in another way|使用其他方式登录|sign up|注册/i.test(controls)) {
+    loginUiMarkers.push("login_secondary_action");
+  }
   return {
     route,
     title: String(document.title || "").slice(0, 160),
     readyState: String(document.readyState || ""),
-    loginRoute: /(^|[\/#])(login|signin|auth)([/?#]|$)/i.test(routeText),
-    loginText: /\b(log[ -]?in|sign[ -]?in|login required)\b|登录|重新登录/i.test(text),
-    authErrorText: /cloud[ _-]?(requirements|config[ _-]?bundle)|relogin|auth[ _-]?error/i.test(text),
-    pageKind: href.startsWith("app://-/") ? "codex-app" : "other",
+    physicalUrl: href.slice(0, 512),
+    routeSource: hash && hashRoute !== "/" ? "hash" : "pathname",
+    loginUiSignal: loginUiMarkers.length > 0,
+    loginUiMarkers,
   };
 })()
 "#;
@@ -1433,9 +1477,31 @@ async fn query_targets(client: &Client, port: u16) -> Vec<CdpTarget> {
         .await
         .ok();
     let Some(response) = response else {
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] target_query_failed: port={}, endpoint=/json/list, reason=request_error_or_timeout",
+            port,
+        ));
         return Vec::new();
     };
-    let mut targets = response.json::<Vec<CdpTarget>>().await.unwrap_or_default();
+    let status = response.status();
+    if !status.is_success() {
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] target_query_failed: port={}, endpoint=/json/list, status={}, reason=http_error",
+            port, status,
+        ));
+        return Vec::new();
+    }
+    let mut targets = match response.json::<Vec<CdpTarget>>().await {
+        Ok(targets) => targets,
+        Err(error) => {
+            logger::log_codex_auth_diagnostic(&format!(
+                "[Codex Auth CDP] target_query_failed: port={}, endpoint=/json/list, reason=json_decode_error, error={}",
+                port,
+                sanitize_cdp_text(&error.to_string()),
+            ));
+            return Vec::new();
+        }
+    };
     for target in &mut targets {
         if target
             .websocket_url
@@ -1446,6 +1512,10 @@ async fn query_targets(client: &Client, port: u16) -> Vec<CdpTarget> {
         }
     }
     targets
+}
+
+fn is_codex_app_target(target: &CdpTarget) -> bool {
+    matches!(target.target_type.as_str(), "page" | "webview") && target.url.starts_with("app://-/")
 }
 
 #[cfg(target_os = "macos")]
@@ -1738,9 +1808,28 @@ async fn monitor_cdp_target(
     profile_key: &str,
     target: &CdpTarget,
 ) -> Option<AuthPageSnapshot> {
-    let websocket_url = target.websocket_url.as_deref()?;
-    let Ok(Ok((mut socket, _))) = timeout(CDP_CONNECT_TIMEOUT, connect_async(websocket_url)).await
-    else {
+    let Some(websocket_url) = target.websocket_url.as_deref() else {
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] target_skipped: instance_id={}, profile={}, target_id={}, target_type={}, target_url={}, reason=missing_safe_websocket_url",
+            instance_id,
+            profile_key,
+            target.target_id,
+            target.target_type,
+            sanitize_cdp_url(&target.url),
+        ));
+        return None;
+    };
+    let socket = timeout(CDP_CONNECT_TIMEOUT, connect_async(websocket_url)).await;
+    let Ok(Ok((mut socket, _))) = socket else {
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] target_attach_failed: instance_id={}, profile={}, target_id={}, target_type={}, target_url={}, websocket_url={}, reason=connect_or_timeout",
+            instance_id,
+            profile_key,
+            target.target_id,
+            target.target_type,
+            sanitize_cdp_url(&target.url),
+            sanitize_cdp_url(websocket_url),
+        ));
         return None;
     };
 
@@ -2146,7 +2235,100 @@ async fn monitor_cdp_target(
             _ => {}
         }
     }
+    if let Some(snapshot) = snapshot.as_ref() {
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] target_snapshot: instance_id={}, profile={}, target_id={}, target_type={}, target_url={}, physical_url={}, route={}, route_source={}, title={}, ready_state={}, official_login_route={}, login_signal={}, login_ui_signal={}, login_ui_markers={:?}",
+            instance_id,
+            profile_key,
+            target_label,
+            target.target_type,
+            sanitize_cdp_url(&target.url),
+            sanitize_cdp_url(&snapshot.physical_url),
+            snapshot.route,
+            snapshot.route_source,
+            sanitize_cdp_text(&snapshot.title),
+            snapshot.ready_state,
+            is_official_login_route(&snapshot.route),
+            snapshot.login_signal(),
+            snapshot.has_login_ui_signal(),
+            snapshot.login_ui_markers,
+        ));
+    } else {
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] target_snapshot_missing: instance_id={}, profile={}, target_id={}, target_type={}, target_url={}, reason=no_runtime_snapshot",
+            instance_id,
+            profile_key,
+            target_label,
+            target.target_type,
+            sanitize_cdp_url(&target.url),
+        ));
+    }
     snapshot
+}
+
+/// 轻量读取当前页面认证快照。
+///
+/// 实时状态判断只需要一次 `Runtime.evaluate`，不启用 `Network`、`Log` 或页面生命周期
+/// 事件，避免每轮轮询把官方客户端的全部网络事件复制到本地。完整网络诊断由低频后台任务
+/// 单独执行。
+async fn monitor_cdp_target_snapshot(
+    instance_id: &str,
+    profile_key: &str,
+    target: &CdpTarget,
+) -> Option<AuthPageSnapshot> {
+    let Some(websocket_url) = target.websocket_url.as_deref() else {
+        return None;
+    };
+    let socket = timeout(CDP_CONNECT_TIMEOUT, connect_async(websocket_url)).await;
+    let Ok(Ok((mut socket, _))) = socket else {
+        return None;
+    };
+    let _ = socket
+        .send(Message::Text(
+            json!({
+                "id": 1,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": AUTH_DIAGNOSTIC_SCRIPT,
+                    "returnByValue": true,
+                    "awaitPromise": false
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await;
+    let capture_until = Instant::now() + AUTH_SNAPSHOT_TIMEOUT;
+    loop {
+        let remaining = capture_until.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        let message = match timeout(remaining, socket.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => text,
+            _ => return None,
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&message) else {
+            continue;
+        };
+        if value.get("id").and_then(Value::as_i64) != Some(1) {
+            continue;
+        }
+        let snapshot = value
+            .pointer("/result/result/value")
+            .cloned()
+            .and_then(|result| serde_json::from_value::<AuthPageSnapshot>(result).ok());
+        if snapshot.is_none() {
+            logger::log_codex_auth_diagnostic(&format!(
+                "[Codex Auth CDP] lightweight_snapshot_missing: instance_id={}, profile={}, target_id={}, target_url={}, reason=runtime_evaluate_empty",
+                instance_id,
+                profile_key,
+                target.target_id,
+                sanitize_cdp_url(&target.url),
+            ));
+        }
+        return snapshot;
+    }
 }
 
 fn is_safe_cdp_websocket_url(raw: &str, expected_port: u16) -> bool {
@@ -2176,19 +2358,24 @@ fn auth_diagnostic_observation(
     let Some(snapshot) = snapshot else {
         return AuthDiagnosticObservation::unavailable();
     };
+    let login_route = is_official_login_route(&snapshot.route);
+    let login_ui_signal = snapshot.has_login_ui_signal();
+    let login_ui_markers = snapshot.login_ui_markers.clone();
     AuthDiagnosticObservation {
         cdp_available: true,
         target_count: targets.len(),
         route: snapshot.route,
+        route_source: snapshot.route_source,
         title: snapshot.title,
         ready_state: snapshot.ready_state,
-        login_route: snapshot.login_route,
-        login_text: snapshot.login_text,
-        auth_error_text: snapshot.auth_error_text,
+        login_route,
+        login_ui_signal,
+        login_ui_markers,
     }
 }
 
 async fn run_auth_diagnostic_loop(
+    app: AppHandle,
     instance_id: String,
     profile_key: String,
     profile_dir: PathBuf,
@@ -2196,11 +2383,15 @@ async fn run_auth_diagnostic_loop(
     bind_account_id: Option<String>,
 ) {
     let client = Client::new();
+    // 监测任务由实例进程启动后立即创建；记录该时刻作为本次客户端启动时间。
+    let launch_started_at = chrono::Utc::now().timestamp();
+    let mut launch_recorded = false;
     let mut previous: Option<AuthDiagnosticObservation> = None;
     let mut previous_app_server: Option<AppServerDiagnosticObservation> = None;
     let mut previous_profile_identity: Option<ProfileOAuthIdentityObservation> = None;
     let mut last_identity_check_at: Option<Instant> = None;
     let mut last_identity_status: Option<String> = None;
+    let mut last_network_diagnostic_at: Option<Instant> = None;
     let mut login_streak = 0u8;
     let mut available_streak = 0u8;
     loop {
@@ -2208,20 +2399,97 @@ async fn run_auth_diagnostic_loop(
             return;
         }
 
-        let targets = query_targets(&client, port).await;
-        let mut network_tasks = JoinSet::new();
+        // 只观察官方 Codex 应用页面，忽略 devtools、错误页和其它外部 target。
+        // 这些页面的 URL/文字不能代表客户端是否跳转到登录页。
+        let discovered_targets = query_targets(&client, port).await;
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] target_scan: instance_id={}, profile={}, bind_account_id={}, port={}, discovered_count={}, discovered_targets={}",
+            instance_id,
+            profile_key,
+            bind_account_id.as_deref().unwrap_or(""),
+            port,
+            discovered_targets.len(),
+            discovered_targets
+                .iter()
+                .map(|target| format!(
+                    "{}:{}:{}:{}",
+                    target.target_id,
+                    target.target_type,
+                    sanitize_cdp_url(&target.url),
+                    target.websocket_url.is_some()
+                ))
+                .collect::<Vec<_>>()
+                .join("|"),
+        ));
+        let targets: Vec<CdpTarget> = discovered_targets
+            .into_iter()
+            .filter(is_codex_app_target)
+            .collect();
+        if targets.is_empty() {
+            logger::log_warn(&format!(
+                "[Codex Auth CDP] no_codex_app_target: instance_id={}, profile={}, bind_account_id={}, port={}, reason=filtered_all_targets",
+                instance_id,
+                profile_key,
+                bind_account_id.as_deref().unwrap_or(""),
+                port,
+            ));
+        }
+        // 认证状态使用轻量快照高频检查，避免每轮都打开 Network/Log 事件流。
+        let mut snapshot_tasks = JoinSet::new();
         for target in targets.iter().cloned() {
             let instance_id = instance_id.clone();
             let profile_key = profile_key.clone();
-            network_tasks.spawn(async move {
-                monitor_cdp_target(&instance_id, &profile_key, &target).await
+            snapshot_tasks.spawn(async move {
+                let snapshot =
+                    monitor_cdp_target_snapshot(&instance_id, &profile_key, &target).await;
+                (target, snapshot)
             });
         }
         let mut selected_snapshot = None;
-        while let Some(result) = network_tasks.join_next().await {
-            let Ok(Some(snapshot)) = result else {
+        while let Some(result) = snapshot_tasks.join_next().await {
+            let Ok((target, snapshot)) = result else {
+                logger::log_warn(&format!(
+                    "[Codex Auth CDP] lightweight_snapshot_task_failed: instance_id={}, profile={}, reason=join_error",
+                    instance_id, profile_key,
+                ));
                 continue;
             };
+            logger::log_codex_auth_diagnostic(&format!(
+                "[Codex Auth CDP] lightweight_snapshot_result: instance_id={}, profile={}, target_id={}, target_type={}, target_url={}, snapshot_present={}, snapshot_route={}, snapshot_official_login_route={}, snapshot_login_signal={}, snapshot_login_ui_signal={}, snapshot_login_ui_markers={}",
+                instance_id,
+                profile_key,
+                target.target_id,
+                target.target_type,
+                sanitize_cdp_url(&target.url),
+                snapshot.is_some(),
+                snapshot.as_ref().map(|value| value.route.as_str()).unwrap_or(""),
+                snapshot
+                    .as_ref()
+                    .is_some_and(|value| is_official_login_route(&value.route)),
+                snapshot.as_ref().is_some_and(AuthPageSnapshot::login_signal),
+                snapshot
+                    .as_ref()
+                    .is_some_and(AuthPageSnapshot::has_login_ui_signal),
+                snapshot
+                    .as_ref()
+                    .map(|value| format!("{:?}", value.login_ui_markers))
+                    .unwrap_or_default(),
+            ));
+            let Some(snapshot) = snapshot else {
+                continue;
+            };
+            if snapshot.has_login_ui_signal() && !is_official_login_route(&snapshot.route) {
+                logger::log_codex_auth_diagnostic(&format!(
+                    "[Codex Auth CDP] login_ui_route_mismatch: instance_id={}, profile={}, target_id={}, physical_url={}, observed_route={}, route_source={}, markers={:?}, reason=official_desktop_uses_memory_router",
+                    instance_id,
+                    profile_key,
+                    target.target_id,
+                    sanitize_cdp_url(&snapshot.physical_url),
+                    snapshot.route,
+                    snapshot.route_source,
+                    snapshot.login_ui_markers,
+                ));
+            }
             if selected_snapshot.is_none() || snapshot.login_signal() {
                 selected_snapshot = Some(snapshot);
             }
@@ -2229,7 +2497,27 @@ async fn run_auth_diagnostic_loop(
                 .as_ref()
                 .is_some_and(AuthPageSnapshot::login_signal)
             {
-                // 不能提前取消其它 target：它们可能仍在记录当前实例的网络请求。
+                // 不能提前取消其它 target：它们可能仍在读取当前实例的页面状态。
+            }
+        }
+        let network_diagnostic_due = last_network_diagnostic_at
+            .map(|started_at| started_at.elapsed() >= AUTH_NETWORK_DIAGNOSTIC_INTERVAL)
+            .unwrap_or(true);
+        if network_diagnostic_due && !targets.is_empty() {
+            last_network_diagnostic_at = Some(Instant::now());
+            logger::log_codex_auth_diagnostic(&format!(
+                "[Codex Auth Network] capture_scheduled: instance_id={}, profile={}, target_count={}, interval_secs={}",
+                instance_id,
+                profile_key,
+                targets.len(),
+                AUTH_NETWORK_DIAGNOSTIC_INTERVAL.as_secs(),
+            ));
+            for target in targets.iter().cloned() {
+                let instance_id = instance_id.clone();
+                let profile_key = profile_key.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = monitor_cdp_target(&instance_id, &profile_key, &target).await;
+                });
             }
         }
         if let Some(app_server) = app_server_diagnostic_observation(profile_dir.clone()).await {
@@ -2251,26 +2539,28 @@ async fn run_auth_diagnostic_loop(
         let changed = previous.as_ref() != Some(&observation);
         if changed {
             logger::log_codex_auth_diagnostic(&format!(
-                "[Codex Auth CDP] 页面认证状态变化: instance_id={}, profile={}, bind_account_id={}, cdp_available={}, target_count={}, route={}, title={}, ready_state={}, login_route={}, login_text={}, auth_error_text={}",
+                "[Codex Auth CDP] 页面认证路由状态变化: instance_id={}, profile={}, bind_account_id={}, cdp_available={}, target_count={}, route={}, route_source={}, title={}, ready_state={}, login_route={}, login_ui_signal={}, login_ui_markers={:?}",
                 instance_id,
                 profile_key,
                 bind_account_id.as_deref().unwrap_or(""),
                 observation.cdp_available,
                 observation.target_count,
                 observation.route,
+                observation.route_source,
                 observation.title,
                 observation.ready_state,
                 observation.login_route,
-                observation.login_text,
-                observation.auth_error_text,
+                observation.login_ui_signal,
+                observation.login_ui_markers,
             ));
-            if observation.login_signal() || observation.auth_error_text {
+            if observation.login_signal() {
                 logger::log_warn(&format!(
-                    "[Codex Auth CDP] 检测到登录/认证异常页面: instance_id={}, route={}, login_signal={}, auth_error_text={}",
+                    "[Codex Auth CDP] 检测到官方登录状态: instance_id={}, route={}, login_route={}, login_ui_signal={}, login_signal={}",
                     instance_id,
                     observation.route,
+                    observation.login_route,
+                    observation.login_ui_signal,
                     observation.login_signal(),
-                    observation.auth_error_text,
                 ));
             }
             previous = Some(observation.clone());
@@ -2291,6 +2581,24 @@ async fn run_auth_diagnostic_loop(
             }
         }
 
+        logger::log_codex_auth_diagnostic(&format!(
+            "[Codex Auth CDP] status_evaluation: instance_id={}, profile={}, bind_account_id={}, route={}, cdp_available={}, target_count={}, login_route={}, login_ui_signal={}, login_streak={}, available_streak={}, stable_status={}",
+            instance_id,
+            profile_key,
+            bind_account_id.as_deref().unwrap_or(""),
+            observation.route,
+            observation.cdp_available,
+            observation.target_count,
+            observation.login_route,
+            observation.login_ui_signal,
+            login_streak,
+            available_streak,
+            stable_status
+                .as_ref()
+                .map(|(status, _)| *status)
+                .unwrap_or("none"),
+        ));
+
         if let Some((status, login_redirect)) = stable_status {
             let status_changed = last_identity_status.as_deref() != Some(status);
             let retry_due = last_identity_check_at
@@ -2302,6 +2610,10 @@ async fn run_auth_diagnostic_loop(
             }
             last_identity_check_at = Some(Instant::now());
             last_identity_status = Some(status.to_string());
+            logger::log_codex_auth_diagnostic(&format!(
+                "[Codex Auth Identity] persistence_attempt: instance_id={}, profile={}, status={}, login_redirect={}, reason=status_stable",
+                instance_id, profile_key, status, login_redirect,
+            ));
             let identity =
                 observe_profile_oauth_identity(profile_dir.clone(), bind_account_id.clone()).await;
             if previous_profile_identity.as_ref() != Some(&identity) {
@@ -2309,6 +2621,36 @@ async fn run_auth_diagnostic_loop(
                 previous_profile_identity = Some(identity.clone());
             }
             if let ProfileOAuthIdentityObservation::Matched { account_id, .. } = identity {
+                if !launch_recorded {
+                    match codex_account::record_client_launch(
+                        &account_id,
+                        &instance_id,
+                        launch_started_at,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            launch_recorded = true;
+                            let _ = app.emit(
+                                "accounts:changed",
+                                json!({
+                                    "platformId": "codex",
+                                    "accountId": account_id,
+                                    "reason": "client-auth-launch",
+                                    "instanceId": instance_id,
+                                }),
+                            );
+                            logger::log_codex_auth_diagnostic(&format!(
+                                "[Codex Auth Identity] launch_time_recorded: instance_id={}, profile={}, account_id={}, launched_at={}",
+                                instance_id, profile_key, account_id, launch_started_at,
+                            ));
+                        }
+                        Err(error) => logger::log_warn(&format!(
+                            "[Codex Auth Identity] failed to record launch time: instance_id={}, profile={}, account_id={}, error={}",
+                            instance_id, profile_key, account_id, error,
+                        )),
+                    }
+                }
                 match codex_account::update_client_auth_observation(
                     &account_id,
                     &instance_id,
@@ -2317,7 +2659,30 @@ async fn run_auth_diagnostic_loop(
                 )
                 .await
                 {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        logger::log_codex_auth_diagnostic(&format!(
+                            "[Codex Auth Identity] persistence_succeeded: instance_id={}, profile={}, account_id={}, status={}, login_redirect={}",
+                            instance_id, profile_key, account_id, status, login_redirect,
+                        ));
+                        // 仅在状态发生变化时通知前端，避免 30 秒重试周期反复触发账号列表刷新。
+                        if status_changed {
+                            let _ = app.emit(
+                                "accounts:changed",
+                                json!({
+                                    "platformId": "codex",
+                                    "accountId": account_id,
+                                    "reason": "client-auth-observation",
+                                    "status": status,
+                                    "loginRedirect": login_redirect,
+                                    "instanceId": instance_id,
+                                }),
+                            );
+                            logger::log_codex_auth_diagnostic(&format!(
+                                "[Codex Auth Identity] frontend_sync_emitted: instance_id={}, profile={}, account_id={}, status={}, login_redirect={}",
+                                instance_id, profile_key, account_id, status, login_redirect,
+                            ));
+                        }
+                    }
                     Err(error) => logger::log_warn(&format!(
                         "[Codex Auth Identity] failed to persist observation: instance_id={}, profile={}, account_id={}, status={}, error={}",
                         instance_id, profile_key, account_id, status, error,
@@ -2548,11 +2913,12 @@ mod tests {
     use super::{
         app_server_auth_file_snapshot, auth_diagnostic_error_signal, auth_diagnostic_observation,
         build_launch_args, cdp_auth_signal, cdp_body_preview, cdp_console_auth_signal,
-        deepseek_model_injection_script, injection_script, is_auth_diagnostic_url,
+        deepseek_model_injection_script, has_login_route_markers, injection_script,
+        is_auth_diagnostic_url, is_codex_app_target, is_official_login_route,
         is_safe_cdp_websocket_url, refresh_request_token_from_cdp_response,
         remote_debugging_port_from_command_line, sanitize_cdp_headers,
         selected_model_from_cdp_response, should_capture_cdp_response_body, supports_bind_account,
-        AuthPageSnapshot, CdpTarget, QuotaPlanSummary, QuotaResponse,
+        AuthPageSnapshot, CdpTarget, QuotaPlanSummary, QuotaResponse, AUTH_DIAGNOSTIC_SCRIPT,
     };
     use crate::models::codex::{CodexAccount, CodexTokens};
     use crate::modules::codex_account::{
@@ -2821,9 +3187,6 @@ mod tests {
             route: "/login".to_string(),
             title: "ChatGPT".to_string(),
             ready_state: "complete".to_string(),
-            login_route: true,
-            login_text: false,
-            auth_error_text: false,
             ..AuthPageSnapshot::default()
         };
         let observed = auth_diagnostic_observation(&[target], Some(snapshot));
@@ -2832,7 +3195,66 @@ mod tests {
         assert_eq!(observed.target_count, 1);
         assert_eq!(observed.route, "/login");
         assert!(observed.login_signal());
-        assert!(!observed.auth_error_text);
+    }
+
+    #[test]
+    fn auth_diagnostic_requires_route_or_complete_login_ui_signal() {
+        assert!(!AUTH_DIAGNOSTIC_SCRIPT.contains("innerText"));
+        assert!(!AUTH_DIAGNOSTIC_SCRIPT.contains("loginText"));
+        assert!(is_official_login_route("/login"));
+        assert!(is_official_login_route("/login/"));
+        assert!(!is_official_login_route("/auth/login"));
+        assert!(!is_official_login_route("/index.html"));
+        assert!(has_login_route_markers(&[
+            "login_title".to_string(),
+            "login_primary_action".to_string(),
+        ]));
+        assert!(!has_login_route_markers(&["login_title".to_string()]));
+        let target = CdpTarget {
+            target_id: "page-1".to_string(),
+            target_type: "page".to_string(),
+            url: "app://-/index.html".to_string(),
+            websocket_url: Some("ws://127.0.0.1:9333/devtools/page/1".to_string()),
+        };
+        let normal_page = AuthPageSnapshot {
+            route: "/index.html".to_string(),
+            title: "Sign in to ChatGPT".to_string(),
+            ready_state: "complete".to_string(),
+            ..AuthPageSnapshot::default()
+        };
+        let observed = auth_diagnostic_observation(&[target], Some(normal_page));
+        assert!(!observed.login_signal());
+
+        let login_page = AuthPageSnapshot {
+            route: "/index.html".to_string(),
+            login_ui_signal: true,
+            login_ui_markers: vec![
+                "login_title".to_string(),
+                "login_primary_action".to_string(),
+            ],
+            ..AuthPageSnapshot::default()
+        };
+        let observed = auth_diagnostic_observation(&[], Some(login_page));
+        assert!(observed.login_signal());
+        assert!(observed.login_ui_signal);
+    }
+
+    #[test]
+    fn auth_diagnostic_ignores_non_codex_targets() {
+        let codex_target = CdpTarget {
+            target_id: "codex".to_string(),
+            target_type: "page".to_string(),
+            url: "app://-/index.html".to_string(),
+            websocket_url: None,
+        };
+        let external_target = CdpTarget {
+            target_id: "external".to_string(),
+            target_type: "page".to_string(),
+            url: "https://chatgpt.com/auth/login".to_string(),
+            websocket_url: None,
+        };
+        assert!(is_codex_app_target(&codex_target));
+        assert!(!is_codex_app_target(&external_target));
     }
 
     #[test]

@@ -555,7 +555,9 @@
       "progress": "Progreso de inicio",
       "conflictTitle": "La cuenta está en uso",
       "completedTitle": "Instancia iniciada",
+      "cancelledTitle": "Inicio cancelado",
       "failedTitle": "Error al iniciar la instancia",
+      "skipAndLaunch": "Omitir e iniciar",
       "conflictAccount": "Cuenta: {{account}}",
       "conflictDescription": "Esta cuenta se está ejecutando en {{owners}}. Para evitar que las instancias oficiales compitan por el refresh_token, una cuenta OAuth solo puede ejecutarse en una instancia.",
       "locate": "Localizar instancia",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "No disponible para este tipo de cuenta",
       "forceRefreshAction": "Actualizar ahora",
       "forceRefreshRunning": "Actualizando Token…",
-      "forceRefreshSuccess": "Token actualizado correctamente"
+      "forceRefreshSuccess": "Token actualizado correctamente",
+      "forceRefreshRetry": "Volver a comprobar"
     },
     "switch": "Cambiar",
     "switched": "Cambiado a {{email}}",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "El cliente requiere iniciar sesión",
       "reauthorizeTitle": "La autorización de Codex caducó",
-      "apiOnlyDescription": "El cliente de esta cuenta necesita autorización de nuevo. El servicio API sigue disponible.",
-      "observationStatus": "La última comprobación detectó que el cliente de esta cuenta necesita autorización de nuevo.",
+      "apiOnlyDescription": "El cliente actual ha llegado a la página de inicio de sesión. Vuelve a autorizarlo para restaurar su uso; el servicio API sigue disponible por ahora.",
+      "observationStatus": "Se detectó una redirección a la página de inicio de sesión",
       "observationTime": "Última comprobación: {{time}}",
       "loginRedirectTime": "Última redirección a la página de inicio de sesión: {{time}}",
       "observationInstance": "Instancia observada: {{instance}}",
+      "launchTime": "Hora de inicio de la instancia: {{time}}",
       "reauthorizeDescription": "No fue posible renovar las credenciales y el access_token ya no está disponible para el servicio API. Vuelve a autorizar la cuenta para continuar.",
       "idTokenUnavailable": "La identidad del cliente caducó y la renovación automática no devolvió un id_token válido.",
       "reasonLabel": "Motivo",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "Autorización actualizada, pero no se pudo iniciar la instancia: {{error}}",
       "reauthorizedAndStartedInstance": "Reautorizada e instancia iniciada",
       "apiOnlyBadge": "Falta autorizar",
-      "skipAuthCheck": "Omitir comprobación y continuar"
+      "clearClientAuth": "Borrar advertencia",
+      "clearClientAuthSuccess": "Advertencia del cliente borrada",
+      "clearClientAuthFailed": "No se pudo borrar la advertencia del cliente: {{error}}"
     },
     "current": "Actual",
     "empty": {

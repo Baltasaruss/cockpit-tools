@@ -14,12 +14,15 @@ use tracing_subscriber::{
 const APP_LOG_FILE_PREFIX: &str = "app.log";
 const CODEX_API_LOG_FILE_PREFIX: &str = "codex-api.log";
 const CODEX_AUTH_DIAGNOSTIC_LOG_FILE_PREFIX: &str = "codex-auth-diagnostic.log";
+const CODEX_CDP_DIAGNOSTIC_LOG_FILE_PREFIX: &str = "codex-cdp-diagnostic.log";
 const CODEX_API_LOG_TARGET: &str = "codex_api";
 const CODEX_AUTH_DIAGNOSTIC_LOG_TARGET: &str = "codex_auth_diagnostic";
+const CODEX_CDP_DIAGNOSTIC_LOG_TARGET: &str = "codex_cdp_diagnostic";
 const MANAGED_LOG_FILE_PREFIXES: &[&str] = &[
     APP_LOG_FILE_PREFIX,
     CODEX_API_LOG_FILE_PREFIX,
     CODEX_AUTH_DIAGNOSTIC_LOG_FILE_PREFIX,
+    CODEX_CDP_DIAGNOSTIC_LOG_FILE_PREFIX,
 ];
 const LOG_RETENTION_DAYS: i64 = 3;
 const DEFAULT_LOG_TAIL_LINES: usize = 200;
@@ -300,7 +303,12 @@ pub fn init_logger() {
         .with(filter_layer)
         .with(console_layer)
         .with(app_file_layer.with_filter(filter_fn(|metadata| {
-            metadata.target() != CODEX_API_LOG_TARGET
+            !matches!(
+                metadata.target(),
+                CODEX_API_LOG_TARGET
+                    | CODEX_AUTH_DIAGNOSTIC_LOG_TARGET
+                    | CODEX_CDP_DIAGNOSTIC_LOG_TARGET
+            )
         })))
         .with(codex_api_file_layer.with_filter(filter_fn(|metadata| {
             metadata.target() == CODEX_API_LOG_TARGET
@@ -321,14 +329,30 @@ pub fn init_logger() {
             .with_level(true)
             .with_timer(LocalTimer);
 
+        let codex_cdp_diagnostic_file_appender =
+            tracing_appender::rolling::daily(log_dir.clone(), CODEX_CDP_DIAGNOSTIC_LOG_FILE_PREFIX);
+        let (codex_cdp_diagnostic_non_blocking, cdp_guard) =
+            tracing_appender::non_blocking(codex_cdp_diagnostic_file_appender);
+        let codex_cdp_diagnostic_file_layer = fmt::Layer::new()
+            .with_writer(codex_cdp_diagnostic_non_blocking)
+            .with_ansi(false)
+            .with_target(false)
+            .with_level(true)
+            .with_timer(LocalTimer);
+
         let _ = registry
             .with(
                 codex_auth_diagnostic_file_layer.with_filter(filter_fn(|metadata| {
                     metadata.target() == CODEX_AUTH_DIAGNOSTIC_LOG_TARGET
                 })),
             )
+            .with(
+                codex_cdp_diagnostic_file_layer.with_filter(filter_fn(|metadata| {
+                    metadata.target() == CODEX_CDP_DIAGNOSTIC_LOG_TARGET
+                })),
+            )
             .try_init();
-        Some(guard)
+        Some((guard, cdp_guard))
     } else {
         let _ = registry.try_init();
         None
@@ -336,8 +360,9 @@ pub fn init_logger() {
 
     std::mem::forget(app_guard);
     std::mem::forget(codex_api_guard);
-    if let Some(guard) = codex_auth_diagnostic_guard {
-        std::mem::forget(guard);
+    if let Some((auth_guard, cdp_guard)) = codex_auth_diagnostic_guard {
+        std::mem::forget(auth_guard);
+        std::mem::forget(cdp_guard);
     }
 
     info!("日志系统已完成初始化");
@@ -353,7 +378,15 @@ pub fn log_info(message: &str) {
 }
 
 pub fn log_warn(message: &str) {
-    warn!("{}", sanitize_message(message));
+    if is_cdp_diagnostic_message(message) {
+        warn!(
+            target: CODEX_CDP_DIAGNOSTIC_LOG_TARGET,
+            "{}",
+            sanitize_message(message)
+        );
+    } else {
+        warn!("{}", sanitize_message(message));
+    }
 }
 
 pub fn log_error(message: &str) {
@@ -377,11 +410,23 @@ pub fn log_codex_auth_diagnostic(message: &str) {
     if !crate::modules::account::is_dev_profile() {
         return;
     }
-    info!(
-        target: CODEX_AUTH_DIAGNOSTIC_LOG_TARGET,
-        "{}",
-        sanitize_message(message)
-    );
+    if is_cdp_diagnostic_message(message) {
+        info!(
+            target: CODEX_CDP_DIAGNOSTIC_LOG_TARGET,
+            "{}",
+            sanitize_message(message)
+        );
+    } else {
+        info!(
+            target: CODEX_AUTH_DIAGNOSTIC_LOG_TARGET,
+            "{}",
+            sanitize_message(message)
+        );
+    }
+}
+
+fn is_cdp_diagnostic_message(message: &str) -> bool {
+    message.starts_with("[Codex Auth CDP]") || message.starts_with("[Codex Auth Network]")
 }
 
 fn sanitize_message(message: &str) -> String {

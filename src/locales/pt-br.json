@@ -555,7 +555,9 @@
       "progress": "Progresso da inicialização",
       "conflictTitle": "Conta em uso",
       "completedTitle": "Instância iniciada",
+      "cancelledTitle": "Inicialização cancelada",
       "failedTitle": "Falha ao iniciar a instância",
+      "skipAndLaunch": "Ignorar e iniciar",
       "conflictAccount": "Conta: {{account}}",
       "conflictDescription": "Esta conta está em execução em {{owners}}. Para impedir que instâncias oficiais disputem o refresh_token, uma conta OAuth só pode ser executada em uma instância.",
       "locate": "Localizar instância",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "Indisponível para este tipo de conta",
       "forceRefreshAction": "Atualizar agora",
       "forceRefreshRunning": "Atualizando Token…",
-      "forceRefreshSuccess": "Token atualizado com sucesso"
+      "forceRefreshSuccess": "Token atualizado com sucesso",
+      "forceRefreshRetry": "Verificar novamente"
     },
     "switch": "Alternar",
     "switched": "Alternado para {{email}}",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "O cliente precisa entrar",
       "reauthorizeTitle": "Autorização do Codex expirada",
-      "apiOnlyDescription": "O cliente desta conta precisa ser autorizado novamente. O serviço de API continua disponível.",
-      "observationStatus": "A última verificação detectou que o cliente desta conta precisa ser autorizado novamente.",
+      "apiOnlyDescription": "O cliente atual chegou à página de login. Autorize novamente para restaurar o uso do cliente; o serviço de API continua disponível por enquanto.",
+      "observationStatus": "Foi detectado um redirecionamento para a página de login",
       "observationTime": "Última verificação: {{time}}",
       "loginRedirectTime": "Último redirecionamento para a página de login: {{time}}",
       "observationInstance": "Instância observada: {{instance}}",
+      "launchTime": "Horário de início da instância: {{time}}",
       "reauthorizeDescription": "As credenciais não puderam ser renovadas e o access_token não está mais disponível para o serviço de API. Reautorize a conta para continuar.",
       "idTokenUnavailable": "A identidade do cliente expirou e a renovação automática não retornou um id_token válido.",
       "reasonLabel": "Motivo",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "Autorização atualizada, mas a instância não foi iniciada: {{error}}",
       "reauthorizedAndStartedInstance": "Reautorizada e instância iniciada",
       "apiOnlyBadge": "Login necessário",
-      "skipAuthCheck": "Ignorar verificação e continuar"
+      "clearClientAuth": "Limpar aviso",
+      "clearClientAuthSuccess": "Aviso do cliente limpo",
+      "clearClientAuthFailed": "Não foi possível limpar o aviso do cliente: {{error}}"
     },
     "current": "Atual",
     "empty": {

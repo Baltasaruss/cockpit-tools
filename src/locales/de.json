@@ -555,7 +555,9 @@
       "progress": "Startfortschritt",
       "conflictTitle": "Konto wird bereits verwendet",
       "completedTitle": "Instanz gestartet",
+      "cancelledTitle": "Start abgebrochen",
       "failedTitle": "Instanzstart fehlgeschlagen",
+      "skipAndLaunch": "Überspringen und starten",
       "conflictAccount": "Konto: {{account}}",
       "conflictDescription": "Dieses Konto läuft in {{owners}}. Damit offizielle Instanzen nicht um das refresh_token konkurrieren, kann ein OAuth-Konto nur in einer Instanz ausgeführt werden.",
       "locate": "Instanz anzeigen",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "Für diesen Kontotyp nicht verfügbar",
       "forceRefreshAction": "Jetzt erneuern",
       "forceRefreshRunning": "Token wird erneuert…",
-      "forceRefreshSuccess": "Token erfolgreich erneuert"
+      "forceRefreshSuccess": "Token erfolgreich erneuert",
+      "forceRefreshRetry": "Erneut prüfen"
     },
     "switch": "Wechseln",
     "switched": "Gewechselt zu {{email}}",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Client-Anmeldung erforderlich",
       "reauthorizeTitle": "Codex-Autorisierung abgelaufen",
-      "apiOnlyDescription": "Der Client dieses Kontos muss erneut autorisiert werden. Der API-Dienst ist weiterhin verfügbar.",
-      "observationStatus": "Die letzte Prüfung hat ergeben, dass der Client dieses Kontos erneut autorisiert werden muss.",
+      "apiOnlyDescription": "Der aktuelle Client wurde zur Anmeldeseite weitergeleitet. Autorisieren Sie ihn erneut, um die Client-Nutzung wiederherzustellen; der API-Dienst kann vorerst weiter verwendet werden.",
+      "observationStatus": "Weiterleitung zur Anmeldeseite erkannt",
       "observationTime": "Letzte Prüfung: {{time}}",
       "loginRedirectTime": "Letzte Weiterleitung zur Anmeldeseite: {{time}}",
       "observationInstance": "Beobachtete Instanz: {{instance}}",
+      "launchTime": "Startzeit dieser Instanz: {{time}}",
       "reauthorizeDescription": "Die Anmeldedaten konnten nicht erneuert werden und der access_token ist für den API-Dienst nicht mehr verfügbar. Autorisieren Sie das Konto erneut.",
       "idTokenUnavailable": "Die Client-Identität ist abgelaufen und die automatische Erneuerung lieferte keinen gültigen id_token.",
       "reasonLabel": "Grund",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "Autorisierung aktualisiert, aber die Instanz konnte nicht gestartet werden: {{error}}",
       "reauthorizedAndStartedInstance": "Neu autorisiert und Instanz gestartet",
       "apiOnlyBadge": "Anmeldung nötig",
-      "skipAuthCheck": "Prüfung überspringen und fortfahren"
+      "clearClientAuth": "Warnung löschen",
+      "clearClientAuthSuccess": "Client-Warnung gelöscht",
+      "clearClientAuthFailed": "Client-Warnung konnte nicht gelöscht werden: {{error}}"
     },
     "current": "Aktuell",
     "empty": {

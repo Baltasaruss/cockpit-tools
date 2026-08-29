@@ -414,11 +414,13 @@ export function useCodexAccountsOverviewController(context: Pick<ReturnType<type
             : [meta.accountContextText, meta.signedInWithText]
                 .filter(Boolean)
                 .join(" · "),
-          statusLabel: account.requires_reauth || account.client_auth_status === "login_required"
-            ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
-            : overviewCurrentAccountId === account.id
-              ? t("codex.current", "当前")
-              : undefined,
+          statusLabel: account.requires_reauth
+            ? t("codex.authError.badge", "授权异常")
+            : account.client_auth_status === "login_required"
+              ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
+              : overviewCurrentAccountId === account.id
+                ? t("codex.current", "当前")
+                : undefined,
           statusTone: account.requires_reauth || account.client_auth_status === "login_required"
             ? "warning"
             : overviewCurrentAccountId === account.id

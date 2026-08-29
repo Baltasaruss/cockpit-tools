@@ -785,7 +785,9 @@
       "progress": "Launch progress",
       "conflictTitle": "Account is in use",
       "completedTitle": "Instance started",
+      "cancelledTitle": "Launch cancelled",
       "failedTitle": "Instance launch failed",
+      "skipAndLaunch": "Skip and launch",
       "conflictAccount": "Account: {{account}}",
       "conflictDescription": "This account is running in {{owners}}. To prevent official instances from competing for the refresh_token, one OAuth account can run in only one instance.",
       "locate": "Locate instance",
@@ -2332,7 +2334,8 @@
       "forceRefreshUnavailable": "Unavailable for this account type",
       "forceRefreshAction": "Refresh now",
       "forceRefreshRunning": "Refreshing Token…",
-      "forceRefreshSuccess": "Token refreshed successfully"
+      "forceRefreshSuccess": "Token refreshed successfully",
+      "forceRefreshRetry": "Retry check"
     },
     "switch": "Switch",
     "switched": "Switched to {{email}}",
@@ -2349,11 +2352,15 @@
     "switchAuth": {
       "apiOnlyTitle": "Client Sign-in Needed",
       "reauthorizeTitle": "Codex Authorization Expired",
-      "apiOnlyDescription": "The client for this account needs authorization again. The API service is still available.",
-      "observationStatus": "The latest check found that this account's client needs authorization again.",
+      "apiOnlyDescription": "The current client has reached the login page. Reauthorize to restore client use; you can still continue using the API Service for now.",
+      "clearClientAuth": "Clear warning",
+      "clearClientAuthSuccess": "Client warning cleared",
+      "clearClientAuthFailed": "Failed to clear client warning: {{error}}",
+      "observationStatus": "Detected a redirect to the login page",
       "observationTime": "Latest check: {{time}}",
       "loginRedirectTime": "Latest login-page redirect: {{time}}",
       "observationInstance": "Observed instance: {{instance}}",
+      "launchTime": "Instance launch time: {{time}}",
       "reauthorizeDescription": "The login credentials could not be refreshed and the access_token is no longer available to the API service. Reauthorize the account to continue.",
       "idTokenUnavailable": "The client identity credential expired and automatic refresh did not return a valid id_token.",
       "reasonLabel": "Reason",
@@ -2366,8 +2373,7 @@
       "startingInstanceAfterReauth": "Authorization updated. Restarting the instance...",
       "startInstanceAfterReauthFailed": "Authorization was updated, but the instance failed to start: {{error}}",
       "reauthorizedAndStartedInstance": "Reauthorized and started the instance",
-      "apiOnlyBadge": "Sign-in Needed",
-      "skipAuthCheck": "Skip check and continue"
+      "apiOnlyBadge": "Sign-in Needed"
     },
     "switchProgress": {
       "completed": "Switch complete",

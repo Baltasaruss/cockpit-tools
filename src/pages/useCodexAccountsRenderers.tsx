@@ -4,7 +4,7 @@ import { isCodexGroupQuotaRefreshInherit, resolveCodexGroupQuotaAutoRefreshMinut
 import { isCodexApiKeyAccount, isCodexAgentIdentityAccount, isCodexChatCompletionsApiKeyAccount, isCodexNewApiAccount } from "../types/codex";
 import { isVerboseCodexQuotaErrorMessage, summarizeCodexQuotaErrorMessage } from "../utils/codexQuotaError";
 import { CodexQuotaMiniRows } from "../components/codex/CodexQuotaMiniRows";
-import { isCodexApiOnlyAccessTokenUsable, isCodexClientReauthNoticeOnly, isCodexRefreshTokenNoticeOnly } from "../utils/codexSwitchAuthFailure";
+import { isCodexClientReauthNoticeOnly, isCodexRefreshTokenNoticeOnly, isCodexRefreshTokenReusedAccount, isCodexServerRevokedReauth } from "../utils/codexSwitchAuthFailure";
 import { DEFAULT_CODEX_INSTANCE_ID } from "../components/codex/CodexLaunchPreviewModal";
 import { isDeepSeekAccount, isCodexTokenPlanAccount, shouldShowCodexApiKeyUsagePanel } from "../utils/codexDeepSeekAccess";
 import { CodexSpeedSelect } from "../components/codex/CodexSpeedSelect";
@@ -316,8 +316,17 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
         const isCurrent = overviewCurrentAccountId === account.id;
         const isSelected = selected.has(account.id);
         const isApiKeyAccount = isCodexApiKeyAccount(account);
+        const serverRevokedReauth = isCodexServerRevokedReauth(account);
+        const refreshTokenReusedState = isCodexRefreshTokenReusedAccount(account);
+        const reauthNoticeOnly =
+          !serverRevokedReauth &&
+          !refreshTokenReusedState &&
+          isCodexClientReauthNoticeOnly(account);
         const clientAuthRequired =
-          !isApiKeyAccount && account.client_auth_status === "login_required";
+          !isApiKeyAccount &&
+          !account.requires_reauth &&
+          !serverRevokedReauth &&
+          account.client_auth_status === "login_required";
         const isAgentIdentityAccount = isCodexAgentIdentityAccount(account);
         const switchOrLaunchBlockedReason =
           getCodexSwitchOrLaunchBlockedReason(account);
@@ -364,6 +373,19 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
             >
               {maskAccountText(presentation.displayName)}
             </span>
+            {!isApiKeyAccount &&
+              !refreshTokenReusedState &&
+              (account.requires_reauth || serverRevokedReauth) && (
+              <span
+                className={`codex-status-pill ${reauthNoticeOnly ? "quota-refresh" : "quota-error"} codex-client-auth-status-pill`}
+                title={account.reauth_reason || t("codex.authError.badge", "授权异常")}
+              >
+                <CircleAlert size={11} />
+                {reauthNoticeOnly
+                  ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
+                  : t("codex.authError.badge", "授权异常")}
+              </span>
+            )}
             {clientAuthRequired && (
               <span
                 className="codex-status-pill quota-refresh codex-client-auth-status-pill"
@@ -545,8 +567,13 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
         const meta = resolveAccountMeta(account);
         const isCurrent = overviewCurrentAccountId === account.id;
         const isApiKeyAccount = isCodexApiKeyAccount(account);
+        const serverRevokedReauth = isCodexServerRevokedReauth(account);
+        const refreshTokenReusedState = isCodexRefreshTokenReusedAccount(account);
         const clientAuthRequired =
-          !isApiKeyAccount && account.client_auth_status === "login_required";
+          !isApiKeyAccount &&
+          !account.requires_reauth &&
+          !refreshTokenReusedState &&
+          account.client_auth_status === "login_required";
         const clientAuthNoticeText = t(
           "codex.switchAuth.apiOnlyDescription",
           "检测到当前账号的客户端需要重新授权，API 服务仍可用。",
@@ -554,14 +581,12 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
         const clientAuthDetailText = [
           t(
             "codex.switchAuth.observationStatus",
-            "最近一次检测到当前账号的客户端需要重新授权。",
+            "检测到跳转到登录页面",
           ),
-          account.last_client_auth_observed_at
-            ? t("codex.switchAuth.observationTime", {
-                time: new Date(
-                  account.last_client_auth_observed_at * 1000,
-                ).toLocaleString(),
-                defaultValue: "最近一次检测时间：{{time}}",
+          account.last_client_launch_at
+            ? t("codex.switchAuth.launchTime", {
+                time: new Date(account.last_client_launch_at * 1000).toLocaleString(),
+                defaultValue: "本次实例启动时间：{{time}}",
               })
             : "",
           account.last_client_login_redirect_at
@@ -570,6 +595,14 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
                   account.last_client_login_redirect_at * 1000,
                 ).toLocaleString(),
                 defaultValue: "最近一次跳转登录页：{{time}}",
+              })
+            : "",
+          account.last_client_auth_observed_at
+            ? t("codex.switchAuth.observationTime", {
+                time: new Date(
+                  account.last_client_auth_observed_at * 1000,
+                ).toLocaleString(),
+                defaultValue: "最近一次检测时间：{{time}}",
               })
             : "",
           account.last_client_auth_instance_id
@@ -599,20 +632,25 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
           ),
         );
         const reauthErrorMeta = resolveQuotaErrorMeta(
-          account.requires_reauth && account.reauth_reason
+          !refreshTokenReusedState && account.requires_reauth && account.reauth_reason
             ? {
                 message: account.reauth_reason,
                 timestamp: account.token_updated_at || account.last_used,
               }
             : undefined,
         );
-        const quotaErrorMeta = resolveQuotaErrorMeta(account.quota_error);
+        const quotaErrorMeta = resolveQuotaErrorMeta(
+          refreshTokenReusedState ? undefined : account.quota_error,
+        );
         const accountIssueMeta = reauthErrorMeta.rawMessage
           ? reauthErrorMeta
           : quotaErrorMeta;
         const hasQuotaError = Boolean(accountIssueMeta.rawMessage);
         const isRefreshTokenNotice = isCodexRefreshTokenNoticeOnly(account);
-        const isClientReauthNotice = isCodexClientReauthNoticeOnly(account);
+        const isClientReauthNotice =
+          !serverRevokedReauth &&
+          !refreshTokenReusedState &&
+          isCodexClientReauthNoticeOnly(account);
         const isQuotaRefreshNotice =
           isClientReauthNotice ||
           (!reauthErrorMeta.rawMessage &&
@@ -626,13 +664,11 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
             )
           : accountIssueMeta.displayText;
         const accountIssueBadge = isRefreshTokenNotice
-          ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
+          ? t("codex.authError.badge", "授权异常")
           : isQuotaRefreshNotice
             ? t("codex.quotaError.refreshFailedBadge", "刷新失败")
             : reauthErrorMeta.rawMessage
-              ? isCodexApiOnlyAccessTokenUsable(account)
-                ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
-                : t("codex.authError.badge", "授权异常")
+              ? t("codex.authError.badge", "授权异常")
               : accountIssueMeta.statusCode ||
                 t("codex.quotaError.badge", "配额异常");
         const showReauthorizeAction =
@@ -923,6 +959,7 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
                         isVerbose: false,
                         detailSummary: clientAuthNoticeText,
                         detailReauthorizeAccountId: account.id,
+                        clearClientAuthObservationAccountId: account.id,
                         detailTitle: t(
                           "codex.switchAuth.apiOnlyTitle",
                           "客户端需授权",
@@ -1982,6 +2019,8 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
         const meta = resolveAccountMeta(account);
         const isCurrent = overviewCurrentAccountId === account.id;
         const isApiKeyAccount = isCodexApiKeyAccount(account);
+        const serverRevokedReauth = isCodexServerRevokedReauth(account);
+        const refreshTokenReusedState = isCodexRefreshTokenReusedAccount(account);
         const switchOrLaunchBlockedReason =
           getCodexSwitchOrLaunchBlockedReason(account);
         const isPendingOAuthAccount = isPendingOAuthCodexAccount(account);
@@ -2001,20 +2040,25 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
           ),
         );
         const reauthErrorMeta = resolveQuotaErrorMeta(
-          account.requires_reauth && account.reauth_reason
+          !refreshTokenReusedState && account.requires_reauth && account.reauth_reason
             ? {
                 message: account.reauth_reason,
                 timestamp: account.token_updated_at || account.last_used,
               }
             : undefined,
         );
-        const quotaErrorMeta = resolveQuotaErrorMeta(account.quota_error);
+        const quotaErrorMeta = resolveQuotaErrorMeta(
+          refreshTokenReusedState ? undefined : account.quota_error,
+        );
         const accountIssueMeta = reauthErrorMeta.rawMessage
           ? reauthErrorMeta
           : quotaErrorMeta;
         const hasQuotaError = Boolean(accountIssueMeta.rawMessage);
         const isRefreshTokenNotice = isCodexRefreshTokenNoticeOnly(account);
-        const isClientReauthNotice = isCodexClientReauthNoticeOnly(account);
+        const isClientReauthNotice =
+          !serverRevokedReauth &&
+          !refreshTokenReusedState &&
+          isCodexClientReauthNoticeOnly(account);
         const isQuotaRefreshNotice =
           isClientReauthNotice ||
           (!reauthErrorMeta.rawMessage &&
@@ -2028,13 +2072,11 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
             )
           : accountIssueMeta.displayText;
         const accountIssueBadge = isRefreshTokenNotice
-          ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
+          ? t("codex.authError.badge", "授权异常")
           : isQuotaRefreshNotice
             ? t("codex.quotaError.refreshFailedBadge", "刷新失败")
             : reauthErrorMeta.rawMessage
-              ? isCodexApiOnlyAccessTokenUsable(account)
-                ? t("codex.switchAuth.apiOnlyBadge", "客户端需授权")
-                : t("codex.authError.badge", "授权异常")
+              ? t("codex.authError.badge", "授权异常")
               : accountIssueMeta.statusCode ||
                 t("codex.quotaError.badge", "配额异常");
         const showReauthorizeAction =

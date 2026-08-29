@@ -40,6 +40,7 @@ import {
   toggleRouteModelInRoutes,
 } from "./CodexModelRoutingFields";
 import { forceRefreshCodexTokens } from "../../services/codexService";
+import { requestCodexOpenAddAccount } from "../../utils/codexAddAccountRequest";
 import type {
   CodexAccount,
   CodexExperimentalModelDefinition,
@@ -158,6 +159,10 @@ export function CodexLaunchPreviewModal({
   const [repairOpen, setRepairOpen] = useState(false);
   const [modelConfigOpen, setModelConfigOpen] = useState(false);
   const [forceRefreshing, setForceRefreshing] = useState(false);
+  const [manualRefreshResult, setManualRefreshResult] = useState<{
+    status: "running" | "success" | "error";
+    error?: string;
+  } | null>(null);
   const [manualRefreshedAccount, setManualRefreshedAccount] =
     useState<CodexAccount | null>(null);
   const [modelConfigSnapshot, setModelConfigSnapshot] =
@@ -231,7 +236,7 @@ export function CodexLaunchPreviewModal({
     if (!hasStackedModal) onClose();
   }, [onClose]);
   useEscClose(
-    !busy && !repairOpen && !modelConfigOpen,
+    !busy && !repairOpen && !modelConfigOpen && !manualRefreshResult,
     requestClose,
   );
 
@@ -254,6 +259,7 @@ export function CodexLaunchPreviewModal({
     setDefaultModelId(null);
     setModelsError(null);
     setNotice(null);
+    setManualRefreshResult(null);
     setManualRefreshedAccount(null);
     const routing = selectedInstance?.modelRouting;
     setRoutingEnabled(Boolean(routing?.enabled));
@@ -751,19 +757,47 @@ export function CodexLaunchPreviewModal({
       return;
     }
     setForceRefreshing(true);
+    setManualRefreshResult({ status: "running" });
     setNotice(null);
     setError(null);
     try {
       const refreshed = await forceRefreshCodexTokens(account.id);
       useCodexAccountStore.getState().applyAccountSnapshot(refreshed);
       setManualRefreshedAccount(refreshed);
-      setNotice(t("codex.launchPreview.forceRefreshSuccess"));
+      setManualRefreshResult({ status: "success" });
     } catch (refreshError) {
-      setError(String(refreshError).replace(/^Error:\s*/, ""));
+      setManualRefreshResult({
+        status: "error",
+        error: String(refreshError).replace(/^Error:\s*/, ""),
+      });
     } finally {
       setForceRefreshing(false);
     }
-  }, [account, forceRefreshing, setError, t]);
+  }, [account, forceRefreshing, setError]);
+
+  const closeManualRefreshResult = useCallback(() => {
+    if (forceRefreshing) return;
+    setManualRefreshResult(null);
+  }, [forceRefreshing]);
+
+  const handleManualRefreshReauthorize = useCallback(() => {
+    if (!account || forceRefreshing) return;
+    setManualRefreshResult(null);
+    onClose();
+    window.dispatchEvent(
+      new CustomEvent("app-request-navigate", { detail: "codex" }),
+    );
+    requestCodexOpenAddAccount({
+      tab: "oauth",
+      targetAccountId: account.id,
+      ...(mode === "instance"
+        ? {
+            retryInstanceLaunchAfterOAuth: true,
+            retryInstanceId: instanceId,
+          }
+        : {}),
+    });
+  }, [account, forceRefreshing, instanceId, mode, onClose]);
 
   const renderFooterAction = (action: CodexLaunchPreviewAction) => (
     <div
@@ -1042,10 +1076,9 @@ export function CodexLaunchPreviewModal({
                   <p>{t("codex.launchPreview.forceRefreshDescription")}</p>
                   <div className="codex-launch-preview-tool-meta">
                     <span>
-                      {notice ||
-                        (account && isStandardCodexOAuthAccount(account)
-                          ? t("codex.launchPreview.forceRefreshReady")
-                          : t("codex.launchPreview.forceRefreshUnavailable"))}
+                      {account && isStandardCodexOAuthAccount(account)
+                        ? t("codex.launchPreview.forceRefreshReady")
+                        : t("codex.launchPreview.forceRefreshUnavailable")}
                     </span>
                   </div>
                 </div>
@@ -1229,6 +1262,87 @@ export function CodexLaunchPreviewModal({
           </div>
         </div>
       </div>
+
+      {manualRefreshResult && (
+        <div className="modal-overlay codex-launch-preview-refresh-overlay">
+          <div
+            className="modal codex-launch-preview-refresh-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="codex-launch-preview-refresh-title"
+          >
+            <div className="modal-header">
+              <div className="codex-launch-preview-refresh-heading">
+                <RefreshCw size={18} />
+                <div>
+                  <h2 id="codex-launch-preview-refresh-title">
+                    {t("codex.launchPreview.forceRefreshTitle")}
+                  </h2>
+                  <p>
+                    {manualRefreshResult.status === "running"
+                      ? t("codex.launchPreview.forceRefreshRunning")
+                      : manualRefreshResult.status === "success"
+                        ? t("codex.launchPreview.forceRefreshSuccess")
+                        : t("codex.launchPreview.forceRefreshDescription")}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeManualRefreshResult}
+                disabled={forceRefreshing}
+                aria-label={t("common.close", "关闭")}
+              >
+                <X />
+              </button>
+            </div>
+            <div className="modal-body codex-launch-preview-refresh-body">
+              {manualRefreshResult.status === "error" ? (
+                <ModalErrorMessage message={manualRefreshResult.error} />
+              ) : (
+                <div className="codex-launch-preview-refresh-status success">
+                  <Save size={16} />
+                  <span>
+                    {manualRefreshResult.status === "running"
+                      ? t("codex.launchPreview.forceRefreshRunning")
+                      : t("codex.launchPreview.forceRefreshSuccess")}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer codex-launch-preview-refresh-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={closeManualRefreshResult}
+                disabled={forceRefreshing}
+              >
+                {t("common.cancel", "取消")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => void handleForceRefresh()}
+                disabled={forceRefreshing}
+              >
+                {forceRefreshing
+                  ? t("codex.launchPreview.forceRefreshRunning")
+                  : t("codex.launchPreview.forceRefreshRetry", "重新检测")}
+              </button>
+              {manualRefreshResult.status === "error" && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void handleManualRefreshReauthorize()}
+                >
+                  {t("common.reauthorize", "重新授权")}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <CodexSessionVisibilityRepairModal
         open={repairOpen}

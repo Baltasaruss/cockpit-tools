@@ -555,7 +555,9 @@
       "progress": "Ход запуска",
       "conflictTitle": "Учётная запись уже используется",
       "completedTitle": "Экземпляр запущен",
+      "cancelledTitle": "Запуск отменён",
       "failedTitle": "Не удалось запустить экземпляр",
+      "skipAndLaunch": "Пропустить и запустить",
       "conflictAccount": "Учётная запись: {{account}}",
       "conflictDescription": "Эта учётная запись работает в {{owners}}. Чтобы официальные экземпляры не конкурировали за refresh_token, одна учётная запись OAuth может работать только в одном экземпляре.",
       "locate": "Найти экземпляр",
@@ -2114,7 +2116,8 @@
       "forceRefreshUnavailable": "Недоступно для этого типа аккаунта",
       "forceRefreshAction": "Обновить сейчас",
       "forceRefreshRunning": "Обновление Token…",
-      "forceRefreshSuccess": "Token успешно обновлён"
+      "forceRefreshSuccess": "Token успешно обновлён",
+      "forceRefreshRetry": "Проверить снова"
     },
     "switch": "Переключить",
     "switched": "Переключено на {{email}}",
@@ -2131,11 +2134,12 @@
     "switchAuth": {
       "apiOnlyTitle": "Требуется вход в клиент",
       "reauthorizeTitle": "Авторизация Codex истекла",
-      "apiOnlyDescription": "Для клиента этой учётной записи требуется повторная авторизация. Служба API по-прежнему доступна.",
-      "observationStatus": "Последняя проверка показала, что клиенту этой учётной записи требуется повторная авторизация.",
+      "apiOnlyDescription": "Текущий клиент перешёл на страницу входа. Повторно авторизуйте его, чтобы восстановить работу клиента; API-сервис пока можно продолжать использовать.",
+      "observationStatus": "Обнаружен переход на страницу входа",
       "observationTime": "Последняя проверка: {{time}}",
       "loginRedirectTime": "Последнее перенаправление на страницу входа: {{time}}",
       "observationInstance": "Наблюдаемая инстанция: {{instance}}",
+      "launchTime": "Время запуска инстанса: {{time}}",
       "reauthorizeDescription": "Данные входа не удалось обновить, а access_token больше недоступен для службы API. Авторизуйте аккаунт заново.",
       "idTokenUnavailable": "Данные идентификации клиента истекли, и автоматическое обновление не вернуло действительный id_token.",
       "reasonLabel": "Причина",
@@ -2149,7 +2153,9 @@
       "startInstanceAfterReauthFailed": "Авторизация обновлена, но экземпляр не запустился: {{error}}",
       "reauthorizedAndStartedInstance": "Повторно авторизован и экземпляр запущен",
       "apiOnlyBadge": "Нужен вход",
-      "skipAuthCheck": "Пропустить проверку и продолжить"
+      "clearClientAuth": "Очистить предупреждение",
+      "clearClientAuthSuccess": "Предупреждение клиента очищено",
+      "clearClientAuthFailed": "Не удалось очистить предупреждение клиента: {{error}}"
     },
     "current": "Текущий",
     "empty": {
