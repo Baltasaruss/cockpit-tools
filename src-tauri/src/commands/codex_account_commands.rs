@@ -817,9 +817,17 @@ async fn stop_default_codex_runtime_before_auth_commit(
     if launch_mode == crate::models::InstanceLaunchMode::App {
         tauri::async_runtime::spawn_blocking(move || {
             if checkpoint_preserving {
-                logger::log_info(
-                    "[Codex Safe AutoSwitch] session checkpoint is stable; using the proven bounded desktop shutdown before credential rotation",
-                );
+                #[cfg(target_os = "windows")]
+                {
+                    logger::log_info(
+                        "[Codex Safe AutoSwitch] session checkpoint is stable; using the proven bounded desktop shutdown before credential rotation",
+                    );
+                    return process::close_codex_default(20);
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    return process::close_codex_default_gracefully(15);
+                }
             }
             process::close_codex_default(20)
         })
@@ -1542,7 +1550,7 @@ async fn run_codex_post_refresh_checks(app: &AppHandle) {
                     target_id.clone(),
                     None,
                     None,
-                    Some(true),
+                    None,
                     Some(true),
                 )
                 .await
