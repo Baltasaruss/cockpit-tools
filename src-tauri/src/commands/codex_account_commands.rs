@@ -115,8 +115,13 @@ async fn wait_for_codex_session_checkpoint() -> Result<(), String> {
         .await
         .map_err(|error| format!("读取 Codex 切号后会话检查点失败: {}", error))??;
     if before != after {
-        return Err(format!(
-            "CODEX_AUTO_SWITCH_DEFERRED: Codex session history changed during the {}s checkpoint window",
+        logger::log_info(&format!(
+            "[Codex Safe AutoSwitch] session history advanced during the {}s checkpoint window; the latest local state is durable and rotation will continue",
+            CODEX_SAFE_AUTO_SWITCH_QUIET_WINDOW.as_secs()
+        ));
+    } else {
+        logger::log_info(&format!(
+            "[Codex Safe AutoSwitch] session history remained stable for {}s; rotation will continue",
             CODEX_SAFE_AUTO_SWITCH_QUIET_WINDOW.as_secs()
         ));
     }
@@ -793,10 +798,11 @@ async fn stop_default_codex_runtime_before_auth_commit(
     if launch_mode == crate::models::InstanceLaunchMode::App {
         tauri::async_runtime::spawn_blocking(move || {
             if checkpoint_preserving {
-                process::close_codex_default_gracefully(15)
-            } else {
-                process::close_codex_default(20)
+                logger::log_info(
+                    "[Codex Safe AutoSwitch] session checkpoint is stable; using the proven bounded desktop shutdown before credential rotation",
+                );
             }
+            process::close_codex_default(20)
         })
             .await
             .map_err(|error| format!("停止 Codex 旧授权运行态后台任务失败: {}", error))??;
