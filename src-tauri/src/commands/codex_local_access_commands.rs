@@ -337,7 +337,7 @@ pub async fn codex_local_access_set_enabled(
         },
     )?;
     if enabled {
-        stop_default_codex_runtime_before_auth_commit().await?;
+        stop_default_codex_runtime_before_auth_commit(false).await?;
     }
     codex_local_access::set_local_access_enabled(enabled).await
 }
@@ -353,7 +353,7 @@ pub async fn codex_local_access_activate(
     let _profile_lease =
         codex_account::try_acquire_profile_mutation_lease(&codex_home, "api-service-activate")?;
     // 先停止仍在使用共享默认 profile 的官方客户端，再写入 API Service 凭据。
-    stop_default_codex_runtime_before_auth_commit().await?;
+    stop_default_codex_runtime_before_auth_commit(false).await?;
     let previous_credential = read_current_codex_launch_credential_snapshot();
     logger::log_info(&format!(
         "[Codex API Service Switch][Backend] previous credential resolved: elapsed_ms={}",
