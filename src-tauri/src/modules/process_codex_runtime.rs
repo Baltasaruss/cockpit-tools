@@ -415,68 +415,97 @@ pub fn close_codex_default_gracefully(timeout_secs: u64) -> Result<(), String> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        crate::modules::logger::log_info(
-            "[Codex Safe AutoSwitch] requesting a checkpoint-preserving Codex shutdown",
-        );
-        let default_home = normalize_path_for_compare(
-            &crate::modules::codex_account::get_codex_home()
-                .to_string_lossy()
-                .to_string(),
-        );
-        let entries = collect_codex_process_entries();
-        let mut pids: Vec<u32> = entries
-            .iter()
-            .filter_map(|(pid, home)| {
-                let resolved_home = home
-                    .as_ref()
+        #[cfg(target_os = "linux")]
+        {
+            let default_home = normalize_path_for_compare(
+                &crate::modules::codex_account::get_codex_home()
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            let has_running_codex = collect_codex_process_entries().iter().any(|(_, home)| {
+                home.as_ref()
                     .map(|value| normalize_path_for_compare(value))
                     .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| default_home.clone());
-                (resolved_home == default_home).then_some(*pid)
-            })
-            .collect();
-        pids.sort();
-        pids.dedup();
-
-        if pids.is_empty() {
-            crate::modules::logger::log_info(
-                "[Codex Safe AutoSwitch] Codex is not running; no shutdown is needed",
-            );
-            return Ok(());
-        }
-
-        let direct_app_server_pids = collect_codex_direct_app_server_pids_for_roots(&pids);
-        let requested: Vec<u32> = pids
-            .iter()
-            .copied()
-            .filter(|pid| request_codex_graceful_close(*pid))
-            .collect();
-        if requested.is_empty() {
+                    .unwrap_or_else(|| default_home.clone())
+                    == default_home
+            });
+            if !has_running_codex {
+                crate::modules::logger::log_info(
+                    "[Codex Safe AutoSwitch] Codex is not running; no shutdown is needed",
+                );
+                return Ok(());
+            }
             return Err(
-                "CODEX_AUTO_SWITCH_DEFERRED: Codex did not accept a normal close request; will retry without force-closing it"
+                "CODEX_AUTO_SWITCH_DEFERRED: Codex is still running on Linux; will retry without sending it a termination signal"
                     .to_string(),
             );
         }
 
-        let mut observed_pids = pids.clone();
-        observed_pids.extend(direct_app_server_pids);
-        observed_pids.sort();
-        observed_pids.dedup();
-        let graceful_wait_secs = timeout_secs.min(15).max(3);
-        if wait_pids_exit(&observed_pids, graceful_wait_secs)
-            && collect_running_pids(&observed_pids).is_empty()
+        #[cfg(target_os = "macos")]
         {
-            crate::modules::logger::log_info(&format!(
-                "[Codex Safe AutoSwitch] graceful close finished, targets={}",
-                summarize_pid_list_for_log(&observed_pids)
-            ));
-            return Ok(());
-        }
+            crate::modules::logger::log_info(
+                "[Codex Safe AutoSwitch] requesting a checkpoint-preserving Codex shutdown",
+            );
+            let default_home = normalize_path_for_compare(
+                &crate::modules::codex_account::get_codex_home()
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            let entries = collect_codex_process_entries();
+            let mut pids: Vec<u32> = entries
+                .iter()
+                .filter_map(|(pid, home)| {
+                    let resolved_home = home
+                        .as_ref()
+                        .map(|value| normalize_path_for_compare(value))
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| default_home.clone());
+                    (resolved_home == default_home).then_some(*pid)
+                })
+                .collect();
+            pids.sort();
+            pids.dedup();
 
-        Err(format!(
+            if pids.is_empty() {
+                crate::modules::logger::log_info(
+                    "[Codex Safe AutoSwitch] Codex is not running; no shutdown is needed",
+                );
+                return Ok(());
+            }
+
+            let direct_app_server_pids = collect_codex_direct_app_server_pids_for_roots(&pids);
+            let requested: Vec<u32> = pids
+                .iter()
+                .copied()
+                .filter(|pid| request_codex_graceful_close(*pid))
+                .collect();
+            if requested.is_empty() {
+                return Err(
+                "CODEX_AUTO_SWITCH_DEFERRED: Codex did not accept a normal close request; will retry without force-closing it"
+                    .to_string(),
+            );
+            }
+
+            let mut observed_pids = pids.clone();
+            observed_pids.extend(direct_app_server_pids);
+            observed_pids.sort();
+            observed_pids.dedup();
+            let graceful_wait_secs = timeout_secs.min(15).max(3);
+            if wait_pids_exit(&observed_pids, graceful_wait_secs)
+                && collect_running_pids(&observed_pids).is_empty()
+            {
+                crate::modules::logger::log_info(&format!(
+                    "[Codex Safe AutoSwitch] graceful close finished, targets={}",
+                    summarize_pid_list_for_log(&observed_pids)
+                ));
+                return Ok(());
+            }
+
+            Err(format!(
             "CODEX_AUTO_SWITCH_DEFERRED: Codex is still running after a normal close request (targets={}); will retry without force-closing it",
             summarize_pid_list_for_log(&collect_running_pids(&observed_pids))
         ))
+        }
     }
 }
 
