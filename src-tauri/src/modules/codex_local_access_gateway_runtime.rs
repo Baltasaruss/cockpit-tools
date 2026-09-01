@@ -843,8 +843,10 @@ async fn record_request_stats_with_meta(
             estimated_cost_usd,
         );
 
-        normalize_stats(&mut runtime.stats);
+        apply_usage_event_to_current_windows(&mut runtime.stats, &event, now);
+        sort_stats_rows(&mut runtime.stats);
         runtime.stats_dirty = true;
+        runtime.stats_revision = runtime.stats_revision.wrapping_add(1);
         event
     };
 
@@ -918,9 +920,9 @@ fn build_state_snapshot_inner(
             visible_codex_model_ids_for_collection(collection, Some(&runtime.account_health))
         })
         .unwrap_or_else(supported_codex_model_ids);
-    let mut stats = runtime.stats.clone();
-    recompute_time_windows(&mut stats, now_ms());
-    stats.events = stats
+    let mut stats = stats_snapshot_without_events(&runtime.stats);
+    stats.events = runtime
+        .stats
         .events
         .iter()
         .rev()
@@ -968,7 +970,7 @@ fn build_request_state_snapshot(runtime: &GatewayRuntime) -> CodexLocalAccessSta
 }
 
 fn build_fresh_state_snapshot(runtime: &mut GatewayRuntime) -> CodexLocalAccessState {
-    recompute_time_windows(&mut runtime.stats, now_ms());
+    ensure_stats_windows_current(&mut runtime.stats, now_ms());
     build_state_snapshot(runtime)
 }
 

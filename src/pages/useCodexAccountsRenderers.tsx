@@ -1577,8 +1577,6 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
                     authError: localAccessAccountPoolHealthSummary.authError,
                     quotaLimited:
                       localAccessAccountPoolHealthSummary.quotaLimited,
-                    poolUnavailable:
-                      localAccessAccountPoolHealthSummary.poolUnavailable,
                     defaultValue:
                       "可用 {{available}}/{{total}}，异常 {{abnormal}}，冷却 {{cooldown}}，缺失 {{missing}}，鉴权 {{authError}}，额度 {{quotaLimited}}",
                   })}
@@ -1589,14 +1587,13 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
                   )}
                 >
                   <span className="codex-local-access-health-summary-title">
-                    {t("codex.localAccess.accountPoolHealth.title", "账号池")}
+                    {t("codex.localAccess.accountPoolHealth.title", "账号状态")}
                   </span>
                   <span className="codex-local-access-health-summary-value">
                     {localAccessAccountPoolHealthSummary.available ===
-                      localAccessAccountPoolHealthSummary.total &&
+                    localAccessAccountPoolHealthSummary.total &&
                     localAccessAccountPoolHealthSummary.abnormal === 0 &&
-                    localAccessAccountPoolHealthSummary.cooldown === 0 &&
-                    localAccessAccountPoolHealthSummary.poolUnavailable === 0
+                    localAccessAccountPoolHealthSummary.cooldown === 0
                       ? t("codex.localAccess.accountPoolHealth.allAvailable", {
                           count: localAccessAccountPoolHealthSummary.total,
                           defaultValue: "全部可用 {{count}}",
@@ -1609,16 +1606,12 @@ export function useCodexAccountsRenderers(context: Pick<ReturnType<typeof useCod
                         })}
                   </span>
                   {(localAccessAccountPoolHealthSummary.abnormal > 0 ||
-                    localAccessAccountPoolHealthSummary.cooldown > 0 ||
-                    localAccessAccountPoolHealthSummary.poolUnavailable > 0) && (
+                    localAccessAccountPoolHealthSummary.cooldown > 0) && (
                     <span className="codex-local-access-health-summary-value">
                       {t("codex.localAccess.accountPoolHealth.issueSummary", {
                         abnormal: localAccessAccountPoolHealthSummary.abnormal,
                         cooldown: localAccessAccountPoolHealthSummary.cooldown,
-                        poolUnavailable:
-                          localAccessAccountPoolHealthSummary.poolUnavailable,
-                        defaultValue:
-                          "异常 {{abnormal}} · 池异常 {{poolUnavailable}} · 冷却 {{cooldown}}",
+                        defaultValue: "异常 {{abnormal}} · 冷却 {{cooldown}}",
                       })}
                     </span>
                   )}

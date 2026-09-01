@@ -1206,7 +1206,7 @@ export function CursorAccountsPage() {
 
       {showAddModal && (
         <div className="modal-overlay">
-          <div className="modal-content ghcp-add-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content ghcp-add-modal platform-account-add-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{t('cursor.addModal.title', '添加 Cursor 账号')}</h2>
               <button className="modal-close" onClick={closeAddModal} aria-label={t('common.close', '关闭')}><X /></button>

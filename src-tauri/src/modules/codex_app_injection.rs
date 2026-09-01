@@ -3062,9 +3062,7 @@ mod tests {
         assert!(script.contains("data-cockpit-quota-close"));
         assert!(script.contains("const plans = [{\"plan\":\"PLUS\",\"count\":14"));
         assert!(script.contains("const availableText = \"可用 12/14\""));
-        assert!(
-            script.contains("const issueText = \"异常 2 · 池异常 {{poolUnavailable}} · 冷却 0\"")
-        );
+        assert!(script.contains("const issueText = \"异常 2 · 冷却 0\""));
         assert!(script.contains("var(--color-token-main-surface-primary"));
         assert!(script.contains("var(--color-token-text-secondary"));
         assert!(script.contains("const planColor"));

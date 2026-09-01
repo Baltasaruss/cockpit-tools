@@ -232,7 +232,10 @@
         "weekly": "주간 쿼터",
         "resetAt": "초기화: {{time}}",
         "expiresAt": "만료 시간: {{time}}",
-        "leftPercent": "{{value}}% 남음"
+        "unlimited": "무제한 할당량",
+        "leftPercent": "{{value}}% 남음",
+        "cachedRefreshFailed": "새로고침 실패; 마지막으로 성공한 데이터를 표시합니다",
+        "lastSuccessfulQuery": "마지막 성공: {{time}}"
       },
       "subtitle": "GitHub Copilot 계정을 관리합니다",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Codex Provider에 기록되고 클라이언트에 복사되는 Base URL에만 적용되며, 서비스 바인드 주소는 바뀌지 않습니다.",
       "clientBaseUrlHostSaveSuccess": "클라이언트 주소가 업데이트되었습니다",
       "accountPoolHealth": {
-        "title": "계정 풀",
+        "title": "계정 상태",
         "allAvailable": "모두 정상 {{count}}",
         "availableRatio": "정상 {{available}}/{{total}}",
-        "issueSummary": "이상 {{abnormal}} · 풀 {{poolUnavailable}} · 쿨다운 {{cooldown}}",
-        "detail": "정상 {{available}}/{{total}}, 이상 {{abnormal}}, 풀 이상 {{poolUnavailable}}, 쿨다운 {{cooldown}}, 누락 {{missing}}, 인증 {{authError}}, 할당량 {{quotaLimited}}",
-        "openDetails": "계정 풀 이상 보기",
+        "issueSummary": "이상 {{abnormal}} · 쿨다운 {{cooldown}}",
+        "detail": "정상 {{available}}/{{total}}, 이상 {{abnormal}}, 쿨다운 {{cooldown}}, 누락 {{missing}}, 인증 {{authError}}, 할당량 {{quotaLimited}}",
+        "openDetails": "계정 이상 보기",
         "recover": "계정 상태 복구",
         "recoverSuccess": "{{count}}개 계정 복구를 요청했습니다",
         "dialog": {
-          "title": "계정 풀 이상",
-          "description": "Sidecar 스케줄러의 계정 이상과 계정 선택 전 풀 이상을 함께 표시합니다.",
-          "noIssues": "계정 풀에 이상이 없습니다",
+          "title": "계정 이상",
+      "description": "각 계정에 모델, 사용할 수 없는 이유와 가능한 복구 작업을 함께 표시합니다.",
+          "noIssues": "계정에 이상이 없습니다",
           "unscopedApiKey": "현재 API Key",
           "poolUnavailable": "풀에 사용 가능한 계정이 없습니다",
           "poolUnavailableDetail": "모델 {{model}}에 사용할 계정을 선택하지 못했습니다",

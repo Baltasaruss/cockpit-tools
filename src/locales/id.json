@@ -239,7 +239,10 @@
         "weekly": "Pesan obrolan",
         "resetAt": "Atur ulang: {{time}}",
         "expiresAt": "Kedaluwarsa: {{time}}",
-        "leftPercent": "Tersisa {{value}}%"
+        "unlimited": "Kuota tak terbatas",
+        "leftPercent": "Tersisa {{value}}%",
+        "cachedRefreshFailed": "Pembaruan gagal; menampilkan data terakhir yang berhasil",
+        "lastSuccessfulQuery": "Keberhasilan terakhir: {{time}}"
       },
       "subtitle": "Pantau status kuota seluruh akun secara real-time.",
       "time": {
@@ -2603,18 +2606,18 @@
       "clientBaseUrlHostDesc": "Hanya memengaruhi Base URL yang ditulis ke Codex Provider dan disalin ke klien; alamat listen layanan tidak berubah.",
       "clientBaseUrlHostSaveSuccess": "Alamat klien diperbarui",
       "accountPoolHealth": {
-        "title": "Pool Akun",
+        "title": "Status Akun",
         "allAvailable": "Semua OK {{count}}",
         "availableRatio": "Baik {{available}}/{{total}}",
-        "issueSummary": "Error {{abnormal}} · Pool {{poolUnavailable}} · Jeda {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, error {{abnormal}}, pool {{poolUnavailable}}, jeda {{cooldown}}, hilang {{missing}}, auth {{authError}}, kuota {{quotaLimited}}",
-        "openDetails": "Lihat masalah pool akun",
+        "issueSummary": "Error {{abnormal}} · Jeda {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, error {{abnormal}}, jeda {{cooldown}}, hilang {{missing}}, auth {{authError}}, kuota {{quotaLimited}}",
+        "openDetails": "Lihat masalah akun",
         "recover": "Pulihkan status akun",
         "recoverSuccess": "Pemulihan diminta untuk {{count}} akun",
         "dialog": {
-          "title": "Masalah Pool Akun",
-          "description": "Status penjadwal Sidecar ini mencakup masalah akun dan pool sebelum akun dipilih.",
-          "noIssues": "Tidak ada masalah pada pool akun",
+          "title": "Masalah Akun",
+      "description": "Setiap akun ditampilkan bersama model, alasan tidak tersedia, dan tindakan pemulihan yang tersedia.",
+          "noIssues": "Tidak ada masalah akun",
           "unscopedApiKey": "API Key saat ini",
           "poolUnavailable": "Tidak ada akun pool yang tersedia",
           "poolUnavailableDetail": "Tidak ada akun tersedia yang dipilih untuk model {{model}}",

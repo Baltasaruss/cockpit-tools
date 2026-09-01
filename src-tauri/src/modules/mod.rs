@@ -12,6 +12,7 @@ pub mod backup_storage;
 pub mod claude_account;
 pub mod claude_desktop_gateway;
 pub mod claude_instance;
+pub mod client_version;
 pub mod codebuddy_account;
 pub mod codebuddy_cn_account;
 pub mod codebuddy_cn_instance;

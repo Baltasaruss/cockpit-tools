@@ -60,6 +60,27 @@ mod legacy_platform_adapter_cleanup_tests {
 }
 
 #[cfg(all(test, target_os = "macos"))]
+mod qoder_macos_process_tests {
+    use super::is_qoder_macos_main_process_command_line;
+
+    #[test]
+    fn matches_current_and_legacy_qoder_main_processes() {
+        assert!(is_qoder_macos_main_process_command_line(
+            "/Applications/Qoder IDE.app/Contents/MacOS/Qoder"
+        ));
+        assert!(is_qoder_macos_main_process_command_line(
+            "/Applications/Qoder.app/Contents/MacOS/Qoder"
+        ));
+        assert!(!is_qoder_macos_main_process_command_line(
+            "/Applications/Qoder IDE.app/Contents/Frameworks/Qoder Helper.app/Contents/MacOS/Qoder Helper --type=gpu-process --user-data-dir=/tmp/qoder"
+        ));
+        assert!(!is_qoder_macos_main_process_command_line(
+            "/Applications/Qoder IDE.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler"
+        ));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
 mod codex_macos_launch_tests {
     use super::{
         is_codex_direct_app_server_command_line, is_codex_macos_main_process_command_line,

@@ -420,6 +420,7 @@ struct GatewayRuntime {
     collection_dirty: bool,
     stats: CodexLocalAccessStats,
     stats_dirty: bool,
+    stats_revision: u64,
     stats_flush_inflight: bool,
     response_affinity: HashMap<String, ResponseAffinityBinding>,
     model_cooldowns: HashMap<String, AccountModelCooldown>,
@@ -2287,7 +2288,7 @@ async fn schedule_stats_flush_if_needed() {
                     .flatten();
                 runtime.stats_dirty = false;
                 runtime.collection_dirty = false;
-                (runtime.stats.clone(), collection_snapshot)
+                (stats_snapshot_without_events(&runtime.stats), collection_snapshot)
             };
 
             if let Err(err) = save_stats_to_disk(&stats_snapshot) {

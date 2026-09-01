@@ -239,6 +239,29 @@ pub fn remove_file_locked(path: &Path) -> Result<bool, String> {
     }
 }
 
+/// 删除文件前再次核对内容哈希，避免清理旧标记时误删外部进程刚写入的内容。
+///
+/// 这不是跨进程的真正 compare-and-delete 原语，但在删除前的最后一次读取
+/// 能保留最常见的“标记已被官方客户端替换”场景，并与本进程路径锁一致。
+pub fn remove_file_if_hash_matches(path: &Path, expected_hash: [u8; 32]) -> Result<bool, String> {
+    let lock = path_write_lock(path)?;
+    let _guard = lock.lock().map_err(|_| "文件写入锁已损坏".to_string())?;
+    let current = match fs::read(path) {
+        Ok(current) => current,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format_io_error("读取待删除文件", path, &error)),
+    };
+    let current_hash: [u8; 32] = Sha256::digest(&current).into();
+    if current_hash != expected_hash {
+        return Ok(false);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format_io_error("删除文件", path, &error)),
+    }
+}
+
 pub fn restore_from_backup(path: &Path) -> Result<bool, String> {
     let backup_path = build_backup_path(path)?;
     if !backup_path.exists() {
@@ -285,8 +308,8 @@ pub fn parse_json_with_auto_restore<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_backup_path, quarantine_file, remove_file_locked, restore_from_backup,
-        write_string_atomic, write_string_atomic_if_hash_matches,
+        build_backup_path, quarantine_file, remove_file_if_hash_matches, remove_file_locked,
+        restore_from_backup, write_string_atomic, write_string_atomic_if_hash_matches,
     };
     use sha2::{Digest, Sha256};
     use std::fs;
@@ -351,6 +374,23 @@ mod tests {
             Ok(r#"{"version":3}"#.to_string())
         })
         .expect("reject deleted write"));
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn conditional_remove_keeps_replaced_marker() {
+        let dir = make_temp_dir("atomic_remove_cas");
+        let path = dir.join("logout.marker");
+        fs::write(&path, b"old").expect("write marker");
+        let expected: [u8; 32] = Sha256::digest(b"old").into();
+        fs::write(&path, b"new").expect("replace marker");
+        assert!(!remove_file_if_hash_matches(&path, expected).expect("conditional remove"));
+        assert_eq!(fs::read(&path).expect("read marker"), b"new");
+        assert!(
+            remove_file_if_hash_matches(&path, Sha256::digest(b"new").into())
+                .expect("remove current marker")
+        );
         assert!(!path.exists());
         let _ = fs::remove_dir_all(dir);
     }

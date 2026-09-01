@@ -1511,7 +1511,7 @@ export function WindsurfAccountsPage() {
       />
 
       {showAddModal && (
-        <div className="modal-overlay"><div className="modal-content ghcp-add-modal windsurf-add-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay"><div className="modal-content ghcp-add-modal platform-account-add-modal windsurf-add-modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header"><h2>{t('windsurf.addModal.title', '添加 Windsurf 账号')}</h2><button className="modal-close" onClick={handleCloseAddModal} aria-label={t('common.close', '关闭')}><X /></button></div>
           <div className="modal-tabs">
             <button className={`modal-tab ${addTab === 'oauth' ? 'active' : ''}`} onClick={() => openAddModal('oauth')}><Globe size={14} />{t('common.shared.addModal.oauth', 'OAuth Authorization')}</button>

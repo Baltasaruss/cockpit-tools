@@ -18,7 +18,7 @@ use crate::models::{
 };
 use crate::modules;
 
-const DEFAULT_INSTANCE_ID: &str = "__default__";
+pub(crate) const DEFAULT_INSTANCE_ID: &str = "__default__";
 const CODEX_INSTANCE_LAUNCH_PROGRESS_EVENT: &str = "codex:instance-launch-progress";
 static CODEX_INSTANCE_STARTS_IN_PROGRESS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static CODEX_INSTANCE_START_CANCEL_REQUESTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -122,14 +122,14 @@ impl Drop for CodexInstanceStartGuard {
 }
 
 #[derive(Debug, Clone)]
-struct CodexInstanceStartTarget {
-    instance_id: String,
-    instance_name: String,
-    user_data_dir: PathBuf,
-    bind_account_id: Option<String>,
-    model_routing: Option<CodexInstanceModelRouting>,
-    is_default: bool,
-    launch_operation: Option<String>,
+pub(crate) struct CodexInstanceStartTarget {
+    pub(crate) instance_id: String,
+    pub(crate) instance_name: String,
+    pub(crate) user_data_dir: PathBuf,
+    pub(crate) bind_account_id: Option<String>,
+    pub(crate) model_routing: Option<CodexInstanceModelRouting>,
+    pub(crate) is_default: bool,
+    pub(crate) launch_operation: Option<String>,
 }
 
 fn emit_codex_instance_launch_progress(
@@ -185,7 +185,7 @@ fn emit_codex_instance_launch_step(
     );
 }
 
-fn resolve_codex_instance_start_target(
+pub(crate) fn resolve_codex_instance_start_target(
     instance_id: &str,
 ) -> Result<CodexInstanceStartTarget, String> {
     if instance_id == DEFAULT_INSTANCE_ID {
@@ -3429,6 +3429,74 @@ pub(crate) async fn codex_start_default_with_prepared_profile(
         );
     }
     clear_codex_instance_start_cancel(DEFAULT_INSTANCE_ID);
+    result
+}
+
+/// 启动已经由 API Service 激活流程准备好 profile 的非默认实例。
+/// 调用方必须在整个“凭据写入 + 实例启动”期间持有目标 profile 写入租约。
+pub(crate) async fn codex_start_instance_with_prepared_profile(
+    app: AppHandle,
+    instance_id: String,
+    emit_launch_progress: bool,
+    launch_operation: Option<&str>,
+    skip_failed_step: Option<&str>,
+) -> Result<CodexInstanceProfileView, String> {
+    let launch_target = resolve_codex_instance_start_target(&instance_id)?;
+    let result = codex_start_instance_internal(
+        app.clone(),
+        instance_id.clone(),
+        false,
+        false,
+        skip_failed_step,
+        emit_launch_progress,
+        launch_operation,
+    )
+    .await;
+    let result = match result {
+        Ok(profile) => Ok(profile),
+        Err(error) => {
+            let auth_account_id = if launch_target
+                .bind_account_id
+                .as_deref()
+                .is_some_and(modules::codex_instance::is_api_service_bind_account_id)
+            {
+                modules::codex_local_access::bound_oauth_account_id_for_instance_start()
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                modules::codex_account::oauth_account_id_for_runtime_binding(
+                    launch_target.bind_account_id.as_deref(),
+                )
+                .or_else(|| {
+                    modules::codex_account::oauth_account_id_for_runtime_dir(
+                        &launch_target.user_data_dir,
+                    )
+                })
+            };
+            Err(auth_account_id
+                .as_deref()
+                .map(|account_id| {
+                    modules::codex_account::format_account_switch_error(account_id, error.clone())
+                })
+                .unwrap_or(error))
+        }
+    };
+    if let Err(error) = &result {
+        let cancelled = error == "CODEX_START_CANCELLED";
+        emit_codex_instance_launch_progress(
+            &app,
+            emit_launch_progress,
+            &launch_target,
+            serde_json::json!({
+                "type": if cancelled { "cancelled" } else { "error" },
+                "error": error,
+                "cancelled": cancelled,
+                "canRetry": !cancelled && !error.starts_with("CODEX_SWITCH_AUTH_REQUIRED:"),
+            }),
+        );
+    }
+    clear_codex_instance_start_cancel(&instance_id);
     result
 }
 

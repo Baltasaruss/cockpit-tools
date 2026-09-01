@@ -1366,7 +1366,7 @@ export function ZedAccountsPage() {
 
       {showAddModal && (
         <div className="modal-overlay">
-          <div className="modal-content ghcp-add-modal zed-add-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="modal-content ghcp-add-modal platform-account-add-modal zed-add-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <button className="btn btn-secondary icon-only" onClick={closeAddModal} title={t('common.back', '返回')} aria-label={t('common.back', '返回')}><ChevronLeft size={14} /></button>
               <h2>{t('zed.addModal.title', '添加 Zed 账号')}</h2>

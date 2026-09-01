@@ -227,7 +227,10 @@
         "weekly": "Limit tygodniowy",
         "resetAt": "Odnowienie: {{time}}",
         "expiresAt": "Wygasa: {{time}}",
-        "leftPercent": "Pozostało {{value}}%"
+        "unlimited": "Bez limitu",
+        "leftPercent": "Pozostało {{value}}%",
+        "cachedRefreshFailed": "Odświeżanie nie powiodło się; wyświetlam ostatnie poprawne dane",
+        "lastSuccessfulQuery": "Ostatni sukces: {{time}}"
       },
       "subtitle": "Zarządzaj kontami GitHub Copilot",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Wpływa tylko na Base URL zapisywany w Codex Provider i kopiowany do klientów; nie zmienia adresu nasłuchiwania usługi.",
       "clientBaseUrlHostSaveSuccess": "Adres klienta zaktualizowany",
       "accountPoolHealth": {
-        "title": "Pula kont",
+        "title": "Stan kont",
         "allAvailable": "Wszystkie OK {{count}}",
         "availableRatio": "Dobre {{available}}/{{total}}",
-        "issueSummary": "Błąd {{abnormal}} · Pula {{poolUnavailable}} · Pauza {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, błąd {{abnormal}}, pula {{poolUnavailable}}, pauza {{cooldown}}, brak {{missing}}, auth {{authError}}, limit {{quotaLimited}}",
-        "openDetails": "Pokaż problemy puli kont",
+        "issueSummary": "Błąd {{abnormal}} · Pauza {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, błąd {{abnormal}}, pauza {{cooldown}}, brak {{missing}}, auth {{authError}}, limit {{quotaLimited}}",
+        "openDetails": "Pokaż problemy kont",
         "recover": "Przywróć stan",
         "recoverSuccess": "Zażądano przywrócenia {{count}} kont(a)",
         "dialog": {
-          "title": "Problemy puli kont",
-          "description": "Te stany harmonogramu Sidecar obejmują problemy kont i puli przed wyborem konta.",
-          "noIssues": "Brak problemów w puli kont",
+          "title": "Problemy kont",
+      "description": "Każde konto jest pokazane z modelem, powodem niedostępności i dostępną opcją przywrócenia.",
+          "noIssues": "Brak problemów z kontami",
           "unscopedApiKey": "Bieżący API Key",
           "poolUnavailable": "Brak dostępnego konta w puli",
           "poolUnavailableDetail": "Nie wybrano dostępnego konta dla modelu {{model}}",

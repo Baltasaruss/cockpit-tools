@@ -319,12 +319,15 @@ export async function setCodexLocalAccessEnabled(
   return await invoke("codex_local_access_set_enabled", { enabled });
 }
 
-export async function activateCodexLocalAccess(): Promise<CodexLocalAccessState> {
+export async function activateCodexLocalAccess(
+  instanceId?: string | null,
+): Promise<CodexLocalAccessState> {
   const startedAt = performance.now();
   console.info("[Codex API Service Switch][Service] invoke codex_local_access_activate started");
   try {
     return await invoke("codex_local_access_activate", {
       autoRepairMode: null,
+      instanceId: instanceId ?? null,
     });
   } finally {
     console.info(

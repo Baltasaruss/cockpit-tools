@@ -232,7 +232,10 @@
         "weekly": "Недельная квота",
         "resetAt": "Сброс: {{time}}",
         "expiresAt": "Истекает: {{time}}",
-        "leftPercent": "Осталось {{value}}%"
+        "unlimited": "Безлимитная квота",
+        "leftPercent": "Осталось {{value}}%",
+        "cachedRefreshFailed": "Не удалось обновить; показаны последние успешно полученные данные",
+        "lastSuccessfulQuery": "Последний успех: {{time}}"
       },
       "subtitle": "Управляйте аккаунтами GitHub Copilot",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Влияет только на Base URL, записываемый в Codex Provider и копируемый клиентам; адрес прослушивания сервиса не меняется.",
       "clientBaseUrlHostSaveSuccess": "Адрес клиента обновлен",
       "accountPoolHealth": {
-        "title": "Пул аккаунтов",
+        "title": "Статус аккаунтов",
         "allAvailable": "Все OK {{count}}",
         "availableRatio": "Рабочие {{available}}/{{total}}",
-        "issueSummary": "Сбой {{abnormal}} · Пул {{poolUnavailable}} · Пауза {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, сбой {{abnormal}}, пул {{poolUnavailable}}, пауза {{cooldown}}, нет {{missing}}, auth {{authError}}, квота {{quotaLimited}}",
-        "openDetails": "Показать проблемы пула аккаунтов",
+        "issueSummary": "Сбой {{abnormal}} · Пауза {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, сбой {{abnormal}}, пауза {{cooldown}}, нет {{missing}}, auth {{authError}}, квота {{quotaLimited}}",
+        "openDetails": "Показать проблемы аккаунтов",
         "recover": "Восстановить статус",
         "recoverSuccess": "Запрошено восстановление {{count}} аккаунт(ов)",
         "dialog": {
-          "title": "Проблемы пула аккаунтов",
-          "description": "Эти состояния планировщика Sidecar включают проблемы аккаунтов и пула до выбора аккаунта.",
-          "noIssues": "В пуле аккаунтов нет проблем",
+          "title": "Проблемы аккаунтов",
+      "description": "Для каждого аккаунта показываются модель, причина недоступности и доступное действие восстановления.",
+          "noIssues": "Проблем с аккаунтами нет",
           "unscopedApiKey": "Текущий API Key",
           "poolUnavailable": "В пуле нет доступного аккаунта",
           "poolUnavailableDetail": "Для модели {{model}} не выбран доступный аккаунт",

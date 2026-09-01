@@ -499,6 +499,7 @@ pub async fn reprice_local_access_request_logs() -> Result<CodexLocalAccessState
         let mut runtime = gateway_runtime().lock().await;
         runtime.stats = loaded_stats;
         runtime.stats_dirty = false;
+        runtime.stats_revision = runtime.stats_revision.wrapping_add(1);
         runtime.stats_flush_inflight = false;
     }
 
@@ -1245,6 +1246,7 @@ pub async fn clear_local_access_stats() -> Result<CodexLocalAccessState, String>
         let mut runtime = gateway_runtime().lock().await;
         runtime.stats = cleared;
         runtime.stats_dirty = true;
+        runtime.stats_revision = runtime.stats_revision.wrapping_add(1);
     }
     schedule_stats_flush_if_needed().await;
 

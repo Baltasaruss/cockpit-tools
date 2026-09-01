@@ -3245,7 +3245,7 @@ export function ClaudeAccountsPage({ subPlatform = 'desktop' }: ClaudeAccountsPa
 
       {showAddModal && (
         <div className="modal-overlay">
-          <div className="modal ghcp-add-modal claude-add-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="modal ghcp-add-modal platform-account-add-modal claude-add-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h2>
                 {t(

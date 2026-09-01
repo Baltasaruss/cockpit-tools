@@ -1456,6 +1456,57 @@ html[data-reduced-motion="true"] .platform-group-switcher-trigger.is-open .platf
   background: transparent;
 }
 
+/* A failed refresh can still leave usable cached quota data on screen. */
+.quota-cache-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 2px 0 8px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-secondary));
+  color: color-mix(in srgb, var(--warning-strong) 82%, var(--text-primary));
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.quota-cache-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.quota-cache-warning-content {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quota-cache-warning-title,
+.quota-cache-warning-time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quota-cache-warning-title {
+  font-weight: 600;
+}
+
+.quota-cache-warning-time {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.quota-cache-warning.table {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+}
+
 .quota-header {
   display: flex;
   justify-content: space-between;

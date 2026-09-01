@@ -708,6 +708,23 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
             health,
           ]),
         );
+        const poolUnavailableAccountIds = new Set<string>();
+        (localAccessState?.accountPoolHealth ?? []).forEach((pool) => {
+          const statuses = (pool.accountStatuses ?? []).filter((member) =>
+            member.accountId.trim(),
+          );
+          if (statuses.length === 0) {
+            (localAccessCollection?.accountIds ?? []).forEach((accountId) =>
+              poolUnavailableAccountIds.add(accountId),
+            );
+            return;
+          }
+          statuses
+            .filter((member) => !member.available)
+            .forEach((member) =>
+              poolUnavailableAccountIds.add(member.accountId.trim()),
+            );
+        });
         const summary: LocalAccessAccountPoolHealthSummary = {
           total: localAccessCollection?.accountIds.length ?? 0,
           available: 0,
@@ -716,7 +733,6 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
           missing: 0,
           authError: 0,
           quotaLimited: 0,
-          poolUnavailable: localAccessState?.accountPoolHealth?.length ?? 0,
         };
   
         (localAccessCollection?.accountIds ?? []).forEach((accountId) => {
@@ -742,6 +758,9 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
           if (health && !health.available) {
             return;
           }
+          if (poolUnavailableAccountIds.has(accountId)) {
+            return;
+          }
           summary.available += 1;
         });
   
@@ -750,14 +769,13 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
         accounts,
         localAccessCollection?.accountIds,
         localAccessState?.accountHealth,
-        localAccessState?.accountPoolHealth?.length,
+        localAccessState?.accountPoolHealth,
       ]);
     const localAccessAccountPoolHealthHasIssue =
       localAccessAccountPoolHealthSummary.available <
-        localAccessAccountPoolHealthSummary.total ||
+      localAccessAccountPoolHealthSummary.total ||
       localAccessAccountPoolHealthSummary.abnormal > 0 ||
-      localAccessAccountPoolHealthSummary.cooldown > 0 ||
-      localAccessAccountPoolHealthSummary.poolUnavailable > 0;
+      localAccessAccountPoolHealthSummary.cooldown > 0;
     const localAccessQuotaPoolLabels = useMemo(
       () => ({
         weekly: t("codex.localAccess.quotaPool.weeklyShort", "周"),
@@ -1712,7 +1730,10 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
     }, [localAccessCollection, requestLocalAccessRiskNotice, setMessage, t]);
   
     const handleActivateLocalAccess = useCallback(
-      async (options?: { showSuccessMessage?: boolean }) => {
+      async (options?: {
+        showSuccessMessage?: boolean;
+        instanceId?: string | null;
+      }) => {
         if (!localAccessCollection) {
           throw new Error(
             t("codex.localAccess.testUnavailable", "当前 API 服务地址不可用"),
@@ -1746,7 +1767,9 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
         setLocalAccessStarting(true);
         try {
           const nextState =
-            await codexLocalAccessService.activateCodexLocalAccess();
+            await codexLocalAccessService.activateCodexLocalAccess(
+              options?.instanceId,
+            );
           setLocalAccessState(nextState);
           await fetchCurrentAccount();
           setLocalAccessLaunchCurrent(true);
@@ -1810,7 +1833,9 @@ export function useCodexAccountsLocalAccessController(context: Pick<ReturnType<t
               deferBindAccountApplication: true,
             });
           }
-          return await handleActivateLocalAccess();
+          return await handleActivateLocalAccess({
+            instanceId: launchPreviewInstanceId,
+          });
         };
         try {
           const state = await activateSelectedTarget();

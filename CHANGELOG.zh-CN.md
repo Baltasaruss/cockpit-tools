@@ -7,6 +7,36 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
 ---
+## [1.3.35] - 2026-09-01
+
+### 新增
+
+- **Codex Desktop 支持混合模型路由**：Codex 实例可选将指定模型或 namespace 分流到已配置的第三方 API，同时让官方订阅模型继续走官方链路；启动预览现提供路由开关、供应商/模型选择和模型可见性同步。
+- **支持 DeepSeek V4 Flash Vision**：新增 `deepseek-v4-flash-vision-exp` 视觉模型及图片输入元数据，Codex 可通过原生直连和 Provider gateway 链路发送 `input_image` 内容。
+- **Cursor 配额失败账号筛选与批量删除**：账号列表可快速定位配额查询失败的账号，并一次性删除筛选结果。
+
+### 变更
+
+- **Codex API Service 异常账号弹框改为纯账号级展示**：不再单独显示池级摘要；每个不可用账号会展示对应模型、失败原因，并在可恢复时提供单账号或全部恢复操作。
+- **各平台添加账号弹框尺寸统一**：桌面端统一采用 Codex 的 760px 大弹框基准，移动端继续自适应可用宽度。
+- **混合路由生命周期隔离**：第三方 Provider gateway 按 Codex profile 独立管理；关闭路由或停止 profile 时会恢复 Cockpit 管理的 `config.toml` 状态，启动中断或失败也会执行相同的回退清理。
+- **托盘菜单重建合并**：150ms 短窗口内的重复重建请求会合并处理，减少账号变更期间的重复磁盘读取。
+- **侧边栏布局跨版本保留**：布局保存到数据目录的 `ui_preferences.json`，升级后自动恢复并兼容旧的平台条目。
+
+### 修复
+
+- **恢复 WorkBuddy、CodeBuddy 与 CodeBuddy CN 在新版官方客户端下的额度查询**：OAuth 与刷新请求头、WorkBuddy 接口及带版本号的登录参数、个人/企业计费请求体、响应解析、无限额度和 WorkBuddy 共享登录文件布局均与最新版官方行为对齐；刷新失败时保留原额度快照。
+- **修复 Qoder OAuth 授权完成后弹框停留且账号未显示的问题**：授权成功现在会确认新账号已写入并出现在列表后自动关闭弹框；列表读取异常或账号不可见时保留弹框并提示失败，避免显示假成功。
+- **修复 Qoder macOS 切号仍复用旧内存会话的问题**：现在可以识别并关闭当前版本的 `Qoder IDE.app` 主进程，再注入凭据并重新启动默认实例。
+- **修复 Codex API Service 激活忽略所选实例的问题**：从非默认实例激活时，现在会准备并启动所选 profile，不再固定修改和启动 `__default__`。
+- **对齐 ZCode 3.10.2 客户端的额度查询**：请求补齐官方来源元数据与设备标识，避免服务端将请求判定为 `parameter error`；支持数字字符串形式的余额与重置时间，官方成功但暂无套餐时保留套餐标签并清除旧失败状态。
+- **对齐 Devin/Windsurf 官方额度请求元数据**：额度查询会从已安装客户端动态读取产品版本与 Language Server 版本，避免旧的 `1.0.0` 占位版本被服务端拒绝。
+- **对齐 Claude 官方客户端的新额度响应**：账号管理现在支持解析最新版 Claude Desktop 返回的 `limits[]` 额度封装，覆盖会话、周额度、Sonnet 专属额度和额外用量。
+- **修复 Codex API Service 高流量统计反复复制无界内存事件历史的问题**：历史日志改为从 SQLite 流式聚合，运行时只保留最近 100 条事件，统计落盘也不再重复复制事件列表。
+- **过期 Codex 订阅按有效套餐归类**：已过期的 Plus/Pro 账号会显示并分组为 `FREE`，本地 API Service 的免费账号限制也使用有效套餐判断。
+
+感谢 [@enenH](https://github.com/enenH)（[#2159](https://github.com/jlcodes99/cockpit-tools/issues/2159)）、[@we1jia](https://github.com/we1jia)（[#2155](https://github.com/jlcodes99/cockpit-tools/pull/2155)）、[@HUF457](https://github.com/HUF457)（[#2110](https://github.com/jlcodes99/cockpit-tools/pull/2110)）、[@yifayun](https://github.com/yifayun)（[#2089](https://github.com/jlcodes99/cockpit-tools/pull/2089)）、[@Jonesxq](https://github.com/Jonesxq)（[#1986](https://github.com/jlcodes99/cockpit-tools/pull/1986)）和 [@TakaSoap](https://github.com/TakaSoap)（[#2056](https://github.com/jlcodes99/cockpit-tools/pull/2056)）的贡献。
+
 ## [1.3.34] - 2026-08-28
 
 ### 新增
@@ -58,7 +88,7 @@
 - **修复 Codex 客户端启动失败仍显示切号或 API Service 激活成功的问题**：启动失败会保留明确的错误结果和重试入口，不再把仅完成凭据切换误报为客户端可用。
 - **修复 Codex 本机导入可能采用旧 OAuth 凭据的问题**：OAuth 账号会从官方凭据存储导入，包括 macOS Keychain；API Key、Agent Identity 和 personal access token 仍沿用原有导入方式。
 - **修复 Codex API Service 文本测试在部分账号上被生图能力检查阻断的问题**：普通文本测试不再向不具备生图能力的上游声明生图工具，正式生图请求不受影响。
-- **修复 Codex 批量刷新额度在 Windows 上反复探测桌面进程的问题**：同一轮刷新会复用一次运行态检测结果，减少 PowerShell 子进程和额外等待。
+- **修复 Codex 批量刷新额度在 Windows 上反复探测桌面进程的问题**：同一轮刷新会复用一次运行态检测结果，减少 PowerShell 子进程和额外等待。感谢 [@popokcn](https://github.com/popokcn) 贡献（[#2106](https://github.com/jlcodes99/cockpit-tools/pull/2106)）。
 
 ## [1.3.31] - 2026-08-25
 

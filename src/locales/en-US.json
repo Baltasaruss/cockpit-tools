@@ -239,7 +239,10 @@
         "weekly": "Chat messages",
         "resetAt": "Reset: {{time}}",
         "expiresAt": "Expires at: {{time}}",
-        "leftPercent": "{{value}}% left"
+        "unlimited": "Unlimited",
+        "leftPercent": "{{value}}% left",
+        "cachedRefreshFailed": "Refresh failed; showing the last successful data",
+        "lastSuccessfulQuery": "Last successful: {{time}}"
       },
       "subtitle": "Monitor quota status for all accounts in real time.",
       "time": {
@@ -2750,18 +2753,18 @@
         "empty": "No quota stats yet"
       },
       "accountPoolHealth": {
-        "title": "Account Pool",
+        "title": "Account Status",
         "allAvailable": "All OK {{count}}",
         "availableRatio": "OK {{available}}/{{total}}",
-        "issueSummary": "Bad {{abnormal}} · Pool {{poolUnavailable}} · Cool {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, bad {{abnormal}}, pool {{poolUnavailable}}, cooldown {{cooldown}}, missing {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
-        "openDetails": "View account pool issues",
+        "issueSummary": "Bad {{abnormal}} · Cool {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, bad {{abnormal}}, cooldown {{cooldown}}, missing {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
+        "openDetails": "View account issues",
         "recover": "Recover account status",
         "recoverSuccess": "Recovery requested for {{count}} account(s)",
         "dialog": {
-          "title": "Account Pool Issues",
-          "description": "These Sidecar scheduler states include account issues and pool-level failures that happen before an account is selected.",
-          "noIssues": "No account pool issues",
+          "title": "Account Issues",
+          "description": "Each account is shown with its model, unavailable reason, and available recovery action.",
+          "noIssues": "No account issues",
           "unscopedApiKey": "Current API Key",
           "poolUnavailable": "No available pool account",
           "poolUnavailableDetail": "No available account was selected for model {{model}}",
@@ -5756,8 +5759,8 @@
     },
     "flowNotice": {
       "title": "WorkBuddy Account Info (click to expand/collapse)",
-      "desc": "Account switching writes the local sign-in file using the latest official WorkBuddy client layout; local import reads the same file. Data is processed locally only.",
-      "permission": "Permission scope: read and write the WorkBuddy sign-in file (CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info) for local import and account switching; the legacy state.vscdb is no longer read or modified.",
+      "desc": "Account switching writes the local WorkBuddy sign-in file using the current official client layout; local import reads the same file. Data is processed locally only. If an opaque official encryption wrapper is detected, the original file is preserved and the overwrite is stopped.",
+      "permission": "Permission scope: read and write the WorkBuddy sign-in file (CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info) for local import and account switching; the legacy state.vscdb is no longer read or modified. Files with an official encryption wrapper are not overwritten without its key.",
       "network": "Network scope: OAuth login and token refresh require network requests to WorkBuddy; quota queries call billing APIs. Local sign-in files and raw credentials are not uploaded."
     },
     "nickname": "Nickname",

@@ -232,7 +232,10 @@
         "weekly": "Mensagens de chat",
         "resetAt": "Reinicia: {{time}}",
         "expiresAt": "Expira em: {{time}}",
-        "leftPercent": "{{value}}% restante"
+        "unlimited": "Cota ilimitada",
+        "leftPercent": "{{value}}% restante",
+        "cachedRefreshFailed": "Falha na atualização; mostrando os últimos dados bem-sucedidos",
+        "lastSuccessfulQuery": "Último sucesso: {{time}}"
       },
       "subtitle": "Monitore em tempo real o status de cota de todas as contas.",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Afeta apenas a Base URL gravada no Codex Provider e copiada para clientes; não altera o endereço de escuta do serviço.",
       "clientBaseUrlHostSaveSuccess": "Endereço do cliente atualizado",
       "accountPoolHealth": {
-        "title": "Pool de contas",
+        "title": "Status das contas",
         "allAvailable": "Tudo OK {{count}}",
         "availableRatio": "Ativas {{available}}/{{total}}",
-        "issueSummary": "Erro {{abnormal}} · Pool {{poolUnavailable}} · Pausa {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, erro {{abnormal}}, pool {{poolUnavailable}}, pausa {{cooldown}}, ausente {{missing}}, auth {{authError}}, cota {{quotaLimited}}",
-        "openDetails": "Ver problemas do pool de contas",
+        "issueSummary": "Erro {{abnormal}} · Pausa {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, erro {{abnormal}}, pausa {{cooldown}}, ausente {{missing}}, auth {{authError}}, cota {{quotaLimited}}",
+        "openDetails": "Ver problemas de contas",
         "recover": "Recuperar estado",
         "recoverSuccess": "Recuperação solicitada para {{count}} conta(s)",
         "dialog": {
-          "title": "Problemas do pool de contas",
-          "description": "Estes estados do agendador Sidecar incluem problemas de conta e do pool antes de selecionar uma conta.",
-          "noIssues": "Nenhum problema no pool de contas",
+          "title": "Problemas de contas",
+      "description": "Cada conta é exibida com o modelo, o motivo da indisponibilidade e a ação de recuperação disponível.",
+          "noIssues": "Nenhum problema de contas",
           "unscopedApiKey": "API Key atual",
           "poolUnavailable": "Nenhuma conta disponível no pool",
           "poolUnavailableDetail": "Nenhuma conta disponível foi selecionada para o modelo {{model}}",

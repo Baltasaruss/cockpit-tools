@@ -662,9 +662,13 @@
 
 .codex-session-folder__expand,
 .codex-session-folder__label {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
   background: transparent;
   border: none;
   padding: 0;
+  cursor: pointer;
 }
 
 .codex-session-folder__expand {
@@ -753,6 +757,9 @@
 .codex-session-row__copy-button {
   width: 28px;
   height: 28px;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -785,6 +792,71 @@
   margin-right: 8px;
   white-space: nowrap;
   opacity: 0.85;
+}
+
+/* CodeBuddy uses the same session hierarchy as Codex, but only exposes a
+   refresh action. Keep that action compact instead of inheriting the
+   multi-action group's flex growth. */
+.codebuddy-session-manager .codex-session-manager__header {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.codebuddy-session-manager .codex-session-manager__search {
+  flex: 0 1 auto;
+  min-width: 0;
+  grid-template-columns: minmax(220px, 420px) auto 160px;
+}
+
+.codebuddy-session-manager .codex-session-manager__kind-filter.single-select-dropdown {
+  width: 160px;
+  max-width: 100%;
+  justify-self: end;
+}
+
+.codebuddy-session-manager .codex-session-manager__actions {
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.codebuddy-session-manager .codex-session-manager__action-button {
+  flex: 0 0 auto;
+  min-width: 104px;
+}
+
+.codebuddy-session-manager .codex-session-row__status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  .codebuddy-session-manager .codex-session-manager__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .codebuddy-session-manager .codex-session-manager__search {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto 160px;
+  }
+
+  .codebuddy-session-manager .codex-session-manager__actions {
+    width: 100%;
+  }
+
+  .codebuddy-session-manager .codex-session-manager__action-button {
+    width: 100%;
+  }
 }
 
 .codex-session-restore-modal {

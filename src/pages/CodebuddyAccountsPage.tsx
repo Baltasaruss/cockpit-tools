@@ -394,7 +394,9 @@ export function CodebuddyAccountsPage() {
           const isExtra = idx === allResources.length - 1;
           const quotaClass = getQuotaClassByRemainPercent(resource.remainPercent);
           const usedPercent = clampPercent(resource.usedPercent);
-          const quotaValueText = `${formatQuotaNumber(resource.used)} / ${formatQuotaNumber(resource.total)}`;
+          const quotaValueText = resource.unlimited
+            ? t('common.shared.quota.unlimited', '无限额度')
+            : `${formatQuotaNumber(resource.used)} / ${formatQuotaNumber(resource.total)}`;
           const timeText = resolveResourceTimeText(resource, isExtra);
           const packageName = resolveResourcePackageTitle(resource, isExtra);
 
@@ -449,10 +451,17 @@ export function CodebuddyAccountsPage() {
     const hasQuotaData =
       model.resources.length > 0 || model.extra.total > 0 || model.extra.remain > 0 || model.extra.used > 0;
     const refreshFailed = !!account.quota_query_last_error?.trim();
-    const shouldShowQuota = hasQuotaData && !refreshFailed;
+    const shouldShowQuota = hasQuotaData;
     const statusText = refreshFailed
       ? t('codebuddy.quotaQuery.failedRefreshCompact', '配额查询失败')
       : t('codebuddy.quotaQuery.empty', '暂无可用配额数据');
+    const cachedWarningText = t(
+      'common.shared.quota.cachedRefreshFailed',
+      '刷新失败，以下为上次成功数据',
+    );
+    const updatedAtText = model.updatedAt != null
+      ? formatQuotaDateTime(model.updatedAt)
+      : null;
     return (
       <>
         <div className="quota-item">
@@ -465,6 +474,21 @@ export function CodebuddyAccountsPage() {
           <div className="quota-header codebuddy-quota-header">
             <span className="quota-name">{t('codebuddy.quotaQuery.sectionTitle', '配额查询')}</span>
           </div>
+          {refreshFailed && hasQuotaData && (
+            <div className={`quota-cache-warning ${variant === 'table' ? 'table' : ''}`} role="status">
+              <CircleAlert size={14} />
+              <div className="quota-cache-warning-content">
+                <span className="quota-cache-warning-title">{cachedWarningText}</span>
+                {updatedAtText && (
+                  <span className="quota-cache-warning-time">
+                    {t('common.shared.quota.lastSuccessfulQuery', '上次成功：{{time}}', {
+                      time: updatedAtText,
+                    })}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           {shouldShowQuota ? (
             renderResourceQuotaItems(account, variant)
           ) : (
@@ -475,7 +499,7 @@ export function CodebuddyAccountsPage() {
         </div>
       </>
     );
-  }, [renderResourceQuotaItems, renderUsageInfo, t]);
+  }, [formatQuotaDateTime, renderResourceQuotaItems, renderUsageInfo, t]);
 
   const renderGridCards = (items: typeof filteredAccounts, groupKey?: string) =>
     items.map((account) => {
@@ -787,7 +811,7 @@ export function CodebuddyAccountsPage() {
 
       {showAddModal && (
         <div className="modal-overlay">
-            <div className="modal-content ghcp-add-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-content ghcp-add-modal platform-account-add-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{t('codebuddy.addAccount', '添加 CodeBuddy 账号')}</h2>
               <button className="modal-close" onClick={closeAddModal}><X size={18} /></button>

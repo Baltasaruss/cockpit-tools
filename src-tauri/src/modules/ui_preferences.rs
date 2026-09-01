@@ -29,7 +29,8 @@ fn read_preferences_from_path(path: &PathBuf) -> Result<UiPreferences, String> {
     if !path.exists() {
         return Ok(UiPreferences::default());
     }
-    let raw = std::fs::read_to_string(path).map_err(|error| format!("读取界面偏好失败: {error}"))?;
+    let raw =
+        std::fs::read_to_string(path).map_err(|error| format!("读取界面偏好失败: {error}"))?;
     if raw.trim().is_empty() {
         return Ok(UiPreferences::default());
     }
@@ -135,10 +136,7 @@ mod tests {
 
         assert!(super::apply_values(
             &mut preferences,
-            BTreeMap::from([(
-                "agtools.platform_layout.v1".to_string(),
-                "next".to_string()
-            )]),
+            BTreeMap::from([("agtools.platform_layout.v1".to_string(), "next".to_string())]),
         ));
         assert_eq!(
             preferences.values.get("agtools.platform_layout.v1"),
@@ -147,10 +145,7 @@ mod tests {
         assert_eq!(preferences.values.get("keep"), Some(&"yes".to_string()));
         assert!(!super::apply_values(
             &mut preferences,
-            BTreeMap::from([(
-                "agtools.platform_layout.v1".to_string(),
-                "next".to_string()
-            )]),
+            BTreeMap::from([("agtools.platform_layout.v1".to_string(), "next".to_string())]),
         ));
     }
 }

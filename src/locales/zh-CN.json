@@ -239,7 +239,10 @@
         "weekly": "Chat messages",
         "resetAt": "重置：{{time}}",
         "expiresAt": "到期时间：{{time}}",
-        "leftPercent": "剩余 {{value}}%"
+        "unlimited": "无限额度",
+        "leftPercent": "剩余 {{value}}%",
+        "cachedRefreshFailed": "刷新失败，以下为上次成功数据",
+        "lastSuccessfulQuery": "上次成功：{{time}}"
       },
       "subtitle": "实时监控所有账号的配额状态。",
       "time": {
@@ -2750,18 +2753,18 @@
         "empty": "暂无额度统计"
       },
       "accountPoolHealth": {
-        "title": "账号池",
+        "title": "账号状态",
         "allAvailable": "全部可用 {{count}}",
         "availableRatio": "可用 {{available}}/{{total}}",
-        "issueSummary": "异常 {{abnormal}} · 池异常 {{poolUnavailable}} · 冷却 {{cooldown}}",
-        "detail": "可用 {{available}}/{{total}}，异常 {{abnormal}}，池异常 {{poolUnavailable}}，冷却 {{cooldown}}，缺失 {{missing}}，鉴权 {{authError}}，额度 {{quotaLimited}}",
-        "openDetails": "查看账号池异常详情",
+        "issueSummary": "异常 {{abnormal}} · 冷却 {{cooldown}}",
+        "detail": "可用 {{available}}/{{total}}，异常 {{abnormal}}，冷却 {{cooldown}}，缺失 {{missing}}，鉴权 {{authError}}，额度 {{quotaLimited}}",
+        "openDetails": "查看账号异常详情",
         "recover": "恢复账号状态",
         "recoverSuccess": "已提交 {{count}} 个账号的恢复操作",
         "dialog": {
-          "title": "账号池异常",
-          "description": "以下状态来自 Sidecar 账号调度器，包括账号异常和请求尚未选中账号时的池级异常。",
-          "noIssues": "账号池当前无异常",
+          "title": "账号异常",
+          "description": "以下状态按账号显示，包含对应模型、不可用原因和可执行的恢复操作。",
+          "noIssues": "当前没有异常账号",
           "unscopedApiKey": "当前 API Key",
           "poolUnavailable": "账号池无可用账号",
           "poolUnavailableDetail": "模型 {{model}} 的请求没有选出可用账号",
@@ -5756,8 +5759,8 @@
     },
     "flowNotice": {
       "title": "WorkBuddy 账号管理说明（点击展开/收起）",
-      "desc": "切换账号会按新版 WorkBuddy 官方客户端规则写入本机登录文件；本机导入读取同一登录文件，数据仅在本地处理。",
-      "permission": "权限范围：读取并写入 WorkBuddy 登录文件（CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info），用于本机导入与账号切换；不再读取或修改旧版 state.vscdb。",
+      "desc": "切换账号会按当前 WorkBuddy 官方客户端登录文件布局写入本机；本机导入读取同一登录文件，数据仅在本地处理。若检测到无法解密的官方封装，会保留原文件并停止覆盖。",
+      "permission": "权限范围：读取并写入 WorkBuddy 登录文件（CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info），用于本机导入与账号切换；不再读取或修改旧版 state.vscdb。遇到官方加密封装且未取得密钥时不会覆盖原文件。",
       "network": "网络范围：OAuth 授权登录与 Token 刷新需联网请求 WorkBuddy；配额查询需调用计费 API。不上传本地登录文件或凭证原文。"
     },
     "nickname": "昵称",

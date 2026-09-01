@@ -227,7 +227,10 @@
         "weekly": "Hạn mức tuần",
         "resetAt": "Đặt lại: {{time}}",
         "expiresAt": "Hết hạn lúc: {{time}}",
-        "leftPercent": "Còn {{value}}%"
+        "unlimited": "Hạn mức không giới hạn",
+        "leftPercent": "Còn {{value}}%",
+        "cachedRefreshFailed": "Làm mới thất bại; đang hiển thị dữ liệu thành công gần nhất",
+        "lastSuccessfulQuery": "Lần thành công gần nhất: {{time}}"
       },
       "subtitle": "Quản lý các tài khoản GitHub Copilot",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Chỉ ảnh hưởng đến Base URL ghi vào Codex Provider và sao chép cho client; không đổi địa chỉ lắng nghe của dịch vụ.",
       "clientBaseUrlHostSaveSuccess": "Đã cập nhật địa chỉ client",
       "accountPoolHealth": {
-        "title": "Nhóm tài khoản",
+        "title": "Trạng thái tài khoản",
         "allAvailable": "Tất cả OK {{count}}",
         "availableRatio": "Tốt {{available}}/{{total}}",
-        "issueSummary": "Lỗi {{abnormal}} · Nhóm {{poolUnavailable}} · Chờ {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, lỗi {{abnormal}}, nhóm {{poolUnavailable}}, chờ {{cooldown}}, thiếu {{missing}}, auth {{authError}}, hạn mức {{quotaLimited}}",
-        "openDetails": "Xem lỗi nhóm tài khoản",
+        "issueSummary": "Lỗi {{abnormal}} · Chờ {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, lỗi {{abnormal}}, chờ {{cooldown}}, thiếu {{missing}}, auth {{authError}}, hạn mức {{quotaLimited}}",
+        "openDetails": "Xem lỗi tài khoản",
         "recover": "Khôi phục trạng thái",
         "recoverSuccess": "Đã yêu cầu khôi phục {{count}} tài khoản",
         "dialog": {
-          "title": "Lỗi nhóm tài khoản",
-          "description": "Các trạng thái Sidecar này gồm lỗi tài khoản và lỗi nhóm trước khi chọn tài khoản.",
-          "noIssues": "Nhóm tài khoản không có lỗi",
+          "title": "Lỗi tài khoản",
+      "description": "Mỗi tài khoản được hiển thị cùng model, lý do không khả dụng và thao tác khôi phục nếu có.",
+          "noIssues": "Tài khoản không có lỗi",
           "unscopedApiKey": "API Key hiện tại",
           "poolUnavailable": "Không có tài khoản khả dụng trong nhóm",
           "poolUnavailableDetail": "Không chọn được tài khoản khả dụng cho mô hình {{model}}",

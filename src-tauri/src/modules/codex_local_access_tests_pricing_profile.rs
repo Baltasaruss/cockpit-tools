@@ -2055,3 +2055,82 @@ supports_websockets = false
         assert_eq!(usage(&stats.weekly, "key-a"), (2, 300));
         assert_eq!(usage(&stats.monthly, "key-a"), (4, 1000));
     }
+
+    #[test]
+    fn stats_maintenance_streams_all_rows_but_keeps_only_recent_events() {
+        let dir = make_temp_dir("codex-local-access-streaming-stats");
+        let db_path = dir.join("request_logs.sqlite");
+        let conn = open_local_access_logs_db_once(&db_path, true).expect("open logs db");
+        let now = now_ms();
+        let mut runtime_events = Vec::new();
+
+        for index in 0..250 {
+            let request_id = format!("req-{index:03}");
+            let usage = UsageCapture {
+                input_tokens: 1,
+                output_tokens: 2,
+                total_tokens: 3,
+                cached_tokens: 0,
+                reasoning_tokens: 0,
+                token_breakdown: None,
+            };
+            let event = append_usage_event(
+                &mut runtime_events,
+                now - 250 + index,
+                Some(request_id.as_str()),
+                Some("acc-1"),
+                Some("user@example.com"),
+                Some("key-1"),
+                Some("Production Key"),
+                None,
+                Some("gpt-5.4"),
+                Some(CodexLocalAccessGatewayMode::Sidecar),
+                CodexLocalAccessRequestKind::Text,
+                None,
+                None,
+                true,
+                Some(200),
+                None,
+                None,
+                10,
+                Some(&usage),
+                None,
+                DEFAULT_MODEL_PRICING_VERSION,
+                0.0,
+            );
+            insert_local_access_usage_event(&conn, &event).expect("insert request log");
+        }
+
+        assert_eq!(runtime_events.len(), STATE_RECENT_USAGE_EVENT_LIMIT);
+        assert_eq!(runtime_events.first().unwrap().request_id, "req-150");
+
+        let (daily, weekly, monthly, recent_events) =
+            load_stats_windows_and_recent_events_from_conn(&conn, now)
+                .expect("stream stats windows");
+
+        assert_eq!(daily.totals.request_count, 250);
+        assert_eq!(weekly.totals.request_count, 250);
+        assert_eq!(monthly.totals.request_count, 250);
+        assert_eq!(recent_events.len(), STATE_RECENT_USAGE_EVENT_LIMIT);
+        assert_eq!(recent_events.first().unwrap().request_id, "req-150");
+        assert_eq!(recent_events.last().unwrap().request_id, "req-249");
+
+        drop(conn);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn compact_stats_snapshot_excludes_runtime_events() {
+        let mut stats = empty_stats_snapshot();
+        stats.totals.request_count = 7;
+        stats.events = vec![CodexLocalAccessUsageEvent {
+            request_id: "req-1".to_string(),
+            ..Default::default()
+        }];
+
+        let snapshot = stats_snapshot_without_events(&stats);
+
+        assert_eq!(snapshot.totals.request_count, 7);
+        assert!(snapshot.events.is_empty());
+        assert_eq!(stats.events.len(), 1);
+    }

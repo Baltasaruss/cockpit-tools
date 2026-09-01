@@ -1477,7 +1477,6 @@ fn sync_or_cleanup_account_model_catalog_for_dir(
         }
         if is_deepseek_official_runtime_access(account) {
             write_deepseek_official_responses_runtime_to_dir(base_dir, account)?;
-            let _ = cleanup_managed_model_catalog_for_dir(base_dir)?;
             return Ok(());
         }
         let _ = sync_deepseek_shell_remap_catalog_to_dir(base_dir, account)?;
@@ -1865,8 +1864,8 @@ fn write_deepseek_official_responses_runtime_to_dir(
     let api_key = normalize_api_key(account.openai_api_key.as_deref().unwrap_or_default())
         .ok_or_else(|| "DeepSeek 账号缺少 API Key".to_string())?;
     let selected_model = resolve_deepseek_startup_model(account);
-    let _ = cleanup_managed_model_catalog_for_dir(base_dir)?;
     let _ = remove_leftover_deepseek_models_json(base_dir);
+    let _catalog_path = write_deepseek_official_model_catalog_file(base_dir, account)?;
     if let Err(error) = crate::modules::codex_local_access::invalidate_codex_model_cache(base_dir) {
         logger::log_warn(&format!(
             "[Codex切号] 清理 Codex 模型缓存失败: path={}, error={}",
@@ -1895,6 +1894,7 @@ fn write_deepseek_official_responses_runtime_to_dir(
         let _ = doc.remove("model_reasoning_summary");
     }
     doc[CODEX_CONFIG_MODEL_PROVIDER_KEY] = value(DEEPSEEK_PROVIDER_ID);
+    doc[CODEX_CONFIG_MODEL_CATALOG_JSON_KEY] = value(CODEX_MANAGED_MODEL_CATALOG_FILE);
     doc["preferred_auth_method"] = value("apikey");
     let _ = doc.remove(CODEX_CONFIG_OPENAI_BASE_URL_KEY);
 
@@ -1990,4 +1990,3 @@ fn write_api_key_runtime_provider_to_config_toml(
         wire_api,
     )
 }
-

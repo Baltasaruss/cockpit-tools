@@ -7,6 +7,36 @@ All notable changes to Cockpit Tools will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+## [1.3.35] - 2026-09-01
+
+### Added
+
+- **Mixed model routing for Codex Desktop**: Codex instances can optionally route selected models or namespaces to configured third-party API providers while keeping official subscription models on the official route. The launch preview now provides the routing switch, provider/model selection, and synchronized model visibility.
+- **DeepSeek V4 Flash Vision support**: The dedicated `deepseek-v4-flash-vision-exp` model is now exposed with image-input metadata, allowing Codex to send `input_image` content through the native and provider-gateway paths.
+- **Cursor quota-failure filtering and batch deletion**: quickly find accounts whose quota lookup failed and delete all filtered failures in one action.
+
+### Changed
+
+- **Codex API Service account issues now use an account-only view**: the dialog no longer shows a separate pool-level summary; every unavailable account shows the affected model and failure reason, with per-account or bulk recovery when available.
+- **Unified account-add dialog sizing across platforms**: desktop dialogs now use the same 760px wide-dialog baseline as Codex while continuing to fit the available width on mobile screens.
+- **Mixed-routing lifecycle isolation**: third-party provider gateways are managed per Codex profile, and disabling routing or stopping a profile restores the Cockpit-managed `config.toml` state. Aborted or failed launches also perform the same fallback cleanup.
+- **Coalesced tray-menu rebuilds**: duplicate rebuild requests within a 150 ms window are merged, reducing repeated disk reads during account changes.
+- **Sidebar layout survives updates**: the layout is persisted to `ui_preferences.json` in the data directory and restored after upgrades, including remapping legacy platform entries.
+
+### Fixed
+
+- **Restored WorkBuddy, CodeBuddy, and CodeBuddy CN quota queries against current official clients**: OAuth and refresh headers, WorkBuddy endpoints and versioned login parameters, personal and enterprise billing payloads, response parsing, unlimited quotas, and WorkBuddy's shared sign-in file layout now follow the latest official behavior; failed refreshes preserve the previous quota snapshot.
+- **Fixed Qoder OAuth completion leaving the dialog open without showing the account**: authorization now confirms that the new account is persisted and visible in the list before closing the dialog; list failures or a missing account keep the dialog open and report failure instead of showing a false success.
+- **Fixed Qoder account switching on macOS reusing the previous in-memory session**: the current `Qoder IDE.app` main process is now detected and closed before credentials are injected and the default instance is relaunched.
+- **Fixed Codex API Service activation ignoring the selected instance**: activating from a non-default instance now prepares and launches that profile instead of always changing and starting `__default__`.
+- **Aligned ZCode quota queries with the 3.10.2 desktop client**: official source metadata and device identity headers are now sent so the service does not reject requests as `parameter error`; numeric-string balances and reset timestamps are accepted, and a successful no-plan response preserves the plan label while clearing stale failures.
+- **Aligned Devin/Windsurf quota-request metadata with the official client**: quota queries now read the installed product and Language Server versions dynamically instead of sending stale `1.0.0` placeholders that current servers can reject.
+- **Aligned Claude Web quota parsing with the current official client**: the account manager now reads the `limits[]` usage envelope (including session, weekly, Sonnet-scoped, and extra-usage meters) returned by the installed Claude desktop client.
+- **Fixed Codex API Service high-volume statistics repeatedly copying unbounded in-memory event history**: historical logs are now aggregated from SQLite as a stream, the runtime keeps only the latest 100 events, and persistence no longer duplicates the event list.
+- **Expired Codex subscriptions are classified by effective plan**: expired Plus/Pro accounts now display and group as `FREE`, and local API Service free-account limits use the effective plan as well.
+
+Thanks [@enenH](https://github.com/enenH) ([#2159](https://github.com/jlcodes99/cockpit-tools/issues/2159)), [@we1jia](https://github.com/we1jia) ([#2155](https://github.com/jlcodes99/cockpit-tools/pull/2155)), [@HUF457](https://github.com/HUF457) ([#2110](https://github.com/jlcodes99/cockpit-tools/pull/2110)), [@yifayun](https://github.com/yifayun) ([#2089](https://github.com/jlcodes99/cockpit-tools/pull/2089)), [@Jonesxq](https://github.com/Jonesxq) ([#1986](https://github.com/jlcodes99/cockpit-tools/pull/1986)), and [@TakaSoap](https://github.com/TakaSoap) ([#2056](https://github.com/jlcodes99/cockpit-tools/pull/2056)) for their contributions.
+
 ## [1.3.34] - 2026-08-28
 
 ### Added
@@ -58,7 +88,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Fixed Codex client launch failures still being reported as a successful account switch or API Service activation**: launch failures now retain a clear error result and retry action instead of treating a completed credential change as proof that the client is usable.
 - **Fixed Codex local import sometimes using stale OAuth credentials**: OAuth accounts are imported from the official credential store, including macOS Keychain, while API Key, Agent Identity, and personal access token imports retain their existing behavior.
 - **Fixed Codex API Service text tests being blocked by image-capability checks for some accounts**: ordinary text tests no longer advertise image-generation tools to upstreams without image capacity, while actual image-generation requests remain unaffected.
-- **Fixed Codex batch quota refresh repeatedly probing desktop processes on Windows**: a refresh batch reuses one runtime detection result, reducing PowerShell subprocesses and avoidable waits.
+- **Fixed Codex batch quota refresh repeatedly probing desktop processes on Windows**: a refresh batch reuses one runtime detection result, reducing PowerShell subprocesses and avoidable waits. Thanks [@popokcn](https://github.com/popokcn) for contributing ([#2106](https://github.com/jlcodes99/cockpit-tools/pull/2106)).
 
 ## [1.3.31] - 2026-08-25
 

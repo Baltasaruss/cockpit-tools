@@ -598,11 +598,12 @@ fn codex_launch_credential_snapshot_for_account_id(
         .map(|account| codex_launch_credential_snapshot_for_account(&account, source_prefix))
 }
 
-fn read_current_codex_launch_credential_snapshot() -> Option<CodexLaunchCredentialSnapshot> {
-    let codex_home = codex_account::get_codex_home();
-    if let Some(account_id) =
-        codex_account::read_managed_projection_account_id_from_dir(&codex_home)
-    {
+fn read_codex_launch_credential_snapshot_for_dir(
+    base_dir: &Path,
+    bind_account_id: Option<&str>,
+    include_current_index: bool,
+) -> Option<CodexLaunchCredentialSnapshot> {
+    if let Some(account_id) = codex_account::read_managed_projection_account_id_from_dir(base_dir) {
         if let Some(snapshot) =
             codex_launch_credential_snapshot_for_account_id(&account_id, "profile:")
         {
@@ -610,19 +611,37 @@ fn read_current_codex_launch_credential_snapshot() -> Option<CodexLaunchCredenti
         }
     }
 
-    if let Ok(settings) = crate::modules::codex_instance::load_default_settings() {
-        if let Some(bind_account_id) = settings.bind_account_id.as_deref() {
-            if let Some(snapshot) =
-                codex_launch_credential_snapshot_for_account_id(bind_account_id, "default-bind:")
-            {
-                return Some(snapshot);
-            }
+    // The official client may keep the current OAuth snapshot in Keychain or its
+    // profile auth store even when the managed projection marker is missing.
+    // Prefer that runtime evidence before falling back to the instance binding.
+    if let Some(account_id) = codex_account::oauth_account_id_for_runtime_dir(base_dir) {
+        if let Some(snapshot) =
+            codex_launch_credential_snapshot_for_account_id(&account_id, "runtime-oauth:")
+        {
+            return Some(snapshot);
         }
     }
 
-    codex_account::get_current_account()
-        .as_ref()
-        .map(|account| codex_launch_credential_snapshot_for_account(account, "current-index:"))
+    if let Some(bind_account_id) = bind_account_id {
+        if let Some(snapshot) =
+            codex_launch_credential_snapshot_for_account_id(bind_account_id, "bind:")
+        {
+            return Some(snapshot);
+        }
+    }
+
+    include_current_index
+        .then(codex_account::get_current_account)
+        .flatten()
+        .map(|account| codex_launch_credential_snapshot_for_account(&account, "current-index:"))
+}
+
+fn read_current_codex_launch_credential_snapshot() -> Option<CodexLaunchCredentialSnapshot> {
+    let codex_home = codex_account::get_codex_home();
+    let bind_account_id = crate::modules::codex_instance::load_default_settings()
+        .ok()
+        .and_then(|settings| settings.bind_account_id);
+    read_codex_launch_credential_snapshot_for_dir(&codex_home, bind_account_id.as_deref(), true)
 }
 
 fn repair_codex_session_visibility_after_credential_kind_change(

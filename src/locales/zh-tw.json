@@ -232,7 +232,10 @@
         "weekly": "週配額",
         "resetAt": "重置: {{time}}",
         "expiresAt": "到期時間：{{time}}",
-        "leftPercent": "剩餘 {{value}}%"
+        "unlimited": "無限額度",
+        "leftPercent": "剩餘 {{value}}%",
+        "cachedRefreshFailed": "刷新失敗，以下為上次成功資料",
+        "lastSuccessfulQuery": "上次成功：{{time}}"
       },
       "subtitle": "管理您的 GitHub Copilot 帳號",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "僅影響寫入 Codex Provider 和複製給用戶端的 Base URL，不會改變服務監聽位址。",
       "clientBaseUrlHostSaveSuccess": "用戶端位址已更新",
       "accountPoolHealth": {
-        "title": "帳號池",
+        "title": "帳號狀態",
         "allAvailable": "全部可用 {{count}}",
         "availableRatio": "可用 {{available}}/{{total}}",
-        "issueSummary": "異常 {{abnormal}} · 池異常 {{poolUnavailable}} · 冷卻 {{cooldown}}",
-        "detail": "可用 {{available}}/{{total}}，異常 {{abnormal}}，池異常 {{poolUnavailable}}，冷卻 {{cooldown}}，缺失 {{missing}}，鑑權 {{authError}}，額度 {{quotaLimited}}",
-        "openDetails": "查看帳號池異常詳情",
+        "issueSummary": "異常 {{abnormal}} · 冷卻 {{cooldown}}",
+        "detail": "可用 {{available}}/{{total}}，異常 {{abnormal}}，冷卻 {{cooldown}}，缺失 {{missing}}，鑑權 {{authError}}，額度 {{quotaLimited}}",
+        "openDetails": "查看帳號異常詳情",
         "recover": "恢復帳號狀態",
         "recoverSuccess": "已提交 {{count}} 個帳號的恢復操作",
         "dialog": {
-          "title": "帳號池異常",
-          "description": "以下狀態來自 Sidecar 帳號調度器，包括帳號異常及尚未選中帳號時的池級異常。",
-          "noIssues": "帳號池目前無異常",
+          "title": "帳號異常",
+      "description": "以下狀態按帳號顯示，包含對應模型、無法使用原因及可執行的復原操作。",
+          "noIssues": "目前沒有異常帳號",
           "unscopedApiKey": "目前 API Key",
           "poolUnavailable": "帳號池無可用帳號",
           "poolUnavailableDetail": "模型 {{model}} 的請求未能選出可用帳號",

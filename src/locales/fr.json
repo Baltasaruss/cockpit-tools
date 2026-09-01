@@ -232,7 +232,10 @@
         "weekly": "Quota hebdomadaire",
         "resetAt": "Réinitialisation: {{time}}",
         "expiresAt": "Expire le : {{time}}",
-        "leftPercent": "{{value}} % restants"
+        "unlimited": "Quota illimité",
+        "leftPercent": "{{value}} % restants",
+        "cachedRefreshFailed": "Échec de l’actualisation ; affichage des dernières données réussies",
+        "lastSuccessfulQuery": "Dernière réussite : {{time}}"
       },
       "subtitle": "Gérez vos comptes GitHub Copilot",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Affecte uniquement la Base URL écrite dans Codex Provider et copiée aux clients ; l’adresse d’écoute du service ne change pas.",
       "clientBaseUrlHostSaveSuccess": "Adresse client mise à jour",
       "accountPoolHealth": {
-        "title": "Pool de comptes",
+        "title": "État des comptes",
         "allAvailable": "Tout OK {{count}}",
         "availableRatio": "Valide {{available}}/{{total}}",
-        "issueSummary": "Erreur {{abnormal}} · Pool {{poolUnavailable}} · Pause {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, erreur {{abnormal}}, pool {{poolUnavailable}}, pause {{cooldown}}, manquant {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
-        "openDetails": "Voir les problèmes du pool de comptes",
+        "issueSummary": "Erreur {{abnormal}} · Pause {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, erreur {{abnormal}}, pause {{cooldown}}, manquant {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
+        "openDetails": "Voir les problèmes de comptes",
         "recover": "Rétablir l’état",
         "recoverSuccess": "Rétablissement demandé pour {{count}} compte(s)",
         "dialog": {
-          "title": "Problèmes du pool de comptes",
-          "description": "Ces états du planificateur Sidecar incluent les erreurs de compte et de pool avant la sélection d’un compte.",
-          "noIssues": "Aucun problème dans le pool de comptes",
+          "title": "Problèmes de comptes",
+      "description": "Chaque compte affiche son modèle, la raison de son indisponibilité et l’action de récupération disponible.",
+          "noIssues": "Aucun problème de comptes",
           "unscopedApiKey": "API Key actuelle",
           "poolUnavailable": "Aucun compte disponible dans le pool",
           "poolUnavailableDetail": "Aucun compte disponible n’a été sélectionné pour le modèle {{model}}",

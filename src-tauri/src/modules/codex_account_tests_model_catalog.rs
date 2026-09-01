@@ -26,8 +26,18 @@
         assert!(!account.api_supports_websockets);
         assert!(!account.api_supports_vision);
         assert_eq!(
+            account
+                .api_model_vision_support
+                .get("deepseek-v4-flash-vision-exp"),
+            Some(&true)
+        );
+        assert_eq!(
             account.api_model_catalog,
-            vec!["deepseek-v4-flash", "deepseek-v4-pro"]
+            vec![
+                "deepseek-v4-flash",
+                "deepseek-v4-pro",
+                "deepseek-v4-flash-vision-exp"
+            ]
         );
         assert_eq!(
             account.api_model_mappings,
@@ -75,6 +85,39 @@
             super::resolve_account_upstream_model(&account, "gpt-5.4"),
             "gpt-5.4"
         );
+    }
+
+    #[test]
+    fn deepseek_account_normalize_backfills_new_vision_mapping_without_overwriting_custom() {
+        let mut account = CodexAccount::new_api_key(
+            "deepseek-api-key".to_string(),
+            "deepseek@example.com".to_string(),
+            "sk-deepseek".to_string(),
+            CodexApiProviderMode::Custom,
+            Some("https://api.deepseek.com".to_string()),
+            Some("deepseek".to_string()),
+            Some("DeepSeek".to_string()),
+            vec!["deepseek-v4-flash".to_string()],
+        );
+        account.api_wire_api = Some("responses".to_string());
+        account.api_model_mappings = vec![CodexApiModelMapping {
+            client_model: "gpt-5.4-mini".to_string(),
+            upstream_model: "custom-vision".to_string(),
+        }];
+
+        assert!(super::normalize_deepseek_account(&mut account));
+        assert_eq!(
+            account
+                .api_model_mappings
+                .iter()
+                .find(|mapping| mapping.client_model.eq_ignore_ascii_case("gpt-5.4-mini"))
+                .map(|mapping| mapping.upstream_model.as_str()),
+            Some("custom-vision")
+        );
+        assert!(account.api_model_mappings.iter().any(|mapping| {
+            mapping.client_model == "deepseek-v4-flash-vision-exp"
+                && mapping.upstream_model == "deepseek-v4-flash-vision-exp"
+        }));
     }
 
     #[test]
@@ -161,6 +204,17 @@
             models[1].get("display_name").and_then(|item| item.as_str()),
             Some("DeepSeek-V4-Pro")
         );
+        let vision = models
+            .iter()
+            .find(|model| {
+                model.get("slug").and_then(|item| item.as_str())
+                    == Some("deepseek-v4-flash-vision-exp")
+            })
+            .expect("vision model");
+        assert_eq!(
+            vision.get("input_modalities"),
+            Some(&serde_json::json!(["text", "image"]))
+        );
     }
 
     #[test]
@@ -223,6 +277,7 @@ wire_api = "responses"
             vec![
                 "deepseek-v4-flash".to_string(),
                 "deepseek-v4-pro".to_string(),
+                "deepseek-v4-flash-vision-exp".to_string(),
             ],
         );
         account.api_wire_api = Some("responses".to_string());
@@ -393,7 +448,7 @@ model_catalog_json = "cockpit-provider-model-catalog.json"
     }
 
     #[test]
-    fn deepseek_direct_bundle_writes_startup_model_without_shell_catalog() {
+    fn deepseek_direct_bundle_writes_startup_model_with_native_catalog() {
         let instance_dir = make_temp_dir("codex-deepseek-direct-startup-model");
         let mut account = CodexAccount::new_api_key(
             "deepseek-api-key".to_string(),
@@ -406,6 +461,7 @@ model_catalog_json = "cockpit-provider-model-catalog.json"
             vec![
                 "deepseek-v4-flash".to_string(),
                 "deepseek-v4-pro".to_string(),
+                "deepseek-v4-flash-vision-exp".to_string(),
             ],
         );
         account.api_wire_api = Some("responses".to_string());
@@ -419,10 +475,12 @@ model_catalog_json = "cockpit-provider-model-catalog.json"
         assert!(config.contains("model = \"deepseek-v4-pro\""));
         assert!(config.contains("model_provider = \"deepseek\""));
         assert!(config.contains("base_url = \"https://api.deepseek.com\""));
-        assert!(!config.contains("model_catalog_json"));
-        assert!(!instance_dir
-            .join(super::CODEX_MANAGED_MODEL_CATALOG_FILE)
-            .exists());
+        assert!(config.contains("model_catalog_json = \"cockpit-model-catalog.json\""));
+        let catalog = fs::read_to_string(
+            instance_dir.join(super::CODEX_MANAGED_MODEL_CATALOG_FILE),
+        )
+        .expect("read direct catalog");
+        assert!(catalog.contains("deepseek-v4-flash-vision-exp"));
 
         fs::remove_dir_all(&instance_dir).expect("cleanup extra instance dir");
     }

@@ -71,6 +71,7 @@ import {
   removeAccountsOverviewFilterField,
   writeAccountsOverviewFilterField,
 } from "../../utils/accountsOverviewFilterPersistence";
+import { getAccountQuotaUpdatedAtMs } from "../../utils/codebuddy-suite/parser";
 
 const FILTER_TYPES_FIELD = "filter_types";
 
@@ -561,7 +562,7 @@ export function CodebuddySuiteAccountsSharedView<
       const refreshFailed = !!account.quota_query_last_error?.trim();
       const reauthorizationReason =
         platformConfig.getReauthorizationReason?.(account) || null;
-      const shouldShowQuota = hasQuotaData && !refreshFailed;
+      const shouldShowQuota = hasQuotaData;
       const statusText = refreshFailed
         ? t(
             `${platformConfig.quotaPrefix}.quotaQuery.failedRefreshCompact`,
@@ -571,6 +572,14 @@ export function CodebuddySuiteAccountsSharedView<
             `${platformConfig.quotaPrefix}.quotaQuery.empty`,
             "暂无可用配额数据",
           );
+      const cachedWarningText = t(
+        "common.shared.quota.cachedRefreshFailed",
+        "刷新失败，以下为上次成功数据",
+      );
+      const updatedAtMs = getAccountQuotaUpdatedAtMs(account);
+      const updatedAtText = updatedAtMs != null
+        ? formatQuotaDateTime(updatedAtMs)
+        : "";
       return (
         <>
           {reauthorizationReason && (
@@ -612,6 +621,21 @@ export function CodebuddySuiteAccountsSharedView<
                 )}
               </span>
             </div>
+            {refreshFailed && hasQuotaData && (
+              <div className={`quota-cache-warning ${variant === "table" ? "table" : ""}`} role="status">
+                <CircleAlert size={14} />
+                <div className="quota-cache-warning-content">
+                  <span className="quota-cache-warning-title">{cachedWarningText}</span>
+                  {updatedAtText && (
+                    <span className="quota-cache-warning-time">
+                      {t("common.shared.quota.lastSuccessfulQuery", "上次成功：{{time}}", {
+                        time: updatedAtText,
+                      })}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
             {shouldShowQuota ? (
               renderResourceQuotaItems(account, variant)
             ) : (
@@ -1298,7 +1322,7 @@ export function CodebuddySuiteAccountsSharedView<
         createPortal(
           <div className="modal-overlay account-add-modal-overlay">
             <div
-              className={`modal-content ghcp-add-modal ${platformConfig.pageClassName}-add-modal${
+              className={`modal-content ghcp-add-modal platform-account-add-modal ${platformConfig.pageClassName}-add-modal${
                 platformConfig.showPasteJsonTab
                   ? " suite-account-add-modal-wide"
                   : ""

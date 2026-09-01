@@ -227,7 +227,10 @@
         "weekly": "رسائل الدردشة",
         "resetAt": "إعادة الضبط: {{time}}",
         "expiresAt": "ينتهي في: {{time}}",
-        "leftPercent": "متبقي {{value}}٪"
+        "unlimited": "حصة غير محدودة",
+        "leftPercent": "متبقي {{value}}٪",
+        "cachedRefreshFailed": "فشل التحديث؛ يتم عرض آخر بيانات ناجحة",
+        "lastSuccessfulQuery": "آخر نجاح: {{time}}"
       },
       "subtitle": "مراقبة حالة الحصة لجميع الحسابات في الوقت الفعلي.",
       "time": {
@@ -2600,18 +2603,18 @@
       "clientBaseUrlHostDesc": "يؤثر فقط على Base URL المكتوب في Codex Provider والمنسوخ للعميل، ولا يغير عنوان الاستماع للخدمة.",
       "clientBaseUrlHostSaveSuccess": "تم تحديث عنوان العميل",
       "accountPoolHealth": {
-        "title": "مجموعة الحسابات",
+        "title": "حالة الحسابات",
         "allAvailable": "كلها سليمة {{count}}",
         "availableRatio": "سليم {{available}}/{{total}}",
-        "issueSummary": "خلل {{abnormal}} · خلل المجموعة {{poolUnavailable}} · تهدئة {{cooldown}}",
-        "detail": "سليم {{available}}/{{total}}، خلل {{abnormal}}، خلل المجموعة {{poolUnavailable}}، تهدئة {{cooldown}}، مفقود {{missing}}، مصادقة {{authError}}، حصة {{quotaLimited}}",
-        "openDetails": "عرض مشكلات مجموعة الحسابات",
+        "issueSummary": "خلل {{abnormal}} · تهدئة {{cooldown}}",
+        "detail": "سليم {{available}}/{{total}}، خلل {{abnormal}}، تهدئة {{cooldown}}، مفقود {{missing}}، مصادقة {{authError}}، حصة {{quotaLimited}}",
+        "openDetails": "عرض مشكلات الحسابات",
         "recover": "استعادة حالة الحساب",
         "recoverSuccess": "طُلبت الاستعادة لـ {{count}} حساب",
         "dialog": {
-          "title": "مشكلات مجموعة الحسابات",
-          "description": "تأتي هذه الحالات من مجدول Sidecar وتشمل مشكلات الحساب والمجموعة قبل اختيار حساب.",
-          "noIssues": "لا توجد مشاكل في مجموعة الحسابات",
+          "title": "مشكلات الحسابات",
+      "description": "تُعرض الحالة لكل حساب مع النموذج وسبب عدم التوفر وإجراء الاستعادة المتاح.",
+          "noIssues": "لا توجد مشاكل في الحسابات",
           "unscopedApiKey": "مفتاح API الحالي",
           "poolUnavailable": "لا يوجد حساب متاح في المجموعة",
           "poolUnavailableDetail": "لم يتم اختيار حساب متاح للنموذج {{model}}",

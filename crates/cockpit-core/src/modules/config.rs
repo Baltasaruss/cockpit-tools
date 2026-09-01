@@ -856,8 +856,8 @@ impl Default for UserConfig {
             ghcp_opencode_auth_overwrite_on_switch: default_ghcp_opencode_auth_overwrite_on_switch(
             ),
             grok_opencode_sync_on_switch: default_grok_opencode_sync_on_switch(),
-            grok_opencode_auth_overwrite_on_switch:
-                default_grok_opencode_auth_overwrite_on_switch(),
+            grok_opencode_auth_overwrite_on_switch: default_grok_opencode_auth_overwrite_on_switch(
+            ),
             ghcp_launch_on_switch: default_ghcp_launch_on_switch(),
             openclaw_auth_overwrite_on_switch: default_openclaw_auth_overwrite_on_switch(),
             codex_launch_on_switch: default_codex_launch_on_switch(),

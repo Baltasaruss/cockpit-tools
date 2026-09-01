@@ -232,7 +232,10 @@
         "weekly": "週次クォータ",
         "resetAt": "リセット: {{time}}",
         "expiresAt": "有効期限：{{time}}",
-        "leftPercent": "残り {{value}}%"
+        "unlimited": "無制限",
+        "leftPercent": "残り {{value}}%",
+        "cachedRefreshFailed": "更新に失敗したため、最後に成功したデータを表示しています",
+        "lastSuccessfulQuery": "最終成功: {{time}}"
       },
       "subtitle": "GitHub Copilot アカウントを管理します",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Codex Provider に書き込み、クライアントへコピーする Base URL だけに反映されます。サービスの待受アドレスは変わりません。",
       "clientBaseUrlHostSaveSuccess": "クライアントアドレスを更新しました",
       "accountPoolHealth": {
-        "title": "アカウントプール",
+        "title": "アカウント状態",
         "allAvailable": "すべて正常 {{count}}",
         "availableRatio": "正常 {{available}}/{{total}}",
-        "issueSummary": "異常 {{abnormal}} · プール {{poolUnavailable}} · 冷却 {{cooldown}}",
-        "detail": "正常 {{available}}/{{total}}、異常 {{abnormal}}、プール異常 {{poolUnavailable}}、冷却 {{cooldown}}、欠落 {{missing}}、認証 {{authError}}、クォータ {{quotaLimited}}",
-        "openDetails": "アカウントプールの異常を表示",
+        "issueSummary": "異常 {{abnormal}} · 冷却 {{cooldown}}",
+        "detail": "正常 {{available}}/{{total}}、異常 {{abnormal}}、冷却 {{cooldown}}、欠落 {{missing}}、認証 {{authError}}、クォータ {{quotaLimited}}",
+        "openDetails": "アカウントの異常を表示",
         "recover": "アカウント状態を復旧",
         "recoverSuccess": "{{count}} 件のアカウントの復旧を要求しました",
         "dialog": {
-          "title": "アカウントプールの異常",
-          "description": "Sidecar スケジューラの状態として、アカウントの異常と選択前のプール異常を表示します。",
-          "noIssues": "アカウントプールに異常はありません",
+          "title": "アカウントの異常",
+      "description": "各アカウントをモデル、利用不可の理由、実行可能な復旧操作とともに表示します。",
+          "noIssues": "アカウントに異常はありません",
           "unscopedApiKey": "現在の API Key",
           "poolUnavailable": "プールに利用可能なアカウントがありません",
           "poolUnavailableDetail": "モデル {{model}} に利用可能なアカウントを選択できませんでした",

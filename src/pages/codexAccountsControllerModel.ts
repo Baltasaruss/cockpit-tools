@@ -252,7 +252,6 @@ export interface LocalAccessAccountPoolHealthSummary {
   missing: number;
   authError: number;
   quotaLimited: number;
-  poolUnavailable: number;
 }
 
 export const ABNORMAL_LOCAL_ACCESS_ACCOUNT_FAILURE_CATEGORIES = new Set([

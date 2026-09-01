@@ -9,6 +9,7 @@ import {
   DEEPSEEK_API_BASE_URL,
   DEEPSEEK_API_PROVIDER_ID,
   DEEPSEEK_CODEX_MODEL_CATALOG,
+  DEEPSEEK_CODEX_VISION_MODEL_CATALOG,
   findCodexApiProviderPresetById,
   resolveCodexApiProviderPresetId,
 } from '../utils/codexProviderPresets';
@@ -239,16 +240,27 @@ function enforceDeepSeekProvider(provider: CodexModelProvider): boolean {
       provider.supportsWebsockets = false;
       changed = true;
     }
+    // DeepSeek Responses supports vision only through the dedicated
+    // `deepseek-v4-flash-vision-exp` model. Keep provider-level vision off and
+    // preserve per-model capability metadata for that model.
     if (provider.supportsVision === true) {
       provider.supportsVision = false;
       changed = true;
     }
-    if (provider.visionRoutingModel !== undefined) {
-      provider.visionRoutingModel = undefined;
+    const visionModel = DEEPSEEK_CODEX_VISION_MODEL_CATALOG[0];
+    const capabilities = provider.modelCapabilities ?? {};
+    const nextCapabilities = Object.fromEntries(
+      Object.entries(capabilities).filter(
+        ([model]) => model.trim().toLowerCase() !== visionModel.toLowerCase(),
+      ),
+    );
+    nextCapabilities[visionModel] = { supportsVision: true };
+    if (JSON.stringify(provider.modelCapabilities ?? {}) !== JSON.stringify(nextCapabilities)) {
+      provider.modelCapabilities = nextCapabilities;
       changed = true;
     }
-    if (provider.modelCapabilities !== undefined) {
-      provider.modelCapabilities = undefined;
+    if (provider.visionRoutingModel !== undefined) {
+      provider.visionRoutingModel = undefined;
       changed = true;
     }
     if (

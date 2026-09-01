@@ -37,6 +37,32 @@
     }
 
     #[test]
+    fn deepseek_provider_model_slots_include_deterministic_vision_shell() {
+        let slots = super::allocate_provider_model_slots(&[
+            "deepseek-v4-flash".to_string(),
+            "deepseek-v4-pro".to_string(),
+            "deepseek-v4-flash-vision-exp".to_string(),
+        ]);
+        assert_eq!(
+            slots,
+            vec![
+                super::ProviderGatewayModelSlot {
+                    client_model: "gpt-5.5".to_string(),
+                    upstream_model: "deepseek-v4-flash".to_string(),
+                },
+                super::ProviderGatewayModelSlot {
+                    client_model: "gpt-5.4".to_string(),
+                    upstream_model: "deepseek-v4-pro".to_string(),
+                },
+                super::ProviderGatewayModelSlot {
+                    client_model: "gpt-5.4-mini".to_string(),
+                    upstream_model: "deepseek-v4-flash-vision-exp".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn sidecar_scheduler_state_expires_without_stale_page_cooldown() {
         let now = 1_000_000_i64;
         let mut runtime = super::GatewayRuntime::default();
@@ -459,6 +485,7 @@
         count_request_logs_for_model_ids, default_codex_model_ids, effective_api_key_account_ids,
         empty_stats_snapshot, extract_usage_capture, filter_bound_oauth_quota_reserve_account,
         filter_websocket_client_message, insert_local_access_usage_event,
+        load_stats_windows_and_recent_events_from_conn,
         inspect_local_access_profile_attachment, inspect_local_access_profile_config,
         is_codex_local_access_auth_text, is_codex_local_access_config_for_api_key,
         is_codex_oauth_auth_text, is_image_generation_capability_error,
@@ -502,7 +529,8 @@
         sidecar_local_account_usable_for_start, sidecar_payload_default_service_tier,
         sidecar_quota_reserve_snapshot_value, sidecar_routing_strategy_value, sidecar_stable_id,
         sidecar_usage_event_is_client_canceled, sidecar_usage_event_should_auto_restart,
-        supported_codex_model_ids, sync_provider_gateway_runtime_auth_file,
+        now_ms, stats_snapshot_without_events, supported_codex_model_ids,
+        sync_provider_gateway_runtime_auth_file,
         system_proxy_target_scheme, system_proxy_value_url,
         tool_declares_image_generation_capability, usage_event_from_row,
         validate_api_key_account_scope_update, validate_client_model_visible,
@@ -525,6 +553,7 @@
         CODEX_PROVIDER_MODEL_BACKUP_FILE, CODEX_PROVIDER_MODEL_CATALOG_FILE,
         DEFAULT_MAX_RETRY_INTERVAL_MS, DEFAULT_MODEL_PRICING_VERSION,
         DEFAULT_SESSION_AFFINITY_TTL_MS, MAX_HTTP_REQUEST_BYTES,
+        STATE_RECENT_USAGE_EVENT_LIMIT,
     };
     use super::{
         is_cockpit_managed_local_access_config, restore_profile_takeover_backup,

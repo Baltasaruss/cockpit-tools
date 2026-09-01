@@ -232,7 +232,10 @@
         "weekly": "Quota settimanale",
         "resetAt": "Reimpostazione: {{time}}",
         "expiresAt": "Scade il: {{time}}",
-        "leftPercent": "{{value}}% rimanente"
+        "unlimited": "Quota illimitata",
+        "leftPercent": "{{value}}% rimanente",
+        "cachedRefreshFailed": "Aggiornamento non riuscito; vengono mostrati gli ultimi dati validi",
+        "lastSuccessfulQuery": "Ultimo successo: {{time}}"
       },
       "subtitle": "Gestisci i tuoi account GitHub Copilot",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Influisce solo sulla Base URL scritta nel Codex Provider e copiata ai client; non cambia l’indirizzo di ascolto del servizio.",
       "clientBaseUrlHostSaveSuccess": "Indirizzo client aggiornato",
       "accountPoolHealth": {
-        "title": "Pool account",
+        "title": "Stato account",
         "allAvailable": "Tutti OK {{count}}",
         "availableRatio": "Pronti {{available}}/{{total}}",
-        "issueSummary": "Errore {{abnormal}} · Pool {{poolUnavailable}} · Pausa {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, errore {{abnormal}}, pool {{poolUnavailable}}, pausa {{cooldown}}, mancanti {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
-        "openDetails": "Mostra problemi del pool account",
+        "issueSummary": "Errore {{abnormal}} · Pausa {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, errore {{abnormal}}, pausa {{cooldown}}, mancanti {{missing}}, auth {{authError}}, quota {{quotaLimited}}",
+        "openDetails": "Mostra problemi account",
         "recover": "Ripristina stato",
         "recoverSuccess": "Ripristino richiesto per {{count}} account",
         "dialog": {
-          "title": "Problemi del pool account",
-          "description": "Questi stati dello scheduler Sidecar includono problemi di account e del pool prima della selezione di un account.",
-          "noIssues": "Nessun problema nel pool di account",
+          "title": "Problemi account",
+      "description": "Ogni account mostra il modello, il motivo dell’indisponibilità e l’azione di ripristino disponibile.",
+          "noIssues": "Nessun problema negli account",
           "unscopedApiKey": "API Key corrente",
           "poolUnavailable": "Nessun account disponibile nel pool",
           "poolUnavailableDetail": "Non è stato selezionato un account disponibile per il modello {{model}}",

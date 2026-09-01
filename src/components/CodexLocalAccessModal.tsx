@@ -179,7 +179,6 @@ interface AccountPoolHealthSummary {
   missing: number;
   authError: number;
   quotaLimited: number;
-  poolUnavailable: number;
 }
 
 interface CustomRoutingDraftRule {
@@ -595,6 +594,21 @@ export function CodexLocalAccessModal({
     const healthById = new Map(
       (state?.accountHealth ?? []).map((health) => [health.accountId, health]),
     );
+    const poolUnavailableAccountIds = new Set<string>();
+    (state?.accountPoolHealth ?? []).forEach((pool) => {
+      const statuses = (pool.accountStatuses ?? []).filter((member) =>
+        member.accountId.trim(),
+      );
+      if (statuses.length === 0) {
+        (collection?.accountIds ?? []).forEach((accountId) =>
+          poolUnavailableAccountIds.add(accountId),
+        );
+        return;
+      }
+      statuses
+        .filter((member) => !member.available)
+        .forEach((member) => poolUnavailableAccountIds.add(member.accountId.trim()));
+    });
     const summary: AccountPoolHealthSummary = {
       total: collection?.accountIds.length ?? 0,
       available: 0,
@@ -603,7 +617,6 @@ export function CodexLocalAccessModal({
       missing: 0,
       authError: 0,
       quotaLimited: 0,
-      poolUnavailable: state?.accountPoolHealth?.length ?? 0,
     };
 
     (collection?.accountIds ?? []).forEach((accountId) => {
@@ -630,6 +643,9 @@ export function CodexLocalAccessModal({
       if (health && !health.available) {
         return;
       }
+      if (poolUnavailableAccountIds.has(accountId)) {
+        return;
+      }
       summary.available += 1;
     });
 
@@ -638,7 +654,7 @@ export function CodexLocalAccessModal({
     collection?.accountIds,
     localAccessAccounts,
     state?.accountHealth,
-    state?.accountPoolHealth?.length,
+    state?.accountPoolHealth,
   ]);
   const initialRestrictFreeAccounts = collection?.restrictFreeAccounts ?? true;
   const initialSessionAffinity = collection?.sessionAffinity ?? true;
@@ -2522,10 +2538,9 @@ export function CodexLocalAccessModal({
                         type="button"
                         className={`codex-local-access-quota-pool-card codex-local-access-health-pool-card${
                           accountPoolHealthSummary.available <
-                            accountPoolHealthSummary.total ||
-                          accountPoolHealthSummary.abnormal > 0 ||
-                          accountPoolHealthSummary.cooldown > 0 ||
-                          accountPoolHealthSummary.poolUnavailable > 0
+                          accountPoolHealthSummary.total ||
+                        accountPoolHealthSummary.abnormal > 0 ||
+                        accountPoolHealthSummary.cooldown > 0
                             ? " has-issue"
                             : ""
                         }`}
@@ -2537,8 +2552,6 @@ export function CodexLocalAccessModal({
                           missing: accountPoolHealthSummary.missing,
                           authError: accountPoolHealthSummary.authError,
                           quotaLimited: accountPoolHealthSummary.quotaLimited,
-                          poolUnavailable:
-                            accountPoolHealthSummary.poolUnavailable,
                           defaultValue:
                             "可用 {{available}}/{{total}}，异常 {{abnormal}}，冷却 {{cooldown}}，缺失 {{missing}}，鉴权 {{authError}}，额度 {{quotaLimited}}",
                         })}
@@ -2551,15 +2564,14 @@ export function CodexLocalAccessModal({
                         <span className="codex-local-access-quota-pool-plan">
                           {t(
                             "codex.localAccess.accountPoolHealth.title",
-                            "账号池",
+                            "账号状态",
                           )}
                         </span>
                         <span className="codex-local-access-quota-pool-value">
                           {accountPoolHealthSummary.available ===
-                            accountPoolHealthSummary.total &&
+                          accountPoolHealthSummary.total &&
                           accountPoolHealthSummary.abnormal === 0 &&
-                          accountPoolHealthSummary.cooldown === 0 &&
-                          accountPoolHealthSummary.poolUnavailable === 0
+                          accountPoolHealthSummary.cooldown === 0
                             ? t(
                                 "codex.localAccess.accountPoolHealth.allAvailable",
                                 {
@@ -2577,18 +2589,15 @@ export function CodexLocalAccessModal({
                               )}
                         </span>
                         {(accountPoolHealthSummary.abnormal > 0 ||
-                          accountPoolHealthSummary.cooldown > 0 ||
-                          accountPoolHealthSummary.poolUnavailable > 0) && (
+                          accountPoolHealthSummary.cooldown > 0) && (
                           <span className="codex-local-access-quota-pool-value codex-local-access-health-issue">
                             {t(
                               "codex.localAccess.accountPoolHealth.issueSummary",
                               {
                                 abnormal: accountPoolHealthSummary.abnormal,
                                 cooldown: accountPoolHealthSummary.cooldown,
-                                poolUnavailable:
-                                  accountPoolHealthSummary.poolUnavailable,
                                 defaultValue:
-                                  "异常 {{abnormal}} · 池异常 {{poolUnavailable}} · 冷却 {{cooldown}}",
+                                  "异常 {{abnormal}} · 冷却 {{cooldown}}",
                               },
                             )}
                           </span>

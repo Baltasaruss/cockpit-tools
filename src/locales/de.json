@@ -232,7 +232,10 @@
         "weekly": "Wöchentliches Kontingent",
         "resetAt": "Zurücksetzung: {{time}}",
         "expiresAt": "Läuft ab am: {{time}}",
-        "leftPercent": "{{value}} % übrig"
+        "unlimited": "Unbegrenztes Kontingent",
+        "leftPercent": "{{value}} % übrig",
+        "cachedRefreshFailed": "Aktualisierung fehlgeschlagen; letzte erfolgreiche Daten werden angezeigt",
+        "lastSuccessfulQuery": "Letzter Erfolg: {{time}}"
       },
       "subtitle": "Verwalte deine GitHub Copilot-Konten",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Beeinflusst nur die Base URL, die in den Codex Provider geschrieben und an Clients kopiert wird; die Dienst-Adresse bleibt unverändert.",
       "clientBaseUrlHostSaveSuccess": "Client-Adresse wurde aktualisiert",
       "accountPoolHealth": {
-        "title": "Kontenpool",
+        "title": "Kontostatus",
         "allAvailable": "Alle OK {{count}}",
         "availableRatio": "Bereit {{available}}/{{total}}",
-        "issueSummary": "Fehler {{abnormal}} · Pool {{poolUnavailable}} · Pause {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, Fehler {{abnormal}}, Pool {{poolUnavailable}}, Pause {{cooldown}}, fehlt {{missing}}, Auth {{authError}}, Kontingent {{quotaLimited}}",
-        "openDetails": "Probleme des Kontenpools anzeigen",
+        "issueSummary": "Fehler {{abnormal}} · Pause {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, Fehler {{abnormal}}, Pause {{cooldown}}, fehlt {{missing}}, Auth {{authError}}, Kontingent {{quotaLimited}}",
+        "openDetails": "Kontoprobleme anzeigen",
         "recover": "Kontostatus wiederherstellen",
         "recoverSuccess": "Wiederherstellung für {{count}} Konto/Konten angefordert",
         "dialog": {
-          "title": "Probleme des Kontenpools",
-          "description": "Diese Sidecar-Planerzustände umfassen Konto- und Poolfehler, die vor der Kontoauswahl auftreten.",
-          "noIssues": "Keine Probleme im Kontenpool",
+          "title": "Kontoprobleme",
+      "description": "Jedes Konto wird mit Modell, Grund der Nichtverfügbarkeit und möglicher Wiederherstellung angezeigt.",
+          "noIssues": "Keine Kontoprobleme",
           "unscopedApiKey": "Aktueller API Key",
           "poolUnavailable": "Kein verfügbares Pool-Konto",
           "poolUnavailableDetail": "Für Modell {{model}} wurde kein verfügbares Konto ausgewählt",

@@ -6,6 +6,9 @@
 .single-select-dropdown-trigger {
   width: 100%;
   min-height: 46px;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
   border-radius: 14px;
   border: 1px solid var(--border);
   background:
@@ -127,6 +130,9 @@
 .single-select-dropdown-item {
   width: 100%;
   min-height: 42px;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
   display: flex;
   align-items: center;
   justify-content: space-between;

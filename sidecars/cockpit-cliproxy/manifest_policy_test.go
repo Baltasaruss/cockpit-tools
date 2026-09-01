@@ -681,6 +681,17 @@ func TestCodexClientModelsResponseGatesProviderGatewayImageInput(t *testing.T) {
 			supportsImage: true,
 		},
 		{
+			name: "deepseek vision model supports vision",
+			gateway: &providerGatewaySpec{
+				UpstreamModels: []string{"deepseek-v4-flash-vision-exp"},
+				ModelCapabilities: map[string]providerGatewayModelCapability{
+					"deepseek-v4-flash-vision-exp": {SupportsVision: true},
+				},
+			},
+			model:         "deepseek-v4-flash-vision-exp",
+			supportsImage: true,
+		},
+		{
 			name: "routes images to vision model",
 			gateway: &providerGatewaySpec{
 				UpstreamModels:     []string{"deepseek-v4-pro", "qwen-vl-plus"},

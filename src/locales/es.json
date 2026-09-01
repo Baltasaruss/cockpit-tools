@@ -232,7 +232,10 @@
         "weekly": "Mensajes de chat",
         "resetAt": "Restablece: {{time}}",
         "expiresAt": "Vence el: {{time}}",
-        "leftPercent": "Queda un {{value}} %"
+        "unlimited": "Cuota ilimitada",
+        "leftPercent": "Queda un {{value}} %",
+        "cachedRefreshFailed": "Falló la actualización; se muestran los últimos datos correctos",
+        "lastSuccessfulQuery": "Último éxito: {{time}}"
       },
       "subtitle": "Supervisa en tiempo real el estado de cuota de todas las cuentas.",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Solo afecta la Base URL escrita en Codex Provider y copiada a los clientes; no cambia la dirección de escucha del servicio.",
       "clientBaseUrlHostSaveSuccess": "Dirección cliente actualizada",
       "accountPoolHealth": {
-        "title": "Grupo de cuentas",
+        "title": "Estado de cuentas",
         "allAvailable": "Todo OK {{count}}",
         "availableRatio": "Bien {{available}}/{{total}}",
-        "issueSummary": "Error {{abnormal}} · Grupo {{poolUnavailable}} · Pausa {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, error {{abnormal}}, grupo {{poolUnavailable}}, pausa {{cooldown}}, faltan {{missing}}, auth {{authError}}, cuota {{quotaLimited}}",
-        "openDetails": "Ver problemas del grupo de cuentas",
+        "issueSummary": "Error {{abnormal}} · Pausa {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, error {{abnormal}}, pausa {{cooldown}}, faltan {{missing}}, auth {{authError}}, cuota {{quotaLimited}}",
+        "openDetails": "Ver problemas de cuentas",
         "recover": "Recuperar estado",
         "recoverSuccess": "Recuperación solicitada para {{count}} cuenta(s)",
         "dialog": {
-          "title": "Problemas del grupo de cuentas",
-          "description": "Estos estados del programador de Sidecar incluyen problemas de cuenta y del grupo antes de seleccionar una cuenta.",
-          "noIssues": "No hay problemas en el grupo de cuentas",
+          "title": "Problemas de cuentas",
+      "description": "Cada cuenta se muestra con su modelo, motivo de indisponibilidad y acción de recuperación disponible.",
+          "noIssues": "No hay problemas de cuentas",
           "unscopedApiKey": "API Key actual",
           "poolUnavailable": "No hay cuentas disponibles en el grupo",
           "poolUnavailableDetail": "No se seleccionó una cuenta disponible para el modelo {{model}}",

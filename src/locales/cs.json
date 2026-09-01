@@ -227,7 +227,10 @@
         "weekly": "Týdenní kvóta",
         "resetAt": "Obnovení: {{time}}",
         "expiresAt": "Vyprší: {{time}}",
-        "leftPercent": "Zbývá {{value}} %"
+        "unlimited": "Neomezená kvóta",
+        "leftPercent": "Zbývá {{value}} %",
+        "cachedRefreshFailed": "Aktualizace selhala; zobrazují se poslední úspěšná data",
+        "lastSuccessfulQuery": "Poslední úspěch: {{time}}"
       },
       "subtitle": "Spravujte své účty GitHub Copilot",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Ovlivňuje jen Base URL zapsanou do Codex Provideru a kopírovanou klientům; nemění adresu, na které služba naslouchá.",
       "clientBaseUrlHostSaveSuccess": "Adresa klienta byla aktualizována",
       "accountPoolHealth": {
-        "title": "Fond účtů",
+        "title": "Stav účtů",
         "allAvailable": "Vše OK {{count}}",
         "availableRatio": "V pořádku {{available}}/{{total}}",
-        "issueSummary": "Chyba {{abnormal}} · Fond {{poolUnavailable}} · Pauza {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, chyba {{abnormal}}, fond {{poolUnavailable}}, pauza {{cooldown}}, chybí {{missing}}, ověření {{authError}}, limit {{quotaLimited}}",
-        "openDetails": "Zobrazit problémy fondu účtů",
+        "issueSummary": "Chyba {{abnormal}} · Pauza {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, chyba {{abnormal}}, pauza {{cooldown}}, chybí {{missing}}, ověření {{authError}}, limit {{quotaLimited}}",
+        "openDetails": "Zobrazit problémy účtů",
         "recover": "Obnovit stav účtu",
         "recoverSuccess": "Obnova vyžádána pro {{count}} účtů",
         "dialog": {
-          "title": "Problémy fondu účtů",
-          "description": "Tyto stavy plánovače Sidecar zahrnují problémy účtů i fondu před výběrem účtu.",
-          "noIssues": "Fond účtů je bez problémů",
+          "title": "Problémy účtů",
+      "description": "Každý účet je zobrazen s modelem, důvodem nedostupnosti a dostupnou akcí obnovení.",
+          "noIssues": "Účty jsou bez problémů",
           "unscopedApiKey": "Aktuální API Key",
           "poolUnavailable": "Ve fondu není dostupný účet",
           "poolUnavailableDetail": "Pro model {{model}} nebyl vybrán žádný dostupný účet",

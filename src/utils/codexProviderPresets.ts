@@ -25,6 +25,11 @@ export const DEEPSEEK_API_BASE_URL = "https://api.deepseek.com";
 export const DEEPSEEK_CODEX_MODEL_CATALOG = [
   "deepseek-v4-flash",
   "deepseek-v4-pro",
+  "deepseek-v4-flash-vision-exp",
+] as const;
+/** DeepSeek's image-capable model. Text-only V4 models stay unchanged. */
+export const DEEPSEEK_CODEX_VISION_MODEL_CATALOG = [
+  "deepseek-v4-flash-vision-exp",
 ] as const;
 export const OPENCODE_GO_API_PROVIDER_ID = "opencode_go";
 export const OPENCODE_GO_API_BASE_URL = "https://opencode.ai/zen/go/v1";
@@ -231,6 +236,7 @@ export const CODEX_API_PROVIDER_PRESETS: readonly CodexApiProviderPreset[] = [
     name: "DeepSeek",
     baseUrls: [DEEPSEEK_API_BASE_URL, `${DEEPSEEK_API_BASE_URL}/v1`],
     modelCatalog: [...DEEPSEEK_CODEX_MODEL_CATALOG],
+    visionModelCatalog: [...DEEPSEEK_CODEX_VISION_MODEL_CATALOG],
     website: "https://platform.deepseek.com/",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
   },

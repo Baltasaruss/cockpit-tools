@@ -94,7 +94,7 @@ fn save_collection_to_disk(collection: &CodexLocalAccessCollection) -> Result<()
     write_string_atomic(&path, &content)
 }
 
-fn normalize_stats(stats: &mut CodexLocalAccessStats) {
+fn normalize_stats_metadata(stats: &mut CodexLocalAccessStats) {
     let now = now_ms();
     if stats.since <= 0 {
         stats.since = now;
@@ -102,10 +102,33 @@ fn normalize_stats(stats: &mut CodexLocalAccessStats) {
     if stats.updated_at <= 0 {
         stats.updated_at = stats.since;
     }
+    sort_stats_rows(stats);
+}
+
+fn sort_stats_rows(stats: &mut CodexLocalAccessStats) {
     sort_usage_accounts(&mut stats.accounts);
     sort_usage_models(&mut stats.models);
     sort_usage_api_keys(&mut stats.api_keys);
-    recompute_time_windows(stats, now);
+    for window in [&mut stats.daily, &mut stats.weekly, &mut stats.monthly] {
+        sort_usage_accounts(&mut window.accounts);
+        sort_usage_models(&mut window.models);
+        sort_usage_api_keys(&mut window.api_keys);
+    }
+}
+
+fn stats_snapshot_without_events(stats: &CodexLocalAccessStats) -> CodexLocalAccessStats {
+    CodexLocalAccessStats {
+        since: stats.since,
+        updated_at: stats.updated_at,
+        totals: stats.totals.clone(),
+        accounts: stats.accounts.clone(),
+        models: stats.models.clone(),
+        api_keys: stats.api_keys.clone(),
+        daily: stats.daily.clone(),
+        weekly: stats.weekly.clone(),
+        monthly: stats.monthly.clone(),
+        events: Vec::new(),
+    }
 }
 
 fn invalid_stats_backup_path(path: &Path) -> PathBuf {
@@ -202,22 +225,36 @@ fn load_stats_from_disk() -> Result<CodexLocalAccessStats, String> {
             error
         ));
     }
-    let (_, week_since, month_since) = local_calendar_window_starts(now_ms());
+    let now = now_ms();
+    let (_, week_since, month_since) = local_calendar_window_starts(now);
     let retention_since = week_since.min(month_since);
-    parsed.events = match load_local_access_usage_events_since(retention_since) {
-        Ok(events) => events,
+    match load_stats_windows_and_recent_events(now) {
+        Ok((daily, weekly, monthly, recent_events)) => {
+            parsed.daily = daily;
+            parsed.weekly = weekly;
+            parsed.monthly = monthly;
+            parsed.events = recent_events;
+        }
         Err(error) => {
             logger::log_codex_api_warn(&format!(
                 "API 服务请求日志读取失败，继续使用统计快照中的最近事件: {}",
                 error
             ));
-            json_events
+            let (day_since, week_since, month_since) = local_calendar_window_starts(now);
+            parsed.daily = empty_stats_window(day_since, now);
+            parsed.weekly = empty_stats_window(week_since, now);
+            parsed.monthly = empty_stats_window(month_since, now);
+            parsed.events.clear();
+            for event in json_events
                 .into_iter()
                 .filter(|event| event.timestamp >= retention_since)
-                .collect()
+            {
+                apply_usage_event_to_current_windows(&mut parsed, &event, now);
+                push_recent_usage_event(&mut parsed.events, event);
+            }
         }
-    };
-    normalize_stats(&mut parsed);
+    }
+    normalize_stats_metadata(&mut parsed);
     Ok(parsed)
 }
 
@@ -369,6 +406,22 @@ fn ensure_collection_account_sanitize_started() {
     });
 }
 
+fn replace_stats_window_if_more_complete(
+    current: &mut CodexLocalAccessStatsWindow,
+    candidate: CodexLocalAccessStatsWindow,
+) {
+    if candidate.since != current.since {
+        return;
+    }
+    let candidate_count = candidate.totals.request_count;
+    let current_count = current.totals.request_count;
+    if candidate_count > current_count
+        || (candidate_count == current_count && candidate.updated_at >= current.updated_at)
+    {
+        *current = candidate;
+    }
+}
+
 fn ensure_stats_maintenance_started() {
     if GATEWAY_STATS_MAINTENANCE_COMPLETED.load(Ordering::SeqCst) {
         return;
@@ -377,24 +430,34 @@ fn ensure_stats_maintenance_started() {
         return;
     }
     tauri::async_runtime::spawn(async move {
+        let baseline_revision = {
+            let runtime = gateway_runtime().lock().await;
+            runtime.stats_revision
+        };
         let result = tauri::async_runtime::spawn_blocking(load_stats_from_disk).await;
         match result {
             Ok(Ok(mut maintained)) => {
                 let mut runtime = gateway_runtime().lock().await;
-                if runtime.loaded {
-                    // Merge SQLite/month events with any live runtime events so maintenance
-                    // never drops requests accepted after the compact snapshot load.
+                if runtime.loaded && runtime.stats_revision == baseline_revision {
+                    // Merge only the bounded recent event list with live events. The windows
+                    // have already been aggregated while streaming SQLite rows and must not be
+                    // recomputed from the bounded list.
                     let mut events_by_key = maintained
                         .events
                         .drain(..)
                         .map(|event| (local_access_log_event_key(&event), event))
                         .collect::<HashMap<_, _>>();
                     for event in runtime.stats.events.iter().cloned() {
-                        events_by_key.insert(local_access_log_event_key(&event), event);
+                        let key = local_access_log_event_key(&event);
+                        events_by_key.insert(key, event);
                     }
                     maintained.events = events_by_key.into_values().collect();
                     maintained.events.sort_by_key(|event| event.timestamp);
-                    recompute_time_windows(&mut maintained, now_ms());
+                    if maintained.events.len() > STATE_RECENT_USAGE_EVENT_LIMIT {
+                        let remove_count = maintained.events.len() - STATE_RECENT_USAGE_EVENT_LIMIT;
+                        maintained.events.drain(..remove_count);
+                    }
+                    sort_stats_rows(&mut maintained);
 
                     // Keep runtime top-level lifetime aggregates (they include live traffic).
                     // Only backfill account/model/api_key rows that runtime never saw.
@@ -406,15 +469,28 @@ fn ensure_stats_maintenance_started() {
                     sort_usage_api_keys(&mut runtime.stats.api_keys);
 
                     runtime.stats.events = maintained.events;
-                    runtime.stats.daily = maintained.daily;
-                    runtime.stats.weekly = maintained.weekly;
-                    runtime.stats.monthly = maintained.monthly;
+                    replace_stats_window_if_more_complete(
+                        &mut runtime.stats.daily,
+                        maintained.daily,
+                    );
+                    replace_stats_window_if_more_complete(
+                        &mut runtime.stats.weekly,
+                        maintained.weekly,
+                    );
+                    replace_stats_window_if_more_complete(
+                        &mut runtime.stats.monthly,
+                        maintained.monthly,
+                    );
                     runtime.stats.updated_at = runtime.stats.updated_at.max(maintained.updated_at);
                     if runtime.stats.since <= 0 {
                         runtime.stats.since = maintained.since;
                     } else if maintained.since > 0 {
                         runtime.stats.since = runtime.stats.since.min(maintained.since);
                     }
+                } else if runtime.loaded {
+                    logger::log_codex_api_info(
+                        "API 服务统计后台维护期间运行态已更新，保留当前统计以避免覆盖新结果",
+                    );
                 }
                 GATEWAY_STATS_MAINTENANCE_COMPLETED.store(true, Ordering::SeqCst);
             }
@@ -436,8 +512,33 @@ fn save_stats_to_disk(stats: &CodexLocalAccessStats) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建 API 服务统计目录失败: {}", e))?;
     }
-    let mut snapshot = stats.clone();
-    snapshot.events.clear();
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StatsSnapshotWithoutEvents<'a> {
+        since: i64,
+        updated_at: i64,
+        totals: &'a CodexLocalAccessUsageStats,
+        accounts: &'a [CodexLocalAccessAccountStats],
+        models: &'a [CodexLocalAccessModelStats],
+        api_keys: &'a [CodexLocalAccessApiKeyStats],
+        daily: &'a CodexLocalAccessStatsWindow,
+        weekly: &'a CodexLocalAccessStatsWindow,
+        monthly: &'a CodexLocalAccessStatsWindow,
+        events: &'a [CodexLocalAccessUsageEvent],
+    }
+
+    let snapshot = StatsSnapshotWithoutEvents {
+        since: stats.since,
+        updated_at: stats.updated_at,
+        totals: &stats.totals,
+        accounts: &stats.accounts,
+        models: &stats.models,
+        api_keys: &stats.api_keys,
+        daily: &stats.daily,
+        weekly: &stats.weekly,
+        monthly: &stats.monthly,
+        events: &[],
+    };
     let content = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("序列化 API 服务统计失败: {}", e))?;
     write_string_atomic(&path, &content)
@@ -1712,6 +1813,7 @@ async fn ensure_runtime_loaded_without_start_with_profile_restore(
             let mut runtime = gateway_runtime().blocking_lock();
             runtime.stats_dirty = false;
             runtime.stats_flush_inflight = false;
+            runtime.stats_revision = 0;
             runtime.stats = loaded_stats;
             if let Some(collection) = next_collection.clone() {
                 sync_runtime_collection(&mut runtime, collection);

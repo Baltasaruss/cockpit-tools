@@ -227,7 +227,10 @@
         "weekly": "Haftalık kota",
         "resetAt": "Sıfırlama: {{time}}",
         "expiresAt": "Bitiş: {{time}}",
-        "leftPercent": "%{{value}} kaldı"
+        "unlimited": "Sınırsız kota",
+        "leftPercent": "%{{value}} kaldı",
+        "cachedRefreshFailed": "Yenileme başarısız; son başarılı veriler gösteriliyor",
+        "lastSuccessfulQuery": "Son başarılı: {{time}}"
       },
       "subtitle": "GitHub Copilot hesaplarınızı yönetin",
       "time": {
@@ -2553,18 +2556,18 @@
       "clientBaseUrlHostDesc": "Yalnızca Codex Provider’a yazılan ve istemcilere kopyalanan Base URL’yi etkiler; servisin dinleme adresini değiştirmez.",
       "clientBaseUrlHostSaveSuccess": "İstemci adresi güncellendi",
       "accountPoolHealth": {
-        "title": "Hesap Havuzu",
+        "title": "Hesap Durumu",
         "allAvailable": "Tümü OK {{count}}",
         "availableRatio": "Sağlam {{available}}/{{total}}",
-        "issueSummary": "Hata {{abnormal}} · Havuz {{poolUnavailable}} · Bekleme {{cooldown}}",
-        "detail": "OK {{available}}/{{total}}, hata {{abnormal}}, havuz {{poolUnavailable}}, bekleme {{cooldown}}, eksik {{missing}}, auth {{authError}}, kota {{quotaLimited}}",
-        "openDetails": "Hesap havuzu sorunlarını göster",
+        "issueSummary": "Hata {{abnormal}} · Bekleme {{cooldown}}",
+        "detail": "OK {{available}}/{{total}}, hata {{abnormal}}, bekleme {{cooldown}}, eksik {{missing}}, auth {{authError}}, kota {{quotaLimited}}",
+        "openDetails": "Hesap sorunlarını göster",
         "recover": "Hesap durumunu kurtar",
         "recoverSuccess": "{{count}} hesap için kurtarma istendi",
         "dialog": {
-          "title": "Hesap Havuzu Sorunları",
-          "description": "Bu Sidecar zamanlayıcı durumları, hesap seçilmeden önceki hesap ve havuz sorunlarını içerir.",
-          "noIssues": "Hesap havuzunda sorun yok",
+          "title": "Hesap Sorunları",
+      "description": "Her hesap model, kullanılamama nedeni ve varsa kurtarma işlemiyle birlikte gösterilir.",
+          "noIssues": "Hesaplarda sorun yok",
           "unscopedApiKey": "Geçerli API Key",
           "poolUnavailable": "Havuzda kullanılabilir hesap yok",
           "poolUnavailableDetail": "{{model}} modeli için kullanılabilir hesap seçilemedi",

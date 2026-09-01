@@ -114,7 +114,7 @@ export function CodexAddAccountDialog(props: CodexAccountsViewProps) {
             createPortal(
               <div className="modal-overlay">
                 <div
-                  className="modal-content codex-add-modal codex-account-add-modal"
+                  className="modal-content codex-add-modal codex-account-add-modal platform-account-add-modal"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div className="modal-header">

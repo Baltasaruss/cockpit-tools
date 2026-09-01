@@ -23,6 +23,29 @@ use super::*;
         })
     }
 
+    #[test]
+    fn parses_current_official_limits_usage_schema() {
+        let profile = serde_json::json!({
+            "endpoints": {
+                "organizationUsage": {
+                    "limits": [
+                        {"kind": "session", "group": "session", "percent": 42.4, "resets_at": "2026-09-01T12:00:00Z"},
+                        {"kind": "weekly", "group": "weekly", "percent": 18, "resets_at": 1788264000},
+                        {"kind": "weekly", "group": "weekly", "percent": "9", "scope": {"model": {"display_name": "Claude Sonnet"}}}
+                    ],
+                    "extra_usage": {"is_enabled": true, "utilization": 12, "used_credits": "1234", "monthly_limit": 5000}
+                }
+            }
+        });
+        let quota = desktop_web_usage_to_quota(&profile).expect("official limits should parse");
+        assert_eq!(quota.five_hour_percentage, 42);
+        assert_eq!(quota.seven_day_percentage, 18);
+        assert_eq!(quota.seven_day_sonnet_percentage, Some(9));
+        assert_eq!(quota.extra_usage_percentage, Some(12));
+        assert_eq!(quota.extra_usage_used_cents, Some(1234));
+        assert_eq!(quota.extra_usage_limit_cents, Some(5000));
+    }
+
     #[tokio::test]
     async fn cloudflare_challenge_uses_hidden_electron_probe_result() {
         let direct = cloudflare_challenge_profile();

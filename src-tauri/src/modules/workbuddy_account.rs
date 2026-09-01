@@ -1,6 +1,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1352,6 +1353,28 @@ fn build_default_auth_account_value(account: &WorkbuddyAccount) -> Value {
     {
         account_obj.insert("nickname".to_string(), Value::String(nickname.to_string()));
     }
+    if let Some(enterprise_id) = account
+        .enterprise_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        account_obj.insert(
+            "enterpriseId".to_string(),
+            Value::String(enterprise_id.to_string()),
+        );
+    }
+    if let Some(enterprise_name) = account
+        .enterprise_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        account_obj.insert(
+            "enterpriseName".to_string(),
+            Value::String(enterprise_name.to_string()),
+        );
+    }
 
     account_obj
         .entry("type".to_string())
@@ -1483,13 +1506,71 @@ fn build_default_auth_value(account: &WorkbuddyAccount) -> Value {
     Value::Object(auth_obj)
 }
 
-fn build_default_client_auth_session(account: &WorkbuddyAccount) -> Value {
+fn build_default_client_auth_session_from_base(
+    account: &WorkbuddyAccount,
+    base_session: Option<&Value>,
+) -> Value {
     let account_value = build_default_auth_account_value(account);
-    serde_json::json!({
-        "account": account_value.clone(),
-        "auth": build_default_auth_value(account),
-        "accounts": [account_value],
-    })
+    let root_obj = base_session
+        .and_then(Value::as_object)
+        .or_else(|| account.auth_raw.as_ref().and_then(Value::as_object));
+    let existing_accounts = root_obj
+        .and_then(|obj| obj.get("accounts"))
+        .and_then(Value::as_array)
+        .cloned();
+    let existing_all_accounts = root_obj
+        .and_then(|obj| obj.get("allAccounts"))
+        .and_then(Value::as_array)
+        .cloned();
+    let merge_current = |items: Option<Vec<Value>>| {
+        let target_uid = account_value.get("uid").and_then(Value::as_str);
+        let mut found = false;
+        let mut merged = items
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut item| {
+                let matches =
+                    target_uid.is_some() && item.get("uid").and_then(Value::as_str) == target_uid;
+                if matches {
+                    found = true;
+                    return account_value.clone();
+                }
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert("lastLogin".to_string(), Value::Bool(false));
+                }
+                item
+            })
+            .collect::<Vec<_>>();
+        if !found {
+            merged.push(account_value.clone());
+        }
+        merged
+    };
+    let accounts = merge_current(existing_accounts);
+    let all_accounts = merge_current(existing_all_accounts);
+    let mut session = root_obj.cloned().unwrap_or_default();
+    session.insert("account".to_string(), account_value);
+    session.insert("auth".to_string(), build_default_auth_value(account));
+    session.insert("accounts".to_string(), Value::Array(accounts));
+    session.insert("allAccounts".to_string(), Value::Array(all_accounts));
+    Value::Object(session)
+}
+
+fn build_default_client_auth_session(account: &WorkbuddyAccount) -> Value {
+    build_default_client_auth_session_from_base(account, None)
+}
+
+fn contains_encrypted_wrapper(value: &Value) -> bool {
+    match value {
+        Value::Object(obj) => {
+            if obj.get("$wbEncrypted").is_some() {
+                return true;
+            }
+            obj.values().any(contains_encrypted_wrapper)
+        }
+        Value::Array(items) => items.iter().any(contains_encrypted_wrapper),
+        _ => false,
+    }
 }
 
 pub fn import_payload_from_local() -> Result<Option<WorkbuddyOAuthCompletePayload>, String> {
@@ -1538,16 +1619,59 @@ pub fn import_payload_from_local() -> Result<Option<WorkbuddyOAuthCompletePayloa
 pub fn write_account_to_default_client(account: &WorkbuddyAccount) -> Result<(), String> {
     let auth_file = get_default_workbuddy_auth_file_path()
         .ok_or_else(|| "无法定位默认 WorkBuddy 登录信息路径".to_string())?;
+    if let Some(raw) = account.auth_raw.as_ref() {
+        if contains_encrypted_wrapper(raw) {
+            return Err(
+                "当前 WorkBuddy 登录文件包含官方加密字段，未取得官方密钥，已停止覆盖以避免破坏登录状态"
+                    .to_string(),
+            );
+        }
+    }
     let marker_path = workbuddy_logout_marker_path(&auth_file);
-    if marker_path.exists() {
-        fs::remove_file(&marker_path).map_err(|e| format!("清理 WorkBuddy 登出标记失败: {}", e))?;
+    let marker_hash_before: Option<[u8; 32]> = fs::read(&marker_path)
+        .ok()
+        .map(|bytes| Sha256::digest(&bytes).into());
+    if auth_file.exists() {
+        let existing =
+            fs::read(&auth_file).map_err(|e| format!("读取现有 WorkBuddy 登录信息失败: {}", e))?;
+        let existing_json: Value = serde_json::from_slice(&existing)
+            .map_err(|e| format!("现有 WorkBuddy 登录信息不是有效 JSON，已停止覆盖: {}", e))?;
+        if contains_encrypted_wrapper(&existing_json) {
+            return Err(
+                "当前 WorkBuddy 登录文件包含官方加密字段，未取得官方密钥，已停止覆盖以避免破坏登录状态"
+                    .to_string(),
+            );
+        }
+        let expected_hash: [u8; 32] = Sha256::digest(&existing).into();
+        let written = crate::modules::atomic_write::write_string_atomic_if_hash_matches(
+            &auth_file,
+            expected_hash,
+            || {
+                let session =
+                    build_default_client_auth_session_from_base(account, Some(&existing_json));
+                serde_json::to_string_pretty(&session)
+                    .map_err(|e| format!("序列化登录信息失败: {}", e))
+            },
+        )
+        .map_err(|e| format!("写入 WorkBuddy 登录信息失败: {}", e))?;
+        if !written {
+            return Err(
+                "WorkBuddy 登录信息在切号期间被官方客户端更新，已停止覆盖，请重试".to_string(),
+            );
+        }
+    } else {
+        let session = build_default_client_auth_session(account);
+        let content = serde_json::to_string_pretty(&session)
+            .map_err(|e| format!("序列化登录信息失败: {}", e))?;
+        crate::modules::atomic_write::write_string_atomic(&auth_file, &content)
+            .map_err(|e| format!("写入 WorkBuddy 登录信息失败: {}", e))?;
     }
 
-    let session = build_default_client_auth_session(account);
-    let content =
-        serde_json::to_string_pretty(&session).map_err(|e| format!("序列化登录信息失败: {}", e))?;
-    crate::modules::atomic_write::write_string_atomic(&auth_file, &content)
-        .map_err(|e| format!("写入 WorkBuddy 登录信息失败: {}", e))?;
+    if let Some(expected_hash) = marker_hash_before {
+        let _ =
+            crate::modules::atomic_write::remove_file_if_hash_matches(&marker_path, expected_hash)
+                .map_err(|e| format!("清理 WorkBuddy 登出标记失败: {}", e))?;
+    }
 
     let written = fs::read_to_string(&auth_file)
         .map_err(|e| format!("校验 WorkBuddy 登录信息失败: {}", e))?;
@@ -1562,6 +1686,11 @@ pub fn write_account_to_default_client(account: &WorkbuddyAccount) -> Result<(),
             "校验 WorkBuddy 登录信息失败，未写入目标账号: {}",
             auth_file.display()
         ));
+    }
+    for key in ["account", "auth", "accounts", "allAccounts"] {
+        if written_json.get(key).is_none() {
+            return Err(format!("校验 WorkBuddy 登录信息失败，缺少官方字段 {}", key));
+        }
     }
 
     Ok(())
@@ -1748,4 +1877,72 @@ pub fn update_checkin_info(
     ));
 
     Ok(updated)
+}
+
+#[cfg(test)]
+mod client_auth_session_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn test_account(auth_raw: Option<Value>) -> WorkbuddyAccount {
+        serde_json::from_value(json!({
+            "id": "test",
+            "email": "test@example.com",
+            "uid": "uid-current",
+            "access_token": "access-redacted",
+            "refresh_token": "refresh-redacted",
+            "auth_raw": auth_raw,
+            "created_at": 1,
+            "last_used": 2
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn default_session_keeps_all_official_root_collections() {
+        let session = build_default_client_auth_session(&test_account(None));
+        for key in ["account", "auth", "accounts", "allAccounts"] {
+            assert!(session.get(key).is_some(), "missing {key}");
+        }
+        assert_eq!(session["accounts"].as_array().unwrap().len(), 1);
+        assert_eq!(session["allAccounts"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn default_session_preserves_other_official_accounts() {
+        let raw = json!({
+            "accounts": [{ "uid": "uid-other", "lastLogin": true }],
+            "allAccounts": [{ "uid": "uid-other", "lastLogin": true }]
+        });
+        let session = build_default_client_auth_session(&test_account(Some(raw)));
+        for key in ["accounts", "allAccounts"] {
+            let items = session[key].as_array().unwrap();
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0]["uid"], "uid-other");
+            assert_eq!(items[0]["lastLogin"], false);
+            assert_eq!(items[1]["uid"], "uid-current");
+            assert_eq!(items[1]["lastLogin"], true);
+        }
+    }
+
+    #[test]
+    fn default_session_preserves_unknown_official_root_fields() {
+        let raw = json!({
+            "accounts": [],
+            "allAccounts": [],
+            "futureOfficialField": { "revision": 2 }
+        });
+        let session = build_default_client_auth_session_from_base(&test_account(None), Some(&raw));
+        assert_eq!(session["futureOfficialField"]["revision"], 2);
+    }
+
+    #[test]
+    fn detects_future_official_encrypted_wrappers() {
+        assert!(contains_encrypted_wrapper(&json!({
+            "auth": { "accessToken": { "$wbEncrypted": 1, "envelope": "opaque" } }
+        })));
+        assert!(!contains_encrypted_wrapper(&json!({
+            "auth": { "accessToken": "plaintext-current-build" }
+        })));
+    }
 }

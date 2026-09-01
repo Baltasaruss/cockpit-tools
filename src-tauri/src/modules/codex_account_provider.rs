@@ -96,7 +96,11 @@ const CODEX_PROVIDER_WIRE_API: &str = "responses";
 const APIKEY_FUN_PROVIDER_BASE_URL: &str = "https://api.apikey.fun/v1";
 const DEEPSEEK_API_BASE_URL: &str = "https://api.deepseek.com";
 const DEEPSEEK_PROVIDER_ID: &str = "deepseek";
-const DEEPSEEK_CODEX_MODELS: &[&str] = &["deepseek-v4-flash", "deepseek-v4-pro"];
+const DEEPSEEK_CODEX_MODELS: &[&str] = &[
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash-vision-exp",
+];
 const DEEPSEEK_DEFAULT_MODEL: &str = "deepseek-v4-flash";
 const DEEPSEEK_ACCESS_MODE_GATEWAY: &str = "gateway";
 const DEEPSEEK_ACCESS_MODE_DIRECT: &str = "direct";
@@ -689,17 +693,33 @@ fn normalize_deepseek_account(account: &mut CodexAccount) -> bool {
             account.api_supports_vision = false;
             changed = true;
         }
-        if !account.api_model_vision_support.is_empty() {
-            account.api_model_vision_support.clear();
+        let vision_model = "deepseek-v4-flash-vision-exp".to_string();
+        if account
+            .api_model_vision_support
+            .get(&vision_model)
+            .copied()
+            != Some(true)
+        {
+            account
+                .api_model_vision_support
+                .insert(vision_model, true);
             changed = true;
         }
         if account.api_vision_routing_model.is_some() {
             account.api_vision_routing_model = None;
             changed = true;
         }
-        if account.api_model_mappings.is_empty() {
-            account.api_model_mappings = default_deepseek_api_model_mappings();
-            changed = true;
+        for default_mapping in default_deepseek_api_model_mappings() {
+            let has_client_mapping = account.api_model_mappings.iter().any(|mapping| {
+                mapping
+                    .client_model
+                    .trim()
+                    .eq_ignore_ascii_case(&default_mapping.client_model)
+            });
+            if !has_client_mapping {
+                account.api_model_mappings.push(default_mapping);
+                changed = true;
+            }
         }
     }
 
@@ -844,6 +864,14 @@ pub(crate) fn default_deepseek_api_model_mappings() -> Vec<CodexApiModelMapping>
         CodexApiModelMapping {
             client_model: "deepseek-v4-pro".to_string(),
             upstream_model: "deepseek-v4-pro".to_string(),
+        },
+        CodexApiModelMapping {
+            client_model: "gpt-5.4-mini".to_string(),
+            upstream_model: "deepseek-v4-flash-vision-exp".to_string(),
+        },
+        CodexApiModelMapping {
+            client_model: "deepseek-v4-flash-vision-exp".to_string(),
+            upstream_model: "deepseek-v4-flash-vision-exp".to_string(),
         },
     ]
 }
@@ -1172,7 +1200,9 @@ fn official_deepseek_catalog_models() -> Result<Vec<serde_json::Value>, String> 
 }
 
 fn official_deepseek_display_name(upstream_model: &str) -> String {
-    if upstream_model.eq_ignore_ascii_case("deepseek-v4-pro") {
+    if upstream_model.eq_ignore_ascii_case("deepseek-v4-flash-vision-exp") {
+        "DeepSeek-V4-Flash-Vision-Exp".to_string()
+    } else if upstream_model.eq_ignore_ascii_case("deepseek-v4-pro") {
         "DeepSeek-V4-Pro".to_string()
     } else {
         "DeepSeek-V4-Flash".to_string()
@@ -1320,8 +1350,10 @@ fn build_deepseek_direct_provider_catalog_json(
                 0
             } else if slug.eq_ignore_ascii_case("deepseek-v4-pro") {
                 1
-            } else {
+            } else if slug.eq_ignore_ascii_case("deepseek-v4-flash-vision-exp") {
                 2
+            } else {
+                3
             }
         };
         rank(left_slug)
@@ -1375,8 +1407,10 @@ fn build_deepseek_official_model_catalog_json(
                 0
             } else if slug.eq_ignore_ascii_case("deepseek-v4-pro") {
                 1
-            } else {
+            } else if slug.eq_ignore_ascii_case("deepseek-v4-flash-vision-exp") {
                 2
+            } else {
+                3
             }
         };
         rank(left_slug)

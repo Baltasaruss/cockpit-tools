@@ -632,7 +632,7 @@ export function AccountsOverviewView(props: AccountsOverviewViewProps) {
       {showAddModal && (
         <div className="modal-overlay">
           <div
-            className="modal modal-lg add-account-modal"
+            className="modal modal-lg add-account-modal platform-account-add-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">

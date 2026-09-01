@@ -393,7 +393,7 @@ fn spawn_switch_account(platform: PlatformId, account_id: String) {
             PlatformId::Codex
                 if modules::codex_instance::is_api_service_bind_account_id(&account_id) =>
             {
-                commands::codex::codex_local_access_activate(app, None)
+                commands::codex::codex_local_access_activate(app, None, None)
                     .await
                     .map(|_| ())
             }

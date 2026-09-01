@@ -346,15 +346,36 @@ pub async fn codex_local_access_set_enabled(
 pub async fn codex_local_access_activate(
     app: AppHandle,
     auto_repair_mode: Option<codex_session_visibility::CodexSessionVisibilityAutoRepairMode>,
+    instance_id: Option<String>,
 ) -> Result<CodexLocalAccessState, String> {
     let flow_started = Instant::now();
-    logger::log_info("[Codex API Service Switch][Backend] codex_local_access_activate started");
-    let codex_home = codex_account::get_codex_home();
+    let target_instance_id = instance_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(crate::commands::codex_instance::DEFAULT_INSTANCE_ID)
+        .to_string();
+    let launch_target =
+        crate::commands::codex_instance::resolve_codex_instance_start_target(&target_instance_id)?;
+    logger::log_info(&format!(
+        "[Codex API Service Switch][Backend] codex_local_access_activate started: instance_id={}, user_data_dir={}",
+        target_instance_id,
+        launch_target.user_data_dir.display()
+    ));
+    let codex_home = launch_target.user_data_dir.clone();
     let _profile_lease =
         codex_account::try_acquire_profile_mutation_lease(&codex_home, "api-service-activate")?;
-    // 先停止仍在使用共享默认 profile 的官方客户端，再写入 API Service 凭据。
-    stop_default_codex_runtime_before_auth_commit().await?;
-    let previous_credential = read_current_codex_launch_credential_snapshot();
+    // 先停止目标 profile 的官方客户端，再写入 API Service 凭据。
+    if launch_target.is_default {
+        stop_default_codex_runtime_before_auth_commit().await?;
+    } else {
+        crate::commands::codex_instance::codex_stop_instance(target_instance_id.clone()).await?;
+    }
+    let previous_credential = read_codex_launch_credential_snapshot_for_dir(
+        &codex_home,
+        launch_target.bind_account_id.as_deref(),
+        launch_target.is_default,
+    );
     logger::log_info(&format!(
         "[Codex API Service Switch][Backend] previous credential resolved: elapsed_ms={}",
         flow_started.elapsed().as_millis()
@@ -368,40 +389,61 @@ pub async fn codex_local_access_activate(
     ));
     let api_service_speed = codex_speed::get_api_service_app_speed_config()?.speed;
     let speed_started = Instant::now();
-    codex_speed::write_official_app_speed(api_service_speed.clone())?;
+    if launch_target.is_default {
+        codex_speed::write_official_app_speed(api_service_speed.clone())?;
+    } else {
+        codex_speed::write_app_speed_for_dir(&codex_home, api_service_speed.clone())?;
+    }
     logger::log_info(&format!(
-        "[Codex API Service Switch][Backend] write official app speed finished: elapsed_ms={}, total_ms={}",
+        "[Codex API Service Switch][Backend] write target profile app speed finished: elapsed_ms={}, total_ms={}",
         speed_started.elapsed().as_millis(),
         flow_started.elapsed().as_millis()
     ));
 
     let index_started = Instant::now();
-    let mut index = codex_account::load_account_index();
-    index.current_account_id = None;
-    codex_account::save_account_index(&index)?;
+    if launch_target.is_default {
+        let mut index = codex_account::load_account_index();
+        index.current_account_id = None;
+        codex_account::save_account_index(&index)?;
+    } else {
+        logger::log_info(&format!(
+            "已保留全局当前 Codex 账号索引，非默认实例激活不影响默认实例: instance_id={}",
+            target_instance_id
+        ));
+    }
     logger::log_info(&format!(
-        "[Codex API Service Switch][Backend] account index cleared: elapsed_ms={}, total_ms={}",
+        "[Codex API Service Switch][Backend] account index stage finished: cleared={}, elapsed_ms={}, total_ms={}",
+        launch_target.is_default,
         index_started.elapsed().as_millis(),
         flow_started.elapsed().as_millis()
     ));
 
     let default_settings_started = Instant::now();
-    if let Err(e) = crate::modules::codex_instance::update_default_settings(
-        Some(Some(
-            crate::modules::codex_instance::CODEX_API_SERVICE_BIND_ACCOUNT_ID.to_string(),
-        )),
-        None,
-        None,
-        Some(false),
-        None,
-        None,
-    ) {
-        logger::log_warn(&format!("更新 Codex 默认实例为 API 服务模式失败: {}", e));
+    if launch_target.is_default {
+        if let Err(e) = crate::modules::codex_instance::update_default_settings(
+            Some(Some(
+                crate::modules::codex_instance::CODEX_API_SERVICE_BIND_ACCOUNT_ID.to_string(),
+            )),
+            None,
+            None,
+            Some(false),
+            None,
+            None,
+        ) {
+            logger::log_warn(&format!("更新 Codex 默认实例为 API 服务模式失败: {}", e));
+        } else {
+            logger::log_info("已同步更新 Codex 默认实例为 API 服务模式");
+        }
+        if let Err(e) =
+            crate::modules::codex_instance::update_default_app_speed(api_service_speed.clone())
+        {
+            logger::log_warn(&format!("更新 Codex 默认实例 API 服务速度失败: {}", e));
+        }
     } else {
-        logger::log_info("已同步更新 Codex 默认实例为 API 服务模式");
-    }
-    if let Err(e) = crate::modules::codex_instance::update_default_app_speed(api_service_speed) {
-        logger::log_warn(&format!("更新 Codex 默认实例 API 服务速度失败: {}", e));
+        logger::log_info(&format!(
+            "已保留非默认实例绑定，不修改 Codex 默认实例: instance_id={}",
+            target_instance_id
+        ));
     }
     logger::log_info(&format!(
         "[Codex API Service Switch][Backend] default settings update finished: elapsed_ms={}, total_ms={}",
@@ -434,34 +476,52 @@ pub async fn codex_local_access_activate(
     if user_config.codex_launch_on_switch {
         let launch_started = Instant::now();
         #[cfg(target_os = "macos")]
-        if process::is_codex_running() {
+        if launch_target.is_default && process::is_codex_running() {
             logger::log_info("检测到 Codex 正在运行，将按默认实例 PID 逻辑重启");
         }
-        // 调用统一默认实例启动方法：该方法继续进入 `codex_start_instance_internal`，
-        // 使用与账号总览、多开实例一致的 profile 准备和客户端启动事务。
-        let launch_error =
-            match crate::commands::codex_instance::codex_start_default_with_prepared_profile(
+        // 默认与非默认目标均继续进入 `codex_start_instance_internal`，使用与账号总览、
+        // 多开实例一致的 profile 准备和客户端启动事务。
+        let launch_error = match if launch_target.is_default {
+            crate::commands::codex_instance::codex_start_default_with_prepared_profile(
                 app.clone(),
                 true,
                 Some("instance-launch"),
                 None,
             )
             .await
-            {
-                Ok(_) => None,
-                Err(e) => {
-                    logger::log_warn(&format!("Codex 启动失败: {}", e));
-                    if e.starts_with("APP_PATH_NOT_FOUND:") {
-                        let _ = app.emit(
-                            "app:path_missing",
-                            serde_json::json!({ "app": "codex", "retry": { "kind": "default" } }),
-                        );
-                    }
-                    Some(e)
+        } else {
+            crate::commands::codex_instance::codex_start_instance_with_prepared_profile(
+                app.clone(),
+                target_instance_id.clone(),
+                true,
+                Some("instance-launch"),
+                None,
+            )
+            .await
+        } {
+            Ok(_) => None,
+            Err(e) => {
+                logger::log_warn(&format!("Codex 启动失败: {}", e));
+                if e.starts_with("APP_PATH_NOT_FOUND:") {
+                    let retry = if launch_target.is_default {
+                        serde_json::json!({ "kind": "default" })
+                    } else {
+                        serde_json::json!({
+                            "kind": "instance",
+                            "instanceId": target_instance_id,
+                        })
+                    };
+                    let _ = app.emit(
+                        "app:path_missing",
+                        serde_json::json!({ "app": "codex", "retry": retry }),
+                    );
                 }
-            };
+                Some(e)
+            }
+        };
         logger::log_info(&format!(
-            "[Codex API Service Switch][Backend] codex_start_default_with_prepared_profile finished: elapsed_ms={}, total_ms={}",
+            "[Codex API Service Switch][Backend] selected instance launch finished: instance_id={}, elapsed_ms={}, total_ms={}",
+            target_instance_id,
             launch_started.elapsed().as_millis(),
             flow_started.elapsed().as_millis()
         ));
