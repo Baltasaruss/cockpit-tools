@@ -365,7 +365,7 @@ pub async fn codex_local_access_activate(
     let codex_home = launch_target.user_data_dir.clone();
     let _profile_lease =
         codex_account::try_acquire_profile_mutation_lease(&codex_home, "api-service-activate")?;
-// Stop the client that owns the target profile before changing its API
+    // Stop the client that owns the target profile before changing its API
     // Service credentials. Default-profile shutdown remains graceful; named
     // instances keep their own isolated stop path.
     if launch_target.is_default {
